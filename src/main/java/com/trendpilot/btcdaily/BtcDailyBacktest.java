@@ -3,6 +3,7 @@ package com.trendpilot.btcdaily;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.function.Function;
 
 import com.trendpilot.market.Kline;
 
@@ -25,19 +26,25 @@ public final class BtcDailyBacktest {
      * @param endCost        期末未卖仓位的成本
      * @param tradeDays      有买入的天数
      * @param buyHoldPct     同期一直持有 BTC 的涨跌幅
+     * @param skippedDays    过滤导致不开新一轮的天数
+     * @param reducedDays    过滤导致减仓的天数
      */
     public record Result(String version, LocalDate from, LocalDate to, int days, int rounds, double realized,
                          double maxFloatLoss, double maxFloatLossPct, long maxHoldDays, double avgHoldDays,
-                         double endUnrealized, double endCost, int tradeDays, double buyHoldPct) {
+                         double endUnrealized, double endCost, int tradeDays, double buyHoldPct, int skippedDays,
+                         int reducedDays) {
     }
 
     /**
      * @param daily 日线（升序），需覆盖回测区间及之前至少 max(atrDays + 1, emaDays) 根
      * @param bars  回测区间内的已收盘 K 线（升序，1h 或 15m）
+     * @param ctx   每天的市场 / 宏观数据；null 表示不做过滤（基准）
      */
-    public static Result run(List<Kline> daily, List<Kline> bars, BtcDailyProperties p) {
+    public static Result run(List<Kline> daily, List<Kline> bars, BtcDailyProperties p,
+                             Function<LocalDate, MarketContext> ctx) {
         Book book = new Book();
-        int need = Math.max(p.atrDays() + 1, p.emaDays());
+        int need = BtcDailyRules.dailyNeeded(p);
+        int skipped = 0, reduced = 0;
         DailyPlan plan = null;
         LocalDate from = null, last = null, lastBuyDay = null;
         int days = 0, tradeDays = 0;
@@ -53,7 +60,9 @@ public final class BtcDailyBacktest {
                     plan = null;
                     continue;
                 }
-                plan = BtcDailyRules.plan(day, before, today.open(), book, p);
+                plan = BtcDailyRules.plan(day, before, today.open(), book, p, ctx == null ? null : ctx.apply(day));
+                if (plan.skipNew()) skipped++;
+                else if (plan.multiplier() < 1) reduced++;
                 if (from == null) {
                     from = day;
                     firstOpen = today.open();
@@ -81,7 +90,7 @@ public final class BtcDailyBacktest {
         return new Result(p.version(), from, last, days, book.rounds(), round2(book.realized()),
                 round2(book.maxFloatLoss()), round2(book.maxFloatLoss() / p.capUsdt() * 100), maxHold,
                 round2(avgHold), round2(book.unrealized(lastClose, p.feeRate())), round2(book.cost()), tradeDays,
-                firstOpen > 0 ? round2((lastClose / firstOpen - 1) * 100) : 0);
+                firstOpen > 0 ? round2((lastClose / firstOpen - 1) * 100) : 0, skipped, reduced);
     }
 
     private static double round2(double v) {

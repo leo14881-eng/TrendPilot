@@ -30,7 +30,7 @@ import com.trendpilot.notify.Notifier;
 public class BtcDailyService {
 
     private static final Logger log = LoggerFactory.getLogger(BtcDailyService.class);
-    static final int DAILY_LIMIT = 60;
+    static final int DAILY_LIMIT = 120;
 
     private final BtcDailyProperties props;
     private final BtcDailyStore store;
@@ -38,9 +38,11 @@ public class BtcDailyService {
     private final KlineStore klines;
     private final Notifier notifier;
     private final ObjectMapper json;
+    private final ContextService context;
 
     public BtcDailyService(BtcDailyProperties props, BtcDailyStore store, Markets markets, KlineStore klines,
-                           Notifier notifier, ObjectMapper json) {
+                           Notifier notifier, ObjectMapper json, ContextService context) {
+        this.context = context;
         this.props = props;
         this.store = store;
         this.markets = markets;
@@ -104,7 +106,13 @@ public class BtcDailyService {
             log.warn("BTC 每日短线：没有 {} 的日线，暂不生成计划", day);
             return null;
         }
-        DailyPlan plan = BtcDailyRules.plan(day, before, today.open(), book, props);
+        try {
+            context.refreshDue(now);
+        } catch (RuntimeException e) {
+            log.warn("BTC 每日短线：市场 / 宏观数据刷新失败：{}", e.getMessage());
+        }
+        MarketContext ctx = context.context(day);
+        DailyPlan plan = BtcDailyRules.plan(day, before, today.open(), book, props, ctx);
         store.savePlan(plan, now);
         LocalDate yesterday = day.minusDays(1);
         notifier.send("btc-daily-plan-" + day, BtcDailyMessages.plan(plan, book, store.daySummary(yesterday), props));
@@ -138,10 +146,13 @@ public class BtcDailyService {
             if (next <= from || page.size() < 1000) break;
             from = next;
         }
-        BtcDailyBacktest.Result r = BtcDailyBacktest.run(daily, hourly, props);
-        store.saveBacktest(props.version(), json.writeValueAsString(r), now);
-        notifier.send("btc-daily-backtest-" + props.version(), BtcDailyMessages.backtest(r, props));
-        log.info("BTC 每日短线回测完成：{}", r);
+        LocalDate firstDay = hourly.isEmpty() ? BtcDailyRules.dayOf(t) : BtcDailyRules.dayOf(hourly.getFirst().openTime());
+        context.loadHistory(firstDay.minusDays(2), now);
+        BtcDailyBacktest.Result base = BtcDailyBacktest.run(daily, hourly, props, null);
+        BtcDailyBacktest.Result filtered = BtcDailyBacktest.run(daily, hourly, props, context::context);
+        store.saveBacktest(props.version(), json.writeValueAsString(Map.of("base", base, "filtered", filtered)), now);
+        notifier.send("btc-daily-backtest-" + props.version(), BtcDailyMessages.backtest(base, filtered, props));
+        log.info("BTC 每日短线回测完成：基准 {}，加过滤 {}", base, filtered);
     }
 
     /** /api/btc-daily 和每日快照用。 */
@@ -155,6 +166,7 @@ public class BtcDailyService {
         s.put("capUsdt", props.capUsdt());
         s.put("capUntil", props.capUntil());
         s.put("plan", plan);
+        s.put("context", context.context(today));
         Map<String, Object> pos = new LinkedHashMap<>();
         pos.put("holding", b.holding());
         pos.put("qty", b.qty());

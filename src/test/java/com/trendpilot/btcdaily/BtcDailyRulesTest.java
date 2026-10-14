@@ -34,7 +34,7 @@ class BtcDailyRulesTest {
 
     @Test
     void newRoundPlanHasThreeLevelsBelowOpen() {
-        DailyPlan p = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 30, 60_000, 2_000), 60_000, new Book(), P);
+        DailyPlan p = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, new Book(), P);
         assertThat(p.atr()).isCloseTo(2_000, within(1e-6));
         assertThat(p.strong()).isFalse(); // 昨收 = EMA，不算偏强
         assertThat(p.levels()).extracting(DailyPlan.Level::price).containsExactly(58_800.0, 57_800.0, 56_800.0);
@@ -45,7 +45,7 @@ class BtcDailyRulesTest {
     @Test
     void buysAddsAndTakesProfitWithoutStopLoss() {
         Book book = new Book();
-        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 30, 60_000, 2_000), 60_000, book, P);
+        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, P);
 
         // 跌穿第 1、2 档：同一根 K 线里依次买入
         List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 57_700, 57_900), P);
@@ -79,12 +79,12 @@ class BtcDailyRulesTest {
     @Test
     void carriedPositionUsesLowerTargetAndContinuesLevels() {
         Book book = new Book();
-        DailyPlan d1 = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 30, 60_000, 2_000), 60_000, book, P);
+        DailyPlan d1 = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, P);
         BtcDailyRules.onBar(d1, book, bar(DAY, 0, 60_000, 60_000, 58_700, 58_750), P);
         assertThat(book.buys()).isEqualTo(1);
 
         LocalDate d2day = DAY.plusDays(1);
-        DailyPlan d2 = BtcDailyRules.plan(d2day, daily(DAY, 30, 58_750, 2_000), 58_750, book, P);
+        DailyPlan d2 = BtcDailyRules.plan(d2day, daily(DAY, 60, 58_750, 2_000), 58_750, book, P);
         assertThat(d2.carried()).isTrue();
         assertThat(d2.levels()).extracting(DailyPlan.Level::index).containsExactly(1, 2);
         assertThat(d2.levels().getFirst().price()).isCloseTo(book.lastBuyPrice() - 1000, within(0.01));
@@ -101,7 +101,7 @@ class BtcDailyRulesTest {
     @Test
     void sameBarTakeProfitBlocksNewBuys() {
         Book book = new Book();
-        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 30, 60_000, 2_000), 60_000, book, P);
+        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, P);
         BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 58_700, 58_750), P);
         double tp = BtcDailyRules.takeProfitPrice(plan, book, P);
         List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 1, 58_750, tp + 10, 57_000, 58_000), P);
@@ -111,7 +111,7 @@ class BtcDailyRulesTest {
     @Test
     void backtestReportsDrawdownAndHoldDays() {
         LocalDate start = LocalDate.parse("2026-01-01");
-        List<Kline> d = new ArrayList<>(daily(start.minusDays(1), 30, 60_000, 2_000));
+        List<Kline> d = new ArrayList<>(daily(start.minusDays(1), 60, 60_000, 2_000));
         List<Kline> hourly = new ArrayList<>();
         double price = 60_000;
         for (int day = 0; day < 25; day++) {
@@ -129,11 +129,68 @@ class BtcDailyRulesTest {
             }
             price = close;
         }
-        BtcDailyBacktest.Result r = BtcDailyBacktest.run(d, hourly, P);
+        BtcDailyBacktest.Result r = BtcDailyBacktest.run(d, hourly, P, null);
         assertThat(r.days()).isEqualTo(25);
         assertThat(r.maxFloatLoss()).isNegative();
         assertThat(r.maxHoldDays()).isGreaterThan(0);
         assertThat(r.rounds()).isGreaterThan(0);
         assertThat(r.realized()).isPositive();
+    }
+
+    @Test
+    void filtersSkipOrShrinkNewRounds() {
+        List<Kline> d = daily(DAY.minusDays(1), 60, 60_000, 2_000);
+        MarketContext calm = MarketContext.empty(DAY);
+        assertThat(BtcDailyRules.plan(DAY, d, 60_000, new Book(), P, calm).multiplier()).isEqualTo(1.0);
+
+        MarketContext greedy = new MarketContext(DAY, null, 0.05, 85.0, DAY.minusDays(2), -400.0, -500.0, null, null,
+                null, List.of());
+        DailyPlan shrunk = BtcDailyRules.plan(DAY, d, 60_000, new Book(), P, greedy);
+        assertThat(shrunk.multiplier()).isEqualTo(0.25); // 三条减半，封底 1/4
+        assertThat(shrunk.levels()).extracting(DailyPlan.Level::usdt).containsExactly(750.0, 750.0, 1000.0);
+        assertThat(shrunk.reasons()).contains("资金费率", "恐惧贪婪", "ETF");
+
+        MarketContext fomc = new MarketContext(DAY, "美联储议息", null, null, null, null, null, null, null, null,
+                List.of("资金费率"));
+        DailyPlan skipped = BtcDailyRules.plan(DAY, d, 60_000, new Book(), P, fomc);
+        assertThat(skipped.skipNew()).isTrue();
+        assertThat(skipped.levels()).isEmpty();
+        assertThat(skipped.reasons()).contains("美联储议息日", "数据缺失：资金费率");
+    }
+
+    @Test
+    void downtrendBlocksNewRoundButNotCarriedAdds() {
+        List<Kline> d = new ArrayList<>();
+        for (int i = 0; i < 60; i++) { // 每天跌 1%
+            long t = BtcDailyRules.dayStart(DAY.minusDays(60 - i));
+            double c = 80_000 * Math.pow(0.99, i);
+            d.add(new Kline(t, c * 1.01, c * 1.02, c * 0.99, c, 1e9, t + 86_399_999L));
+        }
+        MarketContext calm = MarketContext.empty(DAY);
+        DailyPlan fresh = BtcDailyRules.plan(DAY, d, d.getLast().close(), new Book(), P, calm);
+        assertThat(fresh.skipNew()).isTrue();
+        assertThat(fresh.levels()).isEmpty();
+
+        Book holding = new Book();
+        holding.qty = 0.05;
+        holding.cost = 3000;
+        holding.buys = 1;
+        holding.lastBuyPrice = 60_000;
+        holding.openedDay = DAY.minusDays(3);
+        DailyPlan carried = BtcDailyRules.plan(DAY, d, d.getLast().close(), holding, P, calm);
+        assertThat(carried.levels()).extracting(DailyPlan.Level::index).containsExactly(1, 2);
+    }
+
+    @Test
+    void parsesFarsideTable() {
+        String html = """
+                <table><tr><th>Date</th><th>IBIT</th><th>Total</th></tr>
+                <tr><td><span class="tabletext">11 Jan 2024</span></td><td>111.7</td><td>655.3</td></tr>
+                <tr><td>12 Jan 2024</td><td>(10.0)</td><td>(1,234.5)</td></tr>
+                <tr><td>15 Oct 2026</td><td>-</td><td>-</td></tr>
+                <tr><td>Total</td><td>1</td><td>2</td></tr></table>""";
+        assertThat(ContextSources.parseFarside(html)).containsExactly(
+                java.util.Map.entry(LocalDate.parse("2024-01-11"), 655.3),
+                java.util.Map.entry(LocalDate.parse("2024-01-12"), -1234.5));
     }
 }

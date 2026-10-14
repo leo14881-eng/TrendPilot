@@ -184,7 +184,7 @@ trendpilot.research:
 # 改参数时同时改 version（会自动重新回测一次）
 trendpilot.btc-daily:
   enabled: true
-  version: btc-v1-2026-10-14
+  version: btc-v2-2026-10-14
   symbol: BTCUSDT
   cap-usdt: 10000
   cap-until: "2026-11-14"         # 第一个月上限，到期按数据复评
@@ -200,3 +200,24 @@ trendpilot.btc-daily:
   atr-days: 14
   ema-days: 20
   backtest-days: 365
+  # 市场与宏观过滤：只影响当天是否开新一轮、开多大；已有仓位照常止盈，不止损
+  filters:
+    enabled: true
+    ema-long: 50                 # 下跌趋势：昨收 < EMA20 < EMA50 且 EMA20 比 5 天前低 → 不开新一轮
+    slope-days: 5
+    funding-max-pct: 0.03        # 昨天平均资金费率 ≥ 0.03%/8h → 减半
+    fear-greed-max: 80           # 恐惧贪婪 ≥ 80 → 减半
+    etf-outflow-day-m: 300       # ETF 单日净流出 ≥ 3 亿美元 → 减半
+    etf-outflow3d-m: 1000        # ETF 3 日合计净流出 ≥ 10 亿美元 → 不开新一轮
+    us10y-rise-pp: 0.2           # 10 年期利率 5 日升 ≥ 0.2 个百分点 → 减半（需 FRED key）
+    dollar-rise-pct: 1.5         # 美元指数 5 日涨 ≥ 1.5% → 减半（需 FRED key）
+    min-multiplier: 0.25
+    # 美联储议息决议日（官方日程；2027 年日程公布后补上）。CPI 发布日由 FRED 获取
+    fomc-dates: ["2024-01-31", "2024-03-20", "2024-05-01", "2024-06-12", "2024-07-31", "2024-09-18", "2024-11-07", "2024-12-18",
+                 "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18", "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
+                 "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17", "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09"]
+    fred-api-key: ${FRED_API_KEY:}   # 免费 key，填在本机 config/application-local.yml 的 trendpilot.btc-daily.filters.fred-api-key
+    binance-futures-url: https://fapi.binance.com
+    fear-greed-url: https://api.alternative.me
+    farside-url: https://farside.co.uk/btc/
+    fred-url: https://api.stlouisfed.org
