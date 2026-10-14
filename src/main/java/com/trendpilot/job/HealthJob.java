@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 
 import com.trendpilot.notify.Messages;
 import com.trendpilot.notify.Notifier;
+import com.trendpilot.portfolio.ObservationBook;
 import com.trendpilot.portfolio.Position;
 import com.trendpilot.portfolio.ShadowBook;
 
@@ -30,14 +31,16 @@ public class HealthJob {
     private final JobRuns runs;
     private final Notifier notifier;
     private final ShadowBook book;
+    private final ObservationBook v1;
     private final AppState state;
     private final ZoneId zone;
 
-    public HealthJob(JobRuns runs, Notifier notifier, ShadowBook book, AppState state,
+    public HealthJob(JobRuns runs, Notifier notifier, ShadowBook book, ObservationBook v1, AppState state,
                      @Value("${trendpilot.zone}") String zone) {
         this.runs = runs;
         this.notifier = notifier;
         this.book = book;
+        this.v1 = v1;
         this.state = state;
         this.zone = ZoneId.of(zone);
     }
@@ -98,6 +101,11 @@ public class HealthJob {
         positions.forEach(p -> lines.add(String.format(Locale.ROOT, "· %s %d 笔，成本 %.2f U%s%s", p.symbol(),
                 p.tranches(), p.costBasis().doubleValue(), p.protectArmed() ? "，利润保护中" : "",
                 p.lossRecovery() ? "，LOSS_RECOVERY" : "")));
+        lines.add("");
+        lines.add("📈 V1 / V2 对比（累计）");
+        lines.add(book.stats().line());
+        lines.add(v1.stats().line());
+        lines.add("注：V2 按全数量盘口模拟成交，V1 按参考价 + 手续费记账，V1 收益不能当作可执行收益。");
         List<String> problems = problems(now).stream().map(Problem::text).toList();
         lines.add(problems.isEmpty() ? "任务运行正常" : "异常：" + String.join("；", problems));
         notifier.send("daily:" + now.atZone(zone).toLocalDate(), Messages.lines(lines));

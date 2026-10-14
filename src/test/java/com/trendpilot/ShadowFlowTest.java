@@ -204,5 +204,10 @@ class ShadowFlowTest {
         monitor.runOnce(t0.plusSeconds(600));
         assertThat(v1Book.position("ABCUSDT")).isEmpty();
         assertThat(v1Book.realizedPnl()).isPositive();
+        var stats = v1Book.stats();
+        assertThat(stats.closed()).isEqualTo(1);
+        assertThat(stats.winRatePct()).isEqualTo(100);
+        assertThat(stats.avgHoldHours()).isEqualTo(10 / 60.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(stats.line()).startsWith("V1：买入 1 笔，平仓 1 笔，胜率 100%");
     }
 }

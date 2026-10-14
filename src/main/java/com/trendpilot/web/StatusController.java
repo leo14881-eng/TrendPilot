@@ -31,7 +31,7 @@ public class StatusController {
                 "capitalAuthority", CapitalAuthority.CURRENT,
                 "positions", book.positions(),
                 "v1Positions", v1.positions(),
-                "v1RealizedPnl", v1.realizedPnl(),
+                "comparison", List.of(book.stats(), v1.stats()),
                 "deployedCost", book.deployedCost(),
                 "realizedPnl", book.realizedPnl(),
                 "recentRuns", rows("SELECT job, generation, started_at, program_status, data_status, note FROM job_run ORDER BY id DESC LIMIT 20"),

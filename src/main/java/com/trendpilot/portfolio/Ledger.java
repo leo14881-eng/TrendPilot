@@ -95,17 +95,63 @@ public abstract class Ledger {
     public void close(Position cur, Fill fill, BigDecimal pnl, String reason, String generation, Instant now) {
         jdbc.sql("DELETE FROM " + table + " WHERE symbol = :s").param("s", cur.symbol()).update();
         event(cur.venue(), cur.symbol(), "SELL", fill, pnl, reason, generation, now);
+        jdbc.sql("""
+                UPDATE shadow_event SET cost_usdt = :cost, hold_minutes = :hold
+                WHERE id = (SELECT MAX(id) FROM shadow_event WHERE book = :b AND symbol = :s AND type = 'SELL')
+                """)
+                .param("cost", cur.costBasis().toPlainString())
+                .param("hold", Duration.between(cur.openedAt(), now).toMinutes())
+                .param("b", book).param("s", cur.symbol()).update();
     }
 
-    public void update(Position p, Instant now) {
+    /** @param markNet 本轮全数量模拟卖出的可退出净利，即未实现盈亏 */
+    public void update(Position p, BigDecimal markNet, Instant now) {
         jdbc.sql("UPDATE " + table + """
                  SET protect_armed = :armed, protect_floor = :floor, peak_net = :peak,
-                    weak_streak = :streak, loss_recovery = :recovery, updated_at = :now WHERE symbol = :s
+                    weak_streak = :streak, loss_recovery = :recovery, mark_net = :mark, updated_at = :now
+                 WHERE symbol = :s
                 """)
+                .param("mark", markNet.toPlainString())
                 .param("armed", p.protectArmed() ? 1 : 0).param("floor", p.protectFloor().toPlainString())
                 .param("peak", p.peakNet().toPlainString()).param("streak", p.weakStreak())
                 .param("recovery", p.lossRecovery() ? 1 : 0).param("now", now.toString()).param("s", p.symbol())
                 .update();
+    }
+
+    /** 账本统计，用于 V1 / V2 收益对比。 */
+    public BookStats stats() {
+        List<Object[]> sells = jdbc.sql("""
+                SELECT pnl_usdt, cost_usdt, hold_minutes FROM shadow_event
+                WHERE book = :b AND type = 'SELL' AND pnl_usdt IS NOT NULL ORDER BY id
+                """).param("b", book)
+                .query((rs, i) -> new Object[]{rs.getString(1), rs.getString(2), rs.getObject(3)}).list();
+        int wins = 0;
+        double realized = 0, peak = 0, maxDrawdown = 0, retSum = 0, holdSum = 0;
+        int retCount = 0, holdCount = 0;
+        for (Object[] r : sells) {
+            double pnl = Double.parseDouble((String) r[0]);
+            if (pnl > 0) wins++;
+            realized += pnl;
+            peak = Math.max(peak, realized);
+            maxDrawdown = Math.max(maxDrawdown, peak - realized);
+            if (r[1] != null) {
+                retSum += pnl / Double.parseDouble((String) r[1]) * 100;
+                retCount++;
+            }
+            if (r[2] != null) {
+                holdSum += ((Number) r[2]).doubleValue();
+                holdCount++;
+            }
+        }
+        List<Position> open = positions();
+        double unrealized = jdbc.sql("SELECT mark_net FROM " + table).query(String.class).list().stream()
+                .mapToDouble(Double::parseDouble).sum();
+        int entries = jdbc.sql("SELECT COUNT(*) FROM shadow_event WHERE book = :b AND type IN ('BUY', 'ADD')")
+                .param("b", book).query(Integer.class).single();
+        return new BookStats(book, entries, sells.size(), wins, realized, unrealized,
+                open.size(), open.stream().mapToDouble(p -> p.costBasis().doubleValue()).sum(),
+                retCount == 0 ? Double.NaN : retSum / retCount, holdCount == 0 ? Double.NaN : holdSum / holdCount / 60,
+                maxDrawdown);
     }
 
     /** 状态类事件（PROTECT_ARM 等），不涉及成交。 */

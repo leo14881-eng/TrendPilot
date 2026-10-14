@@ -179,7 +179,7 @@ public class MonitorJob {
             exits.add(d.reason() + ":" + pos.symbol());
             notifier.send("exit:" + posKey, Messages.exit(pos.venue(), d));
         } else {
-            book.update(d.updated(), now);
+            book.update(d.updated(), d.netPnl(), now);
         }
     }
 }

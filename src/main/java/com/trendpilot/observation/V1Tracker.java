@@ -142,7 +142,7 @@ public class V1Tracker {
                     lines.add(String.format(Locale.ROOT, "· %s%s %s，净盈亏 %s U（%.2f%%）", pos.symbol(),
                             Messages.venueTag(pos.venue()), d.reason(), Messages.money(d.netPnl()), d.rawReturnPct()));
                 } else {
-                    book.update(d.updated(), now);
+                    book.update(d.updated(), d.netPnl(), now);
                 }
             }
         }
