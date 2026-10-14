@@ -39,6 +39,8 @@ public class BtcDailyService {
     private final Notifier notifier;
     private final ObjectMapper json;
     private final ContextService context;
+    /** 本版本回测确认后实盘用的卖出方式；null = 还没确认。 */
+    private volatile String liveExit;
 
     public BtcDailyService(BtcDailyProperties props, BtcDailyStore store, Markets markets, KlineStore klines,
                            Notifier notifier, ObjectMapper json, ContextService context) {
@@ -56,6 +58,7 @@ public class BtcDailyService {
         VenueMarket m = markets.get(Venue.BINANCE);
         if (m == null) return;
         String sym = props.symbol();
+        BtcDailyProperties p = live();
         BtcDailyStore.State st = store.state();
         Book book = st.book();
         long lastClosed = BarsLoader.lastClosedOpenTime(now);
@@ -85,13 +88,13 @@ public class BtcDailyService {
                     plan = createPlan(day, daily, book, now);
                 }
                 if (plan == null) break; // 日线暂缺：下次再处理，不跳过 K 线
-                List<Fill> f = BtcDailyRules.onBar(plan, book, bar, props);
+                List<Fill> f = BtcDailyRules.onBar(plan, book, bar, p);
                 last = bar.openTime();
                 if (!f.isEmpty()) {
                     fills.addAll(f);
                     store.save(book, last, f, props.version(), plan.reasons(), book.lastRound, now);
                     Book.Round round = book.lastRound;
-                    for (Fill x : f) notifier.send(fillKey(x), BtcDailyMessages.fill(x, book, plan, round, props));
+                    for (Fill x : f) notifier.send(fillKey(x), BtcDailyMessages.fill(x, book, plan, round, p));
                 }
             }
         }
@@ -143,7 +146,7 @@ public class BtcDailyService {
         DailyPlan plan = BtcDailyRules.plan(day, before, today.open(), book, props, ctx);
         store.savePlan(plan, now);
         LocalDate yesterday = day.minusDays(1);
-        notifier.send("btc-daily-plan-" + day, BtcDailyMessages.plan(plan, book, store.daySummary(yesterday), props));
+        notifier.send("btc-daily-plan-" + day, BtcDailyMessages.plan(plan, book, store.daySummary(yesterday), live()));
         remindCapReview(day);
         return plan;
     }
@@ -163,6 +166,47 @@ public class BtcDailyService {
                 + String.format(java.util.Locale.ROOT, "%.2f", st.book().realized()) + " USDT，最大浮亏 "
                 + String.format(java.util.Locale.ROOT, "%.2f", st.book().maxFloatLoss())
                 + " USDT\n上限不会自动放大，是否调整由你决定。");
+    }
+
+    /** 实盘生效的参数：卖出方式需要回测确认时，确认前和回测不达标都按 FIXED。 */
+    BtcDailyProperties live() {
+        BtcDailyProperties.Exit x = props.exit();
+        if ("FIXED".equals(x.mode()) || !x.requireBacktest()) return props;
+        String mode = liveExit;
+        if (mode == null) {
+            mode = store.backtest(props.version()).map(this::liveExitOf).orElse(null);
+            liveExit = mode;
+        }
+        return props.withExitMode(mode == null ? "FIXED" : mode);
+    }
+
+    /** 测试用：清掉已缓存的回测结论。 */
+    void forgetLiveExit() {
+        liveExit = null;
+    }
+
+    private String liveExitOf(String backtestJson) {
+        try {
+            Object v = json.readValue(backtestJson, Map.class).get("liveExit");
+            return v instanceof String sv ? sv : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 配置的卖出方式和现行 FIXED 比：总盈亏不低于 FIXED，最大回撤不超过 FIXED 的 1.1 倍，
+     * 最长被套不多于 FIXED 2 天，才算"不比现行差"，实盘才切换；否则仍用 FIXED，等用户决定。
+     */
+    static String decideExit(BtcDailyProperties.Exit x, Map<String, BtcDailyBacktest.Result> exits) {
+        if ("FIXED".equals(x.mode()) || !x.requireBacktest()) return x.mode();
+        BtcDailyBacktest.Result f = exits.get("FIXED");
+        BtcDailyBacktest.Result r = exits.get(x.mode());
+        if (f == null || r == null) return "FIXED";
+        boolean notWorse = r.totalPnl() >= f.totalPnl() - 0.01
+                && r.maxDrawdown() <= f.maxDrawdown() * 1.1 + 0.01
+                && r.maxHoldDays() <= f.maxHoldDays() + 2;
+        return notWorse ? x.mode() : "FIXED";
     }
 
     private List<Kline> daily(VenueMarket m) {
@@ -201,10 +245,12 @@ public class BtcDailyService {
         for (String mode : List.of("FIXED", "TRAIL", "STOP")) {
             exits.put(mode, BtcDailyBacktest.run(daily, hourly, props.withExitMode(mode), context::context));
         }
+        String chosen = decideExit(props.exit(), exits);
         store.saveBacktest(props.version(), json.writeValueAsString(
-                Map.of("base", base, "filtered", filtered, "exits", exits)), now);
+                Map.of("base", base, "filtered", filtered, "exits", exits, "liveExit", chosen)), now);
+        liveExit = chosen;
         notifier.send("btc-daily-backtest-" + props.version(), BtcDailyMessages.backtest(base, filtered, props));
-        notifier.send("btc-daily-exits-" + props.version(), BtcDailyMessages.exits(exits, props));
+        notifier.send("btc-daily-exits-" + props.version(), BtcDailyMessages.exits(exits, props, chosen));
         log.info("BTC 每日短线回测完成：基准 {}，加过滤 {}", base, filtered);
     }
 
@@ -215,7 +261,9 @@ public class BtcDailyService {
         LocalDate today = BtcDailyRules.dayOf(now.toEpochMilli());
         DailyPlan plan = store.plan(today).orElse(null);
         Map<String, Object> s = new LinkedHashMap<>();
+        BtcDailyProperties p = live();
         s.put("version", props.version());
+        s.put("exitMode", p.exit().mode());
         s.put("capUsdt", props.capUsdt());
         s.put("capUntil", props.capUntil());
         s.put("plan", plan);
@@ -228,7 +276,8 @@ public class BtcDailyService {
         pos.put("buys", b.buys());
         pos.put("openedDay", b.openedDay());
         if (b.holding() && plan != null) {
-            pos.put("takeProfitPrice", BtcDailyRules.round2(BtcDailyRules.takeProfitPrice(plan, b, props)));
+            pos.put("takeProfitPrice", BtcDailyRules.round2(BtcDailyRules.takeProfitPrice(plan, b, p)));
+            if (b.trailPeak > 0) pos.put("trailPeak", BtcDailyRules.round2(b.trailPeak));
         }
         Long lastBar = st.lastBarOpen();
         Double lastPrice = lastBar == null ? null : klines.range(Venue.BINANCE, props.symbol(), lastBar, lastBar)

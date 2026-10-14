@@ -69,6 +69,8 @@ class BtcDailyServiceTest {
     void reset() {
         market.reset();
         markets.invalidate();
+        service.forgetLiveExit();
+        jdbc.sql("DELETE FROM btc_daily_backtest").update();
         for (String t : new String[]{"btc_daily_plan", "btc_daily_state", "btc_daily_trade", "btc_daily_series", "btc_daily_fetch", "btc_daily_round", "notification_outbox", "kline_15m"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
@@ -115,6 +117,45 @@ class BtcDailyServiceTest {
         // 独立账本：不写 V1/V2 的表
         assertThat(jdbc.sql("SELECT COUNT(*) FROM position").query(Integer.class).single()).isZero();
         assertThat(klines.latestOpenTime(Venue.BINANCE, "BTCUSDT")).isEqualTo(start + Q);
+    }
+
+    @Test
+    void trailingTakesEffectOnlyAfterBacktestConfirms() {
+        // 没有回测结论：按 FIXED 运行
+        assertThat(service.live().exit().mode()).isEqualTo("FIXED");
+        store.saveBacktest(service.live().version(), "{\"liveExit\":\"TRAIL\"}", Instant.now());
+        assertThat(service.live().exit().mode()).isEqualTo("TRAIL");
+        assertThat(service.summary(Instant.now())).containsEntry("exitMode", "TRAIL");
+    }
+
+    @Test
+    void decideExitRequiresNotWorseThanFixed() {
+        BtcDailyProperties.Exit x = BtcDailyProperties.defaults().exit();
+        Map<String, BtcDailyBacktest.Result> exits = new java.util.LinkedHashMap<>();
+        exits.put("FIXED", result(500, 800, 30));
+        exits.put("TRAIL", result(650, 820, 31));
+        assertThat(BtcDailyService.decideExit(x, exits)).isEqualTo("TRAIL");
+        exits.put("TRAIL", result(450, 700, 20));   // 赚得少
+        assertThat(BtcDailyService.decideExit(x, exits)).isEqualTo("FIXED");
+        exits.put("TRAIL", result(700, 1000, 30));  // 回撤大很多
+        assertThat(BtcDailyService.decideExit(x, exits)).isEqualTo("FIXED");
+        exits.put("TRAIL", result(700, 800, 40));   // 被套更久
+        assertThat(BtcDailyService.decideExit(x, exits)).isEqualTo("FIXED");
+    }
+
+    static BtcDailyBacktest.Result result(double total, double dd, long hold) {
+        return new BtcDailyBacktest.Result("v", null, null, 365, 100, total, 0, 0, hold, 1, 0, 0, 100, 0, 0, 0,
+                List.of(), "X", total, total / 100, dd, dd / 100, 90, 10, -5, 2, 1);
+    }
+
+    @Test
+    void trailPeakSurvivesRestart() {
+        Book b = new Book();
+        b.qty = 0.1;
+        b.cost = 6000;
+        b.trailPeak = 61_234.5;
+        store.save(b, 1L, List.of(), "v", Instant.now());
+        assertThat(store.state().book().trailPeak).isEqualTo(61_234.5);
     }
 
     @Test

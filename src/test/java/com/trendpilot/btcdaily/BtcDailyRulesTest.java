@@ -13,7 +13,7 @@ import com.trendpilot.market.Kline;
 
 class BtcDailyRulesTest {
 
-    static final BtcDailyProperties P = BtcDailyProperties.defaults();
+    static final BtcDailyProperties P = BtcDailyProperties.defaults().withExitMode("FIXED");
     static final LocalDate DAY = LocalDate.parse("2026-10-15");
     static final long Q = 15 * 60_000L;
 
@@ -253,13 +253,49 @@ class BtcDailyRulesTest {
         // 碰到止盈线：不卖，开始跟踪
         assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 1, 58_750, arm + 10, 58_700, arm), trail)).isEmpty();
         // 继续涨：仍不卖
-        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 2, arm, arm + 1500, arm, arm + 1400), trail)).isEmpty();
+        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 2, arm + 100, arm + 1500, arm + 100, arm + 1400), trail)).isEmpty();
         // 从最高价回落超过 0.5 × ATR（1,000）：卖出，赚得比固定止盈多
         double peak = arm + 1500;
         List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 3, peak - 500, peak - 400, peak - 1200, peak - 1100), trail);
         assertThat(f).singleElement().satisfies(x -> {
             assertThat(x.reason()).isEqualTo("移动止盈");
             assertThat(x.price()).isGreaterThan(arm);
+        });
+    }
+
+    @Test
+    void trailingNeverSellsBelowTakeProfitEvenOnGap() {
+        BtcDailyProperties trail = P.withExitMode("TRAIL");
+        Book book = new Book();
+        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, trail);
+        BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 58_700, 58_750), trail);
+        double arm = BtcDailyRules.takeProfitPrice(plan, book, trail);
+        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 1, 58_750, arm + 10, 58_700, arm), trail)).isEmpty();
+        // 跳空到止盈价下方且没回到止盈价：不卖亏
+        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 2, arm - 800, arm - 700, arm - 900, arm - 750), trail)).isEmpty();
+        // 回到止盈价：按止盈价卖出，不比 FIXED 低
+        List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 3, arm - 300, arm + 50, arm - 400, arm), trail);
+        assertThat(f).singleElement().satisfies(x -> assertThat(x.price()).isGreaterThan(arm * 0.999).isLessThan(arm + 1));
+        assertThat(f.getFirst().pnl()).isPositive();
+    }
+
+    @Test
+    void carriedPositionTrailsAfterBreakEven() {
+        BtcDailyProperties trail = P.withExitMode("TRAIL");
+        Book book = new Book();
+        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, trail);
+        BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 58_700, 58_750), trail);
+        LocalDate next = DAY.plusDays(1);
+        DailyPlan plan2 = BtcDailyRules.plan(next, daily(DAY, 60, 60_000, 2_000), 58_800, book, trail);
+        double be = book.avgCost() * (1 + P.carryTpPct() / 100);
+        assertThat(BtcDailyRules.takeProfitPrice(plan2, book, trail)).isEqualTo(be);
+        // 回本（+0.3%）后不卖，继续涨
+        assertThat(BtcDailyRules.onBar(plan2, book, bar(next, 0, 58_800, be + 5, 58_790, be), trail)).isEmpty();
+        assertThat(BtcDailyRules.onBar(plan2, book, bar(next, 1, be + 100, be + 2000, be + 100, be + 1900), trail)).isEmpty();
+        List<Fill> f = BtcDailyRules.onBar(plan2, book, bar(next, 2, be + 1900, be + 1900, be + 500, be + 600), trail);
+        assertThat(f).singleElement().satisfies(x -> {
+            assertThat(x.reason()).isEqualTo("回本后跟踪止盈");
+            assertThat(x.price()).isGreaterThan(be + 500);
         });
     }
 
