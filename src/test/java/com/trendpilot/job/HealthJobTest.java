@@ -15,6 +15,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.trendpilot.health.ApiStats;
 import com.trendpilot.support.TestData;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -61,6 +62,41 @@ class HealthJobTest {
         health.check(back.plus(Duration.ofMinutes(5)));
         assertThat(healthTexts()).hasSize(2);
         assertThat(healthTexts().getLast()).contains("恢复正常");
+    }
+
+    @Autowired
+    ApiStats api;
+
+    @Test
+    void detectsStaleKlinesFailingJobsAndRateLimits() {
+        Instant startup = runs.lastStarted(StartupCheck.JOB).orElseThrow();
+        Instant now = startup.plus(Duration.ofMinutes(20));
+        // Bybit K 线 2 小时前停了；Binance 正常
+        insertBar("BYBIT", now.minus(Duration.ofHours(2)));
+        insertBar("BINANCE", now.minus(Duration.ofMinutes(20)));
+        // Discovery 连续 3 次失败
+        for (int i = 3; i >= 1; i--) {
+            Instant t = now.minus(Duration.ofMinutes(i));
+            runs.record(DiscoveryJob.JOB, "F" + i, t, t, "FAILED", "N/A", "boom");
+        }
+        // 某接口 1 小时内被限流 3 次
+        for (int i = 0; i < 3; i++) api.record("api.example.test", 429, now);
+        api.record("api.example.test", 200, now);
+
+        List<String> keys = health.problems(now).stream().map(HealthJob.Problem::key).toList();
+        assertThat(keys).contains("kline:BYBIT", "DISCOVERY:failing", "api-limited:api.example.test")
+                .doesNotContain("kline:BINANCE");
+
+        String lines = String.join("\n", health.healthLines(now));
+        assertThat(lines).contains("DISCOVERY：运行", "失败 3 次", "api.example.test 4 次，限流 3", "Telegram 未发出");
+    }
+
+    private void insertBar(String venue, Instant close) {
+        long c = close.toEpochMilli();
+        jdbc.sql("""
+                INSERT OR REPLACE INTO kline_15m(venue, symbol, open_time, open, high, low, close, quote_volume, close_time)
+                VALUES (:v, 'HLTHUSDT', :o, 1, 1, 1, 1, 1, :c)
+                """).param("v", venue).param("o", c - 900_000 + 1).param("c", c).update();
     }
 
     private List<String> healthTexts() {

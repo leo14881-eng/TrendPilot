@@ -8,6 +8,7 @@ TrendPilot 自动更新与守护。由计划任务 "TrendPilot-AutoUpdate" 每 1
      否则构建（含全部测试），成功后等到 Monitor / Discovery 的空档再平滑停机、换上新 jar 和文件、启动；
      启动后要等到一次成功的 Monitor 才算更新成功，否则自动回滚到上一版（2 小时后再试这个版本）。
      构建失败则继续跑旧版，同一提交只提醒一次。
+  另外每天确认一次：接通电源时电脑不睡眠、不休眠（睡眠会让服务停掉）。
   3. 结果通过 Telegram 通知（从本机 config\application-local.yml 读取，不输出其中内容）。
 
 从不改动：config\application-local.yml、data、logs。
@@ -186,6 +187,30 @@ function Invoke-Git([string[]]$GitArgs) {
     return $output.Trim()
 }
 
+# 接电源时不睡眠、不休眠：电脑睡着服务就停了。普通用户可以改当前电源计划；每天检查一次（防止被改回去），失败只提醒一次。
+function Set-NoSleep {
+    $ErrorActionPreference = 'Continue'   # powercfg 写 stderr 时不要直接抛出
+    $marker = Join-Path $Bin 'nosleep.txt'
+    $today = Get-Date -Format 'yyyy-MM-dd'
+    $last = Read-Text $marker
+    if ($last -eq $today -or $last -eq "failed-$today") { return }
+    $failed = @()
+    foreach ($setting in 'standby-timeout-ac', 'hibernate-timeout-ac') {
+        & powercfg.exe /change $setting 0 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { $failed += $setting }
+    }
+    if ($failed.Count -eq 0) {
+        if (-not $last) { Write-Log '已设置接电源时不睡眠、不休眠' }
+        Set-Content $marker $today
+    } else {
+        Write-Log "设置不睡眠失败：$($failed -join ', ')"
+        if ($last -notlike 'failed-*') {
+            Send-Telegram "⚠️ 无法关闭电脑自动睡眠（$($failed -join ', ')），电脑睡眠时 TrendPilot 会停止。请在 设置 > 系统 > 电源 里把接通电源时的睡眠改为“从不”。"
+        }
+        Set-Content $marker "failed-$today"
+    }
+}
+
 # 防止两次运行重叠（构建可能超过 10 分钟）
 $mutex = New-Object System.Threading.Mutex($false, 'Local\TrendPilotAutoUpdate')
 if (-not $mutex.WaitOne(0)) { exit 0 }
@@ -202,6 +227,8 @@ try {
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'install-autoupdate.ps1') | Out-Null
         Write-Log '已重新注册计划任务（服务、自动更新、守护）'
     }
+
+    try { Set-NoSleep } catch { Write-Log "设置不睡眠出错：$($_.Exception.Message)" }
 
     # ---------- 2. 检查新提交 ----------
     if (-not (Test-Path (Join-Path $SrcDir '.git'))) {
