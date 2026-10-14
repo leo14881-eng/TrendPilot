@@ -11,7 +11,8 @@ final class BtcDailyMessages {
 
     static String plan(DailyPlan p, Book b, Map<String, Object> yesterday, BtcDailyProperties props) {
         StringBuilder sb = new StringBuilder();
-        sb.append("【BTC 每日短线·影子】").append(p.day()).append(" 计划（参数 ").append(p.version()).append("）\n");
+        sb.append("【BTC 每日短线·影子】").append(p.day()).append(" 计划（参数 ").append(p.version())
+                .append(p.v3() ? "，策略 v3，行情" + DailyPlan.regimeName(p.regime()) : "").append("）\n");
         sb.append("开盘 ").append(money(p.open())).append("｜ATR14 ").append(money(p.atr()))
                 .append("（").append(pct(p.atrPct())).append("）｜昨收")
                 .append(p.strong() ? "高于" : "低于").append(" EMA20，").append(p.strong() ? "偏强" : "偏弱").append('\n');
@@ -21,7 +22,8 @@ final class BtcDailyMessages {
         }
         sb.append("\n买入策略：\n");
         if (p.levels().isEmpty()) {
-            sb.append(p.skipNew() && !b.holding() ? "  今天不开新一轮（见上面的过滤原因）\n"
+            sb.append(b.holding() && p.v3() ? "  已有持仓，不加仓、不开新一轮，等卖出\n"
+                    : p.skipNew() && !b.holding() ? "  今天不开新一轮（见上面的原因）\n"
                     : b.trailPeak() > 0 ? "  持仓正在跟踪止盈，今天不加仓\n" : "  资金已用满，今天不再买入，等待止盈\n");
         } else if (p.multiplier() < 1 && !p.carried()) {
             sb.append("  仓位按过滤结果乘 ").append(p.multiplier()).append('\n');
@@ -29,6 +31,10 @@ final class BtcDailyMessages {
         for (DailyPlan.Level l : p.levels()) {
             sb.append("  第 ").append(l.index() + 1).append(" 档").append(l.index() == 0 ? "" : "（加仓）")
                     .append(" 跌到 ").append(money(l.price())).append(" 买 ").append(money(l.usdt())).append(" USDT\n");
+        }
+        if (p.v3()) {
+            sellV3(sb, p, b, props);
+            return tail(sb, b, yesterday, props);
         }
         String mode = props.exit().mode();
         boolean partialMode = "PARTIAL".equals(mode);
@@ -58,6 +64,29 @@ final class BtcDailyMessages {
         } else {
             sb.append("  不止损；当天没卖掉的仓位，次日起目标降为均价 +").append(pct(props.carryTpPct())).append("，回本即走\n");
         }
+        return tail(sb, b, yesterday, props);
+    }
+
+    private static void sellV3(StringBuilder sb, DailyPlan p, Book b, BtcDailyProperties props) {
+        BtcDailyProperties.V3 v = props.v3();
+        if (!p.levels().isEmpty() && p.levels().size() > 1) {
+            sb.append("  加仓只在趋势还在时：档位须高于 ").append("UP".equals(p.regime()) ? "日线 EMA20 " : "日线 EMA50 ")
+                    .append(money(p.addFloor())).append('\n');
+        }
+        sb.append("\n卖出策略（分批 + 跟踪，不止损）：\n");
+        if (b.holding()) {
+            sb.append("  持仓 ").append(qty(b.qty())).append(" BTC，成本 ").append(money(b.cost()))
+                    .append("，均价 ").append(money(b.avgCost())).append("（").append(b.openedDay()).append(" 开始持有）\n");
+            if (b.trailPeak() > 0) sb.append("  正在跟踪，最高 ").append(money(b.trailPeak())).append('\n');
+        }
+        sb.append("  涨到均价 +").append(fmt(v.partialAtPct())).append("% 先卖 1/3 锁定利润\n");
+        sb.append("  剩下的从最高价回落 ").append(fmt(v.trailHourAtr())).append("×1h ATR（约 ")
+                .append(money(v.trailHourAtr() * p.hourAtr())).append("）再卖，只在均价 +").append(fmt(v.floorPct()))
+                .append("% 以上卖，不卖亏\n");
+        sb.append("  不强制当天平仓；被套时不加仓、不开新一轮，回本后同样跟踪\n");
+    }
+
+    private static String tail(StringBuilder sb, Book b, Map<String, Object> yesterday, BtcDailyProperties props) {
         sb.append("\n昨日：买入 ").append(yesterday.get("buys")).append(" 次，卖出 ").append(yesterday.get("sells"))
                 .append(" 次，已实现 ").append(signed(num(yesterday.get("pnl")))).append(" USDT\n");
         sb.append("累计：完成 ").append(b.rounds()).append(" 轮，已实现 ").append(signed(b.realized()))
@@ -74,9 +103,9 @@ final class BtcDailyMessages {
                     .append(money(f.usdt())).append(" USDT（含手续费 ").append(money(f.fee())).append("）\n");
             // 用这笔成交之后的持仓，而不是整批成交处理完之后的账本
             boolean carried = b.openedDay() != null && b.openedDay().isBefore(p.day());
-            double tpPct = carried ? props.carryTpPct() : p.tpPct();
+            double tpPct = p.v3() ? props.v3().partialAtPct() : carried ? props.carryTpPct() : p.tpPct();
             sb.append("持仓：成本 ").append(money(f.posCost())).append("，均价 ").append(money(f.posAvg()))
-                    .append("FIXED".equals(props.exit().mode()) || "STOP".equals(props.exit().mode()) ? "，止盈价 " : "，开始跟踪价 ")
+                    .append(p.v3() ? "，先卖 1/3 价 " : "FIXED".equals(props.exit().mode()) || "STOP".equals(props.exit().mode()) ? "，止盈价 " : "，开始跟踪价 ")
                     .append(money(f.posAvg() * (1 + tpPct / 100)));
         } else {
             double cost = f.usdt() - f.pnl();
@@ -87,7 +116,8 @@ final class BtcDailyMessages {
             if (partial) {
                 sb.append("这部分盈亏 ").append(signed(f.pnl())).append(" USDT（").append(pct(f.pnl() / cost * 100))
                         .append("）\n剩余 ").append(qty(f.posQty())).append(" BTC 继续跟踪最高价，回落 ")
-                        .append(fmt(props.exit().partialTrailAtr())).append("×ATR 再卖，最低按止盈价，不卖亏\n");
+                        .append(p.v3() ? fmt(props.v3().trailHourAtr()) + "×1h ATR" : fmt(props.exit().partialTrailAtr()) + "×ATR")
+                        .append(" 再卖，不卖亏\n");
             } else if (round != null && round.cost() > cost + 0.01) {
                 sb.append("这次卖出 ").append(signed(f.pnl())).append(" USDT；本轮合计盈亏 ").append(signed(round.pnl()))
                         .append(" USDT（").append(pct(round.pnlPct())).append("），买入 ").append(f.level()).append(" 次\n");
@@ -151,6 +181,53 @@ final class BtcDailyMessages {
                     .append("）。回滚：配置 exit.mode 改回 FIXED。");
         } else {
             sb.append("\n⚠️ 跟踪类卖法回测都不如现行（总盈亏、最大回撤或最长被套更差），实盘暂不切换，仍按现行规则，等你决定。");
+        }
+        return sb.toString();
+    }
+
+    static String strategies(Map<String, BtcDailyBacktest.Result> runs, BtcDailyProperties props, String live) {
+        Map<String, String> names = Map.of(
+                "V2", "现行 V2：开盘下方三档，到止盈价全卖（跨天 +" + fmt(props.carryTpPct()) + "%）",
+                "V2.2", "V2.2（过渡版）：V2 + 到止盈价后跟踪最高价",
+                "V3", "新 V3：按行情挂单（上升满额 / 震荡深位减半 / 下跌不做），涨 " + fmt(props.v3().partialAtPct())
+                        + "% 卖 1/3，剩下跟踪 " + fmt(props.v3().trailHourAtr()) + "×1h ATR");
+        StringBuilder sb = new StringBuilder("【BTC 每日短线】策略回测对比（参数 " + props.version() + "，近一年，同一套过滤）\n");
+        BtcDailyBacktest.Result any = runs.values().iterator().next();
+        sb.append("区间 ").append(any.from()).append(" ~ ").append(any.to()).append("，同期持有 BTC ").append(pct(any.buyHoldPct())).append('\n');
+        BtcDailyBacktest.Result v3 = runs.get("V3");
+        if (v3 != null && v3.regimeDays() != null) {
+            sb.append("行情天数：");
+            v3.regimeDays().forEach((k, n) -> sb.append(DailyPlan.regimeName(k)).append(' ').append(n).append(" 天 "));
+            sb.append('\n');
+        }
+        for (var e : runs.entrySet()) {
+            BtcDailyBacktest.Result r = e.getValue();
+            sb.append("\n■ ").append(names.getOrDefault(e.getKey(), e.getKey())).append('\n')
+                    .append("年化 ").append(pct(r.annualPct())).append("（总盈亏 ").append(signed(r.totalPnl())).append(" USDT，含期末浮动）\n")
+                    .append("最大回撤 ").append(money(r.maxDrawdown())).append("（").append(pct(r.maxDrawdownPct())).append("）")
+                    .append("｜最长被套 ").append(r.maxHoldDays()).append(" 天\n")
+                    .append("完成 ").append(r.rounds()).append(" 轮，胜率 ").append(pct(r.winRate()))
+                    .append("｜平均赚 ").append(signed(r.avgWin())).append("，平均亏 ").append(signed(r.avgLoss())).append('\n')
+                    .append("大涨轮（持仓期间最高涨 ≥").append(fmt(BtcDailyBacktest.BIG_MOVE_PCT)).append("%）").append(r.bigRounds())
+                    .append(" 轮，吃到涨幅的 ").append(pct(r.captureRatio())).append('\n');
+            if (r.byRegime() != null && !r.byRegime().isEmpty()) {
+                sb.append("按开仓行情：");
+                r.byRegime().forEach((k, st) -> {
+                    boolean open = k.endsWith("_OPEN");
+                    String rg = DailyPlan.regimeName(open ? k.substring(0, k.length() - 5) : k);
+                    sb.append("\n  ").append(rg).append(open ? "（期末未卖）浮动 " + signed(st.pnl()) + "，已拿 "
+                            + fmt(st.maxHoldDays()) + " 天" : " " + st.rounds() + " 轮，盈亏 " + signed(st.pnl()) + "，胜率 "
+                            + pct(st.winRate()) + "，最长 " + fmt(st.maxHoldDays()) + " 天，最大浮亏 " + pct(st.worstMaePct()));
+                });
+                sb.append('\n');
+            }
+        }
+        if ("V3".equals(live)) {
+            sb.append("\n✅ V3 不比现行差（总盈亏不低、最大回撤不超 1.1 倍、最长被套不多 2 天），影子实盘从下一个计划起改用 V3。回滚：配置 strategy 改为 V2。");
+        } else if ("AUTO".equals(props.strategy())) {
+            sb.append("\n⚠️ V3 回测不如现行（总盈亏、最大回撤或最长被套更差），影子实盘仍按 V2，等你决定。");
+        } else {
+            sb.append("\n影子实盘按配置的策略 ").append(live).append('。');
         }
         return sb.toString();
     }

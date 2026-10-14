@@ -13,10 +13,33 @@ import java.util.List;
  * @param skipNew    市场 / 宏观过滤：当天不开新一轮
  * @param multiplier 市场 / 宏观过滤：新一轮档位金额乘数
  * @param reasons    过滤原因和缺失的数据源
+ * @param strategy   V2 / V3
+ * @param regime     行情：UP 上升 / SIDE 震荡 / DOWN 下跌
+ * @param hourAtr    1h ATR（V3 跟踪止盈用；V2 为 0）
+ * @param addFloor   V3：加仓档位须不低于此价（上升 = 日线 EMA20，震荡 = EMA50）
  */
 public record DailyPlan(LocalDate day, String version, double open, double atr, double ema, double prevClose,
                         boolean strong, boolean carried, double tpPct, List<Level> levels, boolean skipNew,
-                        double multiplier, String reasons) {
+                        double multiplier, String reasons, String strategy, String regime, double hourAtr,
+                        double addFloor) {
+
+    public DailyPlan {
+        if (strategy == null || strategy.isBlank()) strategy = "V2";
+        if (regime == null) regime = "";
+    }
+
+    public boolean v3() {
+        return "V3".equals(strategy);
+    }
+
+    public static String regimeName(String r) {
+        return switch (r) {
+            case "UP" -> "上升";
+            case "SIDE" -> "震荡";
+            case "DOWN" -> "下跌";
+            default -> "未知";
+        };
+    }
 
     /** @param index 本轮第几次买入（0 起） */
     public record Level(int index, double price, double usdt) {

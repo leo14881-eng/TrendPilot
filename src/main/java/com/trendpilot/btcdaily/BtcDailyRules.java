@@ -82,7 +82,105 @@ public final class BtcDailyRules {
         List<String> notes = new ArrayList<>(gate.reasons());
         if (ctx != null && !ctx.gaps().isEmpty()) notes.add("数据缺失：" + String.join("、", ctx.gaps()));
         return new DailyPlan(day, p.version(), open, atr, ema, prevClose, strong, book.holding(), tpPct,
-                List.copyOf(levels), gate.skipNew(), gate.multiplier(), String.join("；", notes));
+                List.copyOf(levels), gate.skipNew(), gate.multiplier(), String.join("；", notes), "V2",
+                regime(dailyBefore, p), 0, 0);
+    }
+
+    /** 行情：UP 昨收 > EMA20 > EMA50；DOWN 见 {@link #downtrend}；其余 SIDE。 */
+    static String regime(List<Kline> daily, BtcDailyProperties p) {
+        if (downtrend(daily, p)) return "DOWN";
+        double ema = ema(daily, p.emaDays());
+        double emaLong = ema(daily, p.filters().emaLong());
+        return daily.getLast().close() > ema && ema > emaLong ? "UP" : "SIDE";
+    }
+
+    /** V3 需要的计划日之前已收盘 1h K 线根数（下限）。 */
+    public static final int HOURLY_NEEDED = 48;
+
+    /**
+     * V3 计划：先判断行情，上升在支撑位挂三档满额，震荡挂更深的三档减半，下跌不挂；跨天仓位不加仓。
+     *
+     * @param hourlyBefore 计划日之前已收盘的 1h K 线（升序），至少 {@link #HOURLY_NEEDED} 根
+     */
+    public static DailyPlan planV3(LocalDate day, List<Kline> dailyBefore, List<Kline> hourlyBefore, double open,
+                                   Book book, BtcDailyProperties p, MarketContext ctx) {
+        int need = dailyNeeded(p);
+        if (dailyBefore.size() < need) {
+            throw new IllegalArgumentException("日线不足：需要 " + need + " 根，只有 " + dailyBefore.size());
+        }
+        if (hourlyBefore.size() < HOURLY_NEEDED) {
+            throw new IllegalArgumentException("1h K 线不足：需要 " + HOURLY_NEEDED + " 根，只有 " + hourlyBefore.size());
+        }
+        BtcDailyProperties.V3 v = p.v3();
+        String regime = regime(dailyBefore, p);
+        MarketContext.Gate gate = MarketContext.Gate.NONE;
+        if (ctx != null && p.filters().enabled()) gate = ctx.gate(false, p.filters());
+        double atr = atr(dailyBefore, p.atrDays());
+        double ema = ema(dailyBefore, p.emaDays());
+        double emaLong = ema(dailyBefore, p.filters().emaLong());
+        double prevClose = dailyBefore.getLast().close();
+        double hourAtr = atr(hourlyBefore, v.hourAtrBars());
+        boolean skip = gate.skipNew() || "DOWN".equals(regime);
+        double mult = gate.multiplier() * ("SIDE".equals(regime) ? v.sideMultiplier() : 1);
+        mult = Math.max(mult, p.filters().minMultiplier());
+
+        List<DailyPlan.Level> levels = new ArrayList<>();
+        if (!book.holding() && !skip) {
+            List<Double> prices = "UP".equals(regime)
+                    ? supportLevels(dailyBefore, hourlyBefore, open, atr, p)
+                    : List.of(open - v.sideAtr() * atr, open - (v.sideAtr() + p.stepAtr()) * atr,
+                    open - (v.sideAtr() + 2 * p.stepAtr()) * atr);
+            double spent = 0;
+            for (int i = 0; i < p.tranches().size(); i++) {
+                double usdt = round2(p.tranches().get(i) * mult);
+                if (spent + usdt > p.capUsdt() + 1e-6) break;
+                spent += usdt;
+                levels.add(new DailyPlan.Level(i, round2(prices.get(i)), usdt));
+            }
+        }
+        List<String> notes = new ArrayList<>();
+        notes.add("行情：" + DailyPlan.regimeName(regime) + ("DOWN".equals(regime) ? "，不挂单" : "SIDE".equals(regime)
+                ? "，只挂深位、金额 ×" + fmt(v.sideMultiplier()) : ""));
+        notes.addAll(gate.reasons());
+        if (ctx != null && !ctx.gaps().isEmpty()) notes.add("数据缺失：" + String.join("、", ctx.gaps()));
+        double addFloor = "UP".equals(regime) ? ema : emaLong;
+        return new DailyPlan(day, p.version(), open, atr, ema, prevClose, prevClose > ema, book.holding(),
+                v.partialAtPct(), List.copyOf(levels), skip, skip ? 0 : mult, String.join("；", notes), "V3", regime,
+                hourAtr, round2(addFloor));
+    }
+
+    /** 上升行情的三档：1h EMA20、前一日 VWAP、前一日低点里低于开盘的，从高到低；不够的往下补，相邻至少 minGapAtr × ATR。 */
+    static List<Double> supportLevels(List<Kline> dailyBefore, List<Kline> hourlyBefore, double open, double atr,
+                                      BtcDailyProperties p) {
+        BtcDailyProperties.V3 v = p.v3();
+        long dayStart = dailyBefore.getLast().closeTime() + 1;
+        double num = 0, den = 0;
+        for (Kline h : hourlyBefore) {
+            if (h.openTime() < dayStart - 86_400_000L) continue;
+            double tp = (h.high() + h.low() + h.close()) / 3;
+            // 只有成交额（USDT）：VWAP = Σ成交额 / Σ(成交额 / 典型价)
+            num += h.quoteVolume();
+            den += h.quoteVolume() / tp;
+        }
+        List<Double> cands = new ArrayList<>();
+        cands.add(ema(hourlyBefore, v.hourEmaBars()));
+        if (den > 0) cands.add(num / den);
+        cands.add(dailyBefore.getLast().low());
+        List<Double> below = cands.stream().filter(c -> c < open * 0.999).sorted(java.util.Comparator.reverseOrder()).toList();
+        List<Double> out = new ArrayList<>();
+        double prev = Double.NaN;
+        for (int i = 0; i < p.tranches().size(); i++) {
+            double c;
+            if (i == 0) {
+                c = below.isEmpty() ? open - v.firstFallbackAtr() * atr : below.getFirst();
+            } else {
+                c = i < below.size() ? below.get(i) : prev - p.stepAtr() * atr;
+                c = Math.min(c, prev - v.minGapAtr() * atr);
+            }
+            out.add(c);
+            prev = c;
+        }
+        return out;
     }
 
     /** 下跌趋势：昨收 < EMA20 且 EMA20 < 长期 EMA 且 EMA20 比 slopeDays 天前低。 */
@@ -148,7 +246,8 @@ public final class BtcDailyRules {
                 book.lastRound = new Book.Round(p.version(), book.openedDay, book.openedAt, bar.closeTime(),
                         (bar.closeTime() + 1 - book.openedAt) / 60_000, book.buys, roundCost, roundNet, roundPnl,
                         roundPnl / roundCost * 100, book.maePct, book.mfePct, e.reason(), book.openFilters,
-                        new java.util.LinkedHashMap<>(book.stopHits));
+                        new java.util.LinkedHashMap<>(book.stopHits), book.openRegime);
+                book.openRegime = "";
                 book.soldCost = 0;
                 book.soldProceeds = 0;
                 book.qty = 0;
@@ -172,6 +271,7 @@ public final class BtcDailyRules {
             for (DailyPlan.Level l : plan.levels()) {
                 if (l.index() != book.buys) continue;
                 double trigger = l.price();
+                if (book.holding() && plan.v3() && trigger < plan.addFloor()) break; // 趋势不在了：不再加仓
                 if (book.holding()) {
                     // 加仓至少比上一笔实际成交低 stepAtr × ATR：开盘已跳到档位下方时，上一笔会按开盘价成交，
                     // 若仍用计划价，下一档可能只差几百美元就连续加仓
@@ -186,6 +286,7 @@ public final class BtcDailyRules {
                     book.openedDay = day;
                     book.openedAt = bar.openTime();
                     book.openFilters = plan.reasons();
+                    book.openRegime = plan.regime();
                 }
                 book.qty += qty;
                 book.cost += l.usdt();
@@ -216,6 +317,7 @@ public final class BtcDailyRules {
     static Exit exitSignal(DailyPlan plan, Book book, Kline bar, BtcDailyProperties p) {
         BtcDailyProperties.Exit x = p.exit();
         boolean carried = book.openedDay != null && book.openedDay.isBefore(plan.day());
+        if (plan.v3()) return exitV3(plan, book, bar, p, carried);
         double target = takeProfitPrice(plan, book, p);
         switch (x.mode()) {
             case "STOP" -> {
@@ -257,6 +359,30 @@ public final class BtcDailyRules {
             }
         }
         if (bar.high() >= target) return new Exit(Math.max(target, bar.open()), carried ? "跨天回本止盈" : "当日止盈");
+        return null;
+    }
+
+    /** V3：涨 partialAtPct% 先卖一部分并启动跟踪；跨天仓位回到保底价也启动跟踪；跟踪回落到保底价以上卖出。 */
+    static Exit exitV3(DailyPlan plan, Book book, Kline bar, BtcDailyProperties p, boolean carried) {
+        BtcDailyProperties.V3 v = p.v3();
+        double avg = book.avgCost();
+        double floor = avg * (1 + v.floorPct() / 100);
+        double first = avg * (1 + v.partialAtPct() / 100);
+        double hourAtr = plan.hourAtr() > 0 ? plan.hourAtr() : plan.atr() / 5; // 旧计划没有 1h ATR 时的近似
+        if (book.trailPeak > 0) {
+            Exit t = trailExit(book, bar, floor, book.trailPeak - v.trailHourAtr() * hourAtr, "跟踪止盈");
+            if (t != null) return t;
+        }
+        if (book.soldCost <= 0 && bar.high() >= first) {
+            book.trailPeak = Math.max(book.trailPeak, bar.high());
+            return new Exit(Math.max(first, bar.open()), "涨 " + fmt(v.partialAtPct()) + "% 先卖 "
+                    + (Math.abs(v.partialPct() - 33.33) < 0.01 ? "1/3" : fmt(v.partialPct()) + "%"), v.partialPct() / 100);
+        }
+        if (book.trailPeak > 0) {
+            book.trailPeak = Math.max(book.trailPeak, bar.high());
+        } else if (carried && bar.high() >= floor) {
+            book.trailPeak = bar.high(); // 被套后回本：启动跟踪，不是 +0.3% 就走
+        }
         return null;
     }
 

@@ -152,6 +152,17 @@ class BtcDailyRulesTest {
         BtcDailyBacktest.Result stopped = BtcDailyBacktest.run(d, hourly, P.withExitMode("STOP"), null);
         assertThat(stopped.losses()).isPositive();
         assertThat(BtcDailyBacktest.run(d, hourly, P.withExitMode("TRAIL"), null).losses()).isZero();
+        // V3：下跌行情不挂单，浮亏比 V2 小，不卖亏；按行情统计
+        BtcDailyBacktest.Result v3 = BtcDailyBacktest.run(d, hourly, hourly, V3, null);
+        assertThat(v3.strategy()).isEqualTo("V3");
+        assertThat(v3.regimeDays()).containsKey("DOWN");
+        assertThat(v3.losses()).isZero();
+        assertThat(v3.maxFloatLoss()).isGreaterThan(r.maxFloatLoss());
+        java.util.Map<String, BtcDailyBacktest.Result> runs = new java.util.LinkedHashMap<>();
+        runs.put("V2", r);
+        runs.put("V3", v3);
+        assertThat(BtcDailyMessages.strategies(runs, BtcDailyProperties.defaults(), "V3"))
+                .contains("现行 V2", "新 V3", "按开仓行情", "行情天数", "改用 V3");
     }
 
     @Test
@@ -330,6 +341,112 @@ class BtcDailyRulesTest {
         assertThat(book.lastRound.pnl()).isCloseTo(f.getFirst().pnl() + g.getFirst().pnl(), within(1e-6));
         assertThat(book.lastRound.cost()).isCloseTo(3000, within(1e-6));
         assertThat(book.realized()).isCloseTo(book.lastRound.pnl(), within(1e-6));
+    }
+
+    static final BtcDailyProperties V3 = BtcDailyProperties.defaults().withStrategy("V3");
+
+    /** n 根日线：收盘从 start 起每天变化 step，振幅 range。 */
+    static List<Kline> dailyTrend(LocalDate lastDay, int n, double start, double step, double range) {
+        List<Kline> out = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            long t = BtcDailyRules.dayStart(lastDay.minusDays(n - 1 - i));
+            double c = start + step * i;
+            out.add(new Kline(t, c - step, c + range / 2, c - range / 2, c, 1e9, t + 86_399_999L));
+        }
+        return out;
+    }
+
+    /** day 之前 n 根 1h K 线：收盘 close，振幅 range。 */
+    static List<Kline> hourlyFlat(LocalDate day, int n, double close, double range) {
+        long start = BtcDailyRules.dayStart(day);
+        List<Kline> out = new ArrayList<>();
+        for (int i = n; i > 0; i--) {
+            long t = start - i * 3_600_000L;
+            out.add(new Kline(t, close, close + range / 2, close - range / 2, close, 1e8, t + 3_599_999L));
+        }
+        return out;
+    }
+
+    @Test
+    void v3UptrendPlacesSupportLevelsFullSize() {
+        List<Kline> d = dailyTrend(DAY.minusDays(1), 60, 50_000, 200, 2_000);
+        double c = d.getLast().close();
+        DailyPlan p = BtcDailyRules.planV3(DAY, d, hourlyFlat(DAY, 72, c, 400), c + 500, new Book(), V3, null);
+        assertThat(p.regime()).isEqualTo("UP");
+        assertThat(p.hourAtr()).isCloseTo(400, within(1e-6));
+        assertThat(p.levels()).extracting(DailyPlan.Level::usdt).containsExactly(3000.0, 3000.0, 4000.0);
+        List<Double> prices = p.levels().stream().map(DailyPlan.Level::price).toList();
+        assertThat(prices.getFirst()).isCloseTo(c, within(1.0)); // 1h EMA20 / VWAP
+        assertThat(prices.get(0) - prices.get(1)).isGreaterThanOrEqualTo(0.3 * p.atr() - 0.01);
+        assertThat(prices.get(1) - prices.get(2)).isGreaterThanOrEqualTo(0.3 * p.atr() - 0.01);
+        assertThat(p.addFloor()).isCloseTo(p.ema(), within(0.01));
+    }
+
+    @Test
+    void v3SidewaysDeepHalfAndDowntrendNone() {
+        DailyPlan side = BtcDailyRules.planV3(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000),
+                hourlyFlat(DAY, 72, 60_000, 400), 60_000, new Book(), V3, null);
+        assertThat(side.regime()).isEqualTo("SIDE");
+        assertThat(side.levels()).extracting(DailyPlan.Level::price).containsExactly(57_000.0, 56_000.0, 55_000.0);
+        assertThat(side.levels()).extracting(DailyPlan.Level::usdt).containsExactly(1500.0, 1500.0, 2000.0);
+        List<Kline> down = dailyTrend(DAY.minusDays(1), 60, 70_000, -200, 2_000);
+        DailyPlan p = BtcDailyRules.planV3(DAY, down, hourlyFlat(DAY, 72, down.getLast().close(), 400),
+                down.getLast().close(), new Book(), V3, null);
+        assertThat(p.regime()).isEqualTo("DOWN");
+        assertThat(p.levels()).isEmpty();
+        assertThat(p.skipNew()).isTrue();
+        assertThat(BtcDailyMessages.plan(p, new Book(), java.util.Map.of("buys", 0, "sells", 0, "pnl", 0), V3))
+                .contains("行情下跌", "不挂单");
+    }
+
+    @Test
+    void v3SellsThirdThenTrailsAndAddsOnlyWhileTrendHolds() {
+        DailyPlan plan = BtcDailyRules.planV3(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000),
+                hourlyFlat(DAY, 72, 60_000, 400), 60_000, new Book(), V3, null);
+        Book book = new Book();
+        // 跌穿第 1、2 档：只买第 1 档（震荡行情加仓须在 EMA50 = 60,000 上方）
+        List<Fill> buys = BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 55_900, 56_500), V3);
+        assertThat(buys).singleElement().satisfies(x -> assertThat(x.level()).isZero());
+        double avg = book.avgCost();
+        double qty = book.qty();
+        // 涨 1.5%：卖 1/3
+        List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 1, 56_500, avg * 1.016, 56_400, avg * 1.015), V3);
+        assertThat(f).singleElement().satisfies(x -> {
+            assertThat(x.qty()).isCloseTo(qty * 0.3333, within(1e-6));
+            assertThat(x.reason()).contains("1/3");
+        });
+        // 继续涨 5%，没回落 1.5 × 400 = 600：不卖
+        double high = avg * 1.06;
+        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 2, avg * 1.016, high, avg * 1.016, high - 100), V3)).isEmpty();
+        // 回落超过 600：剩下的全卖，价格接近最高价 − 600
+        List<Fill> g = BtcDailyRules.onBar(plan, book, bar(DAY, 3, high - 100, high - 100, high - 900, high - 800), V3);
+        assertThat(g).singleElement().satisfies(x -> {
+            assertThat(x.reason()).isEqualTo("跟踪止盈");
+            assertThat(x.price()).isGreaterThan(high - 620);
+        });
+        assertThat(book.holding()).isFalse();
+        assertThat(book.lastRound.regime()).isEqualTo("SIDE");
+        assertThat(book.lastRound.pnl()).isCloseTo(f.getFirst().pnl() + g.getFirst().pnl(), within(1e-6));
+    }
+
+    @Test
+    void v3CarriedPositionNoAddsAndTrailsAfterBreakEven() {
+        DailyPlan plan = BtcDailyRules.planV3(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000),
+                hourlyFlat(DAY, 72, 60_000, 400), 60_000, new Book(), V3, null);
+        Book book = new Book();
+        BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 56_900, 56_000), V3);
+        LocalDate next = DAY.plusDays(1);
+        DailyPlan p2 = BtcDailyRules.planV3(next, daily(DAY, 60, 60_000, 2_000), hourlyFlat(next, 72, 56_000, 400),
+                56_000, book, V3, null);
+        assertThat(p2.levels()).isEmpty();
+        assertThat(BtcDailyRules.onBar(p2, book, bar(next, 0, 56_000, 56_000, 50_000, 51_000), V3)).isEmpty(); // 不止损、不加仓
+        double floor = book.avgCost() * 1.003;
+        // 回到保底价：启动跟踪，不立即卖
+        assertThat(BtcDailyRules.onBar(p2, book, bar(next, 1, 51_000, floor + 10, 51_000, floor), V3)).isEmpty();
+        assertThat(book.trailPeak()).isPositive();
+        // 回落：按保底价卖，不亏
+        List<Fill> f = BtcDailyRules.onBar(p2, book, bar(next, 2, floor, floor, floor - 300, floor - 200), V3);
+        assertThat(f).singleElement().satisfies(x -> assertThat(x.pnl()).isPositive());
     }
 
     @Test

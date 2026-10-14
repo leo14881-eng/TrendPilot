@@ -33,6 +33,8 @@ public final class Book {
     final Map<String, StopHit> stopHits = new LinkedHashMap<>();
     /** 移动止盈（TRAIL）启动后的最高价；0 表示未启动。 */
     double trailPeak;
+    /** 开仓当天的行情（UP / SIDE / DOWN）。 */
+    String openRegime = "";
     /** 本轮已部分卖出的成本和到手金额（PARTIAL 先卖一半时累计，整轮结束清零）。 */
     double soldCost;
     double soldProceeds;
@@ -46,7 +48,7 @@ public final class Book {
     /** 完成的一轮。 */
     public record Round(String version, LocalDate openedDay, long openedAt, long closedAt, long holdMinutes, int buys,
                        double cost, double proceeds, double pnl, double pnlPct, double maePct, double mfePct,
-                       String exitReason, String openFilters, Map<String, StopHit> stopHits) {
+                       String exitReason, String openFilters, Map<String, StopHit> stopHits, String regime) {
     }
 
     public boolean holding() {

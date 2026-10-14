@@ -41,6 +41,8 @@ public class BtcDailyService {
     private final ContextService context;
     /** 本版本回测确认后实盘用的卖出方式；null = 还没确认。 */
     private volatile String liveExit;
+    /** strategy = AUTO 时本版本回测选定的策略；null = 还没确认。 */
+    private volatile String liveStrategy;
 
     public BtcDailyService(BtcDailyProperties props, BtcDailyStore store, Markets markets, KlineStore klines,
                            Notifier notifier, ObjectMapper json, ContextService context) {
@@ -143,7 +145,17 @@ public class BtcDailyService {
             log.warn("BTC 每日短线：市场 / 宏观数据刷新失败：{}", e.getMessage());
         }
         MarketContext ctx = context.context(day);
-        DailyPlan plan = BtcDailyRules.plan(day, before, today.open(), book, props, ctx);
+        BtcDailyProperties p = live();
+        DailyPlan plan = null;
+        if (p.isV3()) {
+            List<Kline> hourly = hourlyBefore(start);
+            if (hourly.size() >= BtcDailyRules.HOURLY_NEEDED) {
+                plan = BtcDailyRules.planV3(day, before, hourly, today.open(), book, p, ctx);
+            } else {
+                log.warn("BTC 每日短线：1h K 线不足（{} 根），{} 按 V2 生成计划", hourly.size(), day);
+            }
+        }
+        if (plan == null) plan = BtcDailyRules.plan(day, before, today.open(), book, p, ctx);
         store.savePlan(plan, now);
         LocalDate yesterday = day.minusDays(1);
         notifier.send("btc-daily-plan-" + day, BtcDailyMessages.plan(plan, book, store.daySummary(yesterday), live()));
@@ -168,30 +180,50 @@ public class BtcDailyService {
                 + " USDT\n上限不会自动放大，是否调整由你决定。");
     }
 
-    /** 实盘生效的参数：卖出方式需要回测确认时，确认前和回测不达标都按 FIXED。 */
+    /**
+     * 实盘生效的参数。strategy = AUTO 时：本版本回测确认 V3 不比 V2 差才用 V3，确认前和不达标都用 V2；
+     * V2 的卖出方式需要回测确认时同理，确认前按 FIXED。
+     */
     BtcDailyProperties live() {
-        BtcDailyProperties.Exit x = props.exit();
-        if ("FIXED".equals(x.mode()) || (!x.requireBacktest() && !"AUTO".equals(x.mode()))) return props;
+        BtcDailyProperties p = props;
+        if ("AUTO".equals(props.strategy())) {
+            String s = liveStrategy;
+            if (s == null) {
+                s = store.backtest(props.version()).map(j -> jsonField(j, "liveStrategy")).orElse(null);
+                liveStrategy = s;
+            }
+            p = props.withStrategy(s == null ? "V2" : s);
+        }
+        BtcDailyProperties.Exit x = p.exit();
+        if ("FIXED".equals(x.mode()) || (!x.requireBacktest() && !"AUTO".equals(x.mode()))) return p;
         String mode = liveExit;
         if (mode == null) {
-            mode = store.backtest(props.version()).map(this::liveExitOf).orElse(null);
+            mode = store.backtest(props.version()).map(j -> jsonField(j, "liveExit")).orElse(null);
             liveExit = mode;
         }
-        return props.withExitMode(mode == null ? "FIXED" : mode);
+        return p.withExitMode(mode == null ? "FIXED" : mode);
     }
 
     /** 测试用：清掉已缓存的回测结论。 */
     void forgetLiveExit() {
         liveExit = null;
+        liveStrategy = null;
     }
 
-    private String liveExitOf(String backtestJson) {
+    private String jsonField(String backtestJson, String field) {
         try {
-            Object v = json.readValue(backtestJson, Map.class).get("liveExit");
+            Object v = json.readValue(backtestJson, Map.class).get(field);
             return v instanceof String sv ? sv : null;
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** 不比基准差：总盈亏不低于基准，最大回撤不超过基准 1.1 倍，最长被套不多于基准 2 天。 */
+    static boolean notWorse(BtcDailyBacktest.Result r, BtcDailyBacktest.Result base) {
+        return r.totalPnl() >= base.totalPnl() - 0.01
+                && r.maxDrawdown() <= base.maxDrawdown() * 1.1 + 0.01
+                && r.maxHoldDays() <= base.maxHoldDays() + 2;
     }
 
     /**
@@ -210,15 +242,25 @@ public class BtcDailyService {
         for (String c : cands) {
             BtcDailyBacktest.Result r = exits.get(c);
             if (r == null) continue;
-            boolean notWorse = r.totalPnl() >= f.totalPnl() - 0.01
-                    && r.maxDrawdown() <= f.maxDrawdown() * 1.1 + 0.01
-                    && r.maxHoldDays() <= f.maxHoldDays() + 2;
-            if (notWorse && r.totalPnl() > bestPnl) {
+            if (notWorse(r, f) && r.totalPnl() > bestPnl) {
                 best = c;
                 bestPnl = r.totalPnl();
             }
         }
         return best;
+    }
+
+    /** 计划日之前最近 72 根已收盘 1h K 线（每天生成计划时 1 次请求）。 */
+    private List<Kline> hourlyBefore(long start) {
+        VenueMarket m = markets.get(Venue.BINANCE);
+        if (m == null) return List.of();
+        try {
+            return m.source().klines(props.symbol(), "1h", start - 72 * BarsLoader.HOUR_MS, 72).stream()
+                    .filter(k -> k.closeTime() < start).toList();
+        } catch (RuntimeException e) {
+            log.warn("BTC 每日短线：1h K 线获取失败：{}", e.getMessage());
+            return List.of();
+        }
     }
 
     private List<Kline> daily(VenueMarket m) {
@@ -239,7 +281,8 @@ public class BtcDailyService {
         List<Kline> daily = m.source().klines(sym, "1d", null, Math.min(1000, props.backtestDays() + DAILY_LIMIT))
                 .stream().filter(k -> k.closeTime() < t).toList();
         List<Kline> hourly = new ArrayList<>();
-        long from = BtcDailyRules.dayStart(BtcDailyRules.dayOf(t).minusDays(props.backtestDays()));
+        long rangeStart = BtcDailyRules.dayStart(BtcDailyRules.dayOf(t).minusDays(props.backtestDays()));
+        long from = rangeStart - 4 * 86_400_000L; // V3 计划要用之前的 1h K 线
         while (from < t) {
             List<Kline> page = m.source().klines(sym, "1h", from, 1000);
             if (page.isEmpty()) break;
@@ -248,22 +291,23 @@ public class BtcDailyService {
             if (next <= from || page.size() < 1000) break;
             from = next;
         }
-        LocalDate firstDay = hourly.isEmpty() ? BtcDailyRules.dayOf(t) : BtcDailyRules.dayOf(hourly.getFirst().openTime());
+        List<Kline> bars = hourly.stream().filter(k -> k.openTime() >= rangeStart).toList();
+        LocalDate firstDay = BtcDailyRules.dayOf(rangeStart);
         context.loadHistory(firstDay.minusDays(2), now);
-        BtcDailyBacktest.Result base = BtcDailyBacktest.run(daily, hourly, props, null);
-        BtcDailyBacktest.Result filtered = BtcDailyBacktest.run(daily, hourly, props, context::context);
-        // 卖出方式对比（都加过滤）：现行 FIXED、回本后跟踪 TRAIL、先卖一半剩下跟踪 PARTIAL、8% 宽止损 STOP
-        Map<String, BtcDailyBacktest.Result> exits = new java.util.LinkedHashMap<>();
-        for (String mode : List.of("FIXED", "TRAIL", "PARTIAL", "STOP")) {
-            exits.put(mode, BtcDailyBacktest.run(daily, hourly, props.withExitMode(mode), context::context));
-        }
-        String chosen = decideExit(props.exit(), exits);
+        // 现行 V2（固定止盈）、V2.2（回本后跟踪）、V3（按行情挂单 + 分批跟踪），都加市场 / 宏观过滤
+        Map<String, BtcDailyBacktest.Result> runs = new java.util.LinkedHashMap<>();
+        runs.put("V2", BtcDailyBacktest.run(daily, bars, hourly, props.withStrategy("V2").withExitMode("FIXED"), context::context));
+        runs.put("V2.2", BtcDailyBacktest.run(daily, bars, hourly, props.withStrategy("V2").withExitMode("TRAIL"), context::context));
+        runs.put("V3", BtcDailyBacktest.run(daily, bars, hourly, props.withStrategy("V3"), context::context));
+        String chosen = "AUTO".equals(props.strategy())
+                ? (notWorse(runs.get("V3"), runs.get("V2")) ? "V3" : "V2") : props.strategy();
+        String exit = decideExit(props.exit(), Map.of("FIXED", runs.get("V2"), "TRAIL", runs.get("V2.2")));
         store.saveBacktest(props.version(), json.writeValueAsString(
-                Map.of("base", base, "filtered", filtered, "exits", exits, "liveExit", chosen)), now);
-        liveExit = chosen;
-        notifier.send("btc-daily-backtest-" + props.version(), BtcDailyMessages.backtest(base, filtered, props));
-        notifier.send("btc-daily-exits-" + props.version(), BtcDailyMessages.exits(exits, props, chosen));
-        log.info("BTC 每日短线回测完成：基准 {}，加过滤 {}", base, filtered);
+                Map.of("runs", runs, "liveStrategy", chosen, "liveExit", exit)), now);
+        liveStrategy = chosen;
+        liveExit = exit;
+        notifier.send("btc-daily-backtest-" + props.version(), BtcDailyMessages.strategies(runs, props, chosen));
+        log.info("BTC 每日短线回测完成，实盘策略 {}：{}", chosen, runs);
     }
 
     /** /api/btc-daily 和每日快照用。 */
@@ -275,7 +319,8 @@ public class BtcDailyService {
         Map<String, Object> s = new LinkedHashMap<>();
         BtcDailyProperties p = live();
         s.put("version", props.version());
-        s.put("exitMode", p.exit().mode());
+        s.put("strategy", p.strategy());
+        s.put("exitMode", p.isV3() ? "V3" : p.exit().mode());
         s.put("capUsdt", props.capUsdt());
         s.put("capUntil", props.capUntil());
         s.put("plan", plan);

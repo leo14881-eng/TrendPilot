@@ -25,6 +25,7 @@ public class FakeMarket implements MarketDataSource {
     public final Map<String, List<Kline>> quarters = new ConcurrentHashMap<>();
     public final Map<String, OrderBook> books = new ConcurrentHashMap<>();
     public final Map<String, List<Kline>> daily = new ConcurrentHashMap<>();
+    public final Map<String, List<Kline>> hourly = new ConcurrentHashMap<>();
     public final AtomicInteger symbolRequests = new AtomicInteger();
     public final AtomicInteger klineRequests = new AtomicInteger();
     public final AtomicInteger depthRequests = new AtomicInteger();
@@ -63,6 +64,7 @@ public class FakeMarket implements MarketDataSource {
         quarters.clear();
         books.clear();
         daily.clear();
+        hourly.clear();
         symbolRequests.set(0);
         klineRequests.set(0);
         depthRequests.set(0);
@@ -90,8 +92,13 @@ public class FakeMarket implements MarketDataSource {
     @Override
     public List<Kline> klines(String symbol, String interval, Long startTime, int limit) {
         klineRequests.incrementAndGet();
-        List<Kline> q = interval.equals("1d") ? daily.get(symbol) : quarters.get(symbol);
-        if (q == null || !(interval.equals("15m") || interval.equals("1d"))) throw new MarketDataException("no bars " + symbol);
+        List<Kline> q = switch (interval) {
+            case "1d" -> daily.get(symbol);
+            case "1h" -> hourly.get(symbol);
+            case "15m" -> quarters.get(symbol);
+            default -> null;
+        };
+        if (q == null) throw new MarketDataException("no bars " + symbol);
         if (startTime == null) {
             return q.subList(Math.max(0, q.size() - limit), q.size());
         }
