@@ -1,7 +1,7 @@
 ﻿<#
 一次性安装（普通用户权限即可，不需要管理员）：注册两个计划任务。
   TrendPilot-Service     运行服务本身（scripts\run-service.cmd），不限运行时长
-  TrendPilot-AutoUpdate  每 10 分钟运行 scripts\auto-update.ps1：自动更新
+  TrendPilot-AutoUpdate  每 3 分钟运行 scripts\auto-update.ps1：自动更新
   TrendPilot-Watchdog    每 2 分钟运行 scripts\watchdog.ps1：服务停止或卡死时拉起并发 Telegram
 重复运行会覆盖旧任务。卸载：Unregister-ScheduledTask TrendPilot-Service,TrendPilot-AutoUpdate,TrendPilot-Watchdog
 #>
@@ -23,7 +23,7 @@ Register-ScheduledTask -TaskName 'TrendPilot-Service' -Action $svcAction -Trigge
 $updAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AppDir\scripts\auto-update.ps1`"" `
     -WorkingDirectory $AppDir
-$updTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 10)
+$updTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 3)
 $updSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 Register-ScheduledTask -TaskName 'TrendPilot-AutoUpdate' -Action $updAction -Trigger $updTrigger -Principal $principal `

@@ -1,5 +1,5 @@
 ﻿<#
-TrendPilot 自动更新与守护。由计划任务 "TrendPilot-AutoUpdate" 每 10 分钟以普通用户身份运行，不需要管理员。
+TrendPilot 自动更新与守护。由计划任务 "TrendPilot-AutoUpdate" 每 3 分钟以普通用户身份运行，不需要管理员。
 
 每次运行：
   1. 确认守护任务 TrendPilot-Watchdog 已注册（服务停止/卡死的检测与拉起由它每 2 分钟负责）。
@@ -211,7 +211,7 @@ function Set-NoSleep {
     }
 }
 
-# 防止两次运行重叠（构建可能超过 10 分钟）
+# 防止两次运行重叠（构建可能超过 3 分钟）
 $mutex = New-Object System.Threading.Mutex($false, 'Local\TrendPilotAutoUpdate')
 if (-not $mutex.WaitOne(0)) { exit 0 }
 
