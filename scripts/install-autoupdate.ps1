@@ -1,8 +1,9 @@
 ﻿<#
 一次性安装（普通用户权限即可，不需要管理员）：注册两个计划任务。
   TrendPilot-Service     运行服务本身（scripts\run-service.cmd），不限运行时长
-  TrendPilot-AutoUpdate  每 10 分钟运行 scripts\auto-update.ps1：守护 + 自动更新
-重复运行会覆盖旧任务。卸载：Unregister-ScheduledTask TrendPilot-Service,TrendPilot-AutoUpdate
+  TrendPilot-AutoUpdate  每 10 分钟运行 scripts\auto-update.ps1：自动更新
+  TrendPilot-Watchdog    每 2 分钟运行 scripts\watchdog.ps1：服务停止或卡死时拉起并发 Telegram
+重复运行会覆盖旧任务。卸载：Unregister-ScheduledTask TrendPilot-Service,TrendPilot-AutoUpdate,TrendPilot-Watchdog
 #>
 $ErrorActionPreference = 'Stop'
 $AppDir = Split-Path -Parent $PSScriptRoot
@@ -25,4 +26,13 @@ $updSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -H
 Register-ScheduledTask -TaskName 'TrendPilot-AutoUpdate' -Action $updAction -Trigger $updTrigger -Principal $principal `
     -Settings $updSettings -Description 'TrendPilot watchdog and auto update from GitHub main' -Force | Out-Null
 
-Write-Output 'Installed: TrendPilot-Service, TrendPilot-AutoUpdate'
+$wdAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AppDir\scripts\watchdog.ps1`"" `
+    -WorkingDirectory $AppDir
+$wdTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 2)
+$wdSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew `
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+Register-ScheduledTask -TaskName 'TrendPilot-Watchdog' -Action $wdAction -Trigger $wdTrigger -Principal $principal `
+    -Settings $wdSettings -Description 'TrendPilot watchdog: restart when stopped or hung, Telegram alerts' -Force | Out-Null
+
+Write-Output 'Installed: TrendPilot-Service, TrendPilot-AutoUpdate, TrendPilot-Watchdog'
