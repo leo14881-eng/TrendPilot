@@ -294,14 +294,18 @@ public class BtcDailyService {
         List<Kline> bars = hourly.stream().filter(k -> k.openTime() >= rangeStart).toList();
         LocalDate firstDay = BtcDailyRules.dayOf(rangeStart);
         context.loadHistory(firstDay.minusDays(2), now);
-        // 现行 V2（固定止盈）、V2.2（回本后跟踪）、V3（按行情挂单 + 分批跟踪），都加市场 / 宏观过滤
+        // 现行 V2（固定止盈）、V3（按行情挂单 + 分批跟踪）、V3 + 三种被套保护，都加市场 / 宏观过滤
         Map<String, BtcDailyBacktest.Result> runs = new java.util.LinkedHashMap<>();
         runs.put("V2", BtcDailyBacktest.run(daily, bars, hourly, props.withStrategy("V2").withExitMode("FIXED"), context::context));
-        runs.put("V2.2", BtcDailyBacktest.run(daily, bars, hourly, props.withStrategy("V2").withExitMode("TRAIL"), context::context));
-        runs.put("V3", BtcDailyBacktest.run(daily, bars, hourly, props.withStrategy("V3"), context::context));
+        BtcDailyProperties v3 = props.withStrategy("V3").withGuard("NONE");
+        runs.put("V3", BtcDailyBacktest.run(daily, bars, hourly, v3, context::context));
+        // 被套保护对比（只回测，实盘不止损，等用户决定）
+        for (String g : List.of("TREND", "TIME", "STOP")) {
+            runs.put("V3+" + g, BtcDailyBacktest.run(daily, bars, hourly, v3.withGuard(g), context::context));
+        }
         String chosen = "AUTO".equals(props.strategy())
                 ? (notWorse(runs.get("V3"), runs.get("V2")) ? "V3" : "V2") : props.strategy();
-        String exit = decideExit(props.exit(), Map.of("FIXED", runs.get("V2"), "TRAIL", runs.get("V2.2")));
+        String exit = decideExit(props.exit(), Map.of("FIXED", runs.get("V2")));
         store.saveBacktest(props.version(), json.writeValueAsString(
                 Map.of("runs", runs, "liveStrategy", chosen, "liveExit", exit)), now);
         liveStrategy = chosen;

@@ -369,6 +369,23 @@ public final class BtcDailyRules {
         double floor = avg * (1 + v.floorPct() / 100);
         double first = avg * (1 + v.partialAtPct() / 100);
         double hourAtr = plan.hourAtr() > 0 ? plan.hourAtr() : plan.atr() / 5; // 旧计划没有 1h ATR 时的近似
+        switch (v.guard()) {
+            case "TREND" -> {
+                if ("DOWN".equals(plan.regime())) return new Exit(bar.open(), "趋势转跌离场");
+            }
+            case "TIME" -> {
+                if (book.openedDay != null
+                        && java.time.temporal.ChronoUnit.DAYS.between(book.openedDay, plan.day()) >= v.guardDays()) {
+                    return new Exit(bar.open(), "持有满 " + v.guardDays() + " 天离场");
+                }
+            }
+            case "STOP" -> {
+                double stop = avg * (1 - v.guardStopPct() / 100);
+                if (bar.low() <= stop) return new Exit(Math.min(stop, bar.open()), "止损 " + fmt(v.guardStopPct()) + "%");
+            }
+            default -> {
+            }
+        }
         if (book.trailPeak > 0) {
             Exit t = trailExit(book, bar, floor, book.trailPeak - v.trailHourAtr() * hourAtr, "跟踪止盈");
             if (t != null) return t;

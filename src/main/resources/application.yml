@@ -188,7 +188,7 @@ trendpilot.research:
 # 改参数时同时改 version（会自动重新回测一次）
 trendpilot.btc-daily:
   enabled: true
-  version: btc-v3-2026-10-15     # v3：按行情挂单 + 分批跟踪（用户 2026-10-15 批准），回测不比 V2 差才生效
+  version: btc-v3.1-2026-10-15   # v3 + 回测对比被套保护（趋势转跌 / 满 10 天 / 跌 8%），实盘仍不止损
   symbol: BTCUSDT
   cap-usdt: 10000
   cap-until: "2026-11-14"         # 第一个月上限，到期按数据复评
@@ -217,6 +217,9 @@ trendpilot.btc-daily:
     side-multiplier: 0.5           # 震荡金额减半
     min-gap-atr: 0.3               # 上升行情相邻两档至少差 0.3 × ATR
     first-fallback-atr: 0.25       # 支撑都不在开盘下方时，第 1 档 = 开盘 − 0.25 × ATR
+    guard: NONE                    # 被套保护：NONE 不止损（用户规则）；TREND / TIME / STOP 只在回测里对比，改需用户同意
+    guard-days: 10
+    guard-stop-pct: 8
   # V2 的卖出方式：FIXED（到止盈价就卖）/ TRAIL（到止盈价后跟踪最高价）/ PARTIAL（先卖一半、剩下跟踪）/ STOP（宽止损）
   # AUTO：上线回测从 candidates 里选不比 FIXED 差且总盈亏最高的一种。用户 2026-10-15 要求加大止盈空间
   # 回滚：mode 改回 FIXED（或指定 TRAIL / PARTIAL）并改 version
