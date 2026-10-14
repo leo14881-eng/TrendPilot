@@ -19,46 +19,72 @@ import com.trendpilot.portfolio.ShadowBook;
 
 /**
  * 自检（每小时 :07 / :37）与每日汇总（每天 21:00），时间均为越南时间。
- * 发现异常只发提醒，不代表已经恢复。
+ * 任务是否超时从"上次运行"和"本次启动"中较晚的时间算起，刚启动时不误报。
+ * 同一组异常只提醒一次；异常变化时再提醒，全部消失时发一条恢复通知。
  */
 @Component
 public class HealthJob {
 
+    static final String STATE_KEY = "health:problems";
+
     private final JobRuns runs;
     private final Notifier notifier;
     private final ShadowBook book;
+    private final AppState state;
     private final ZoneId zone;
 
-    public HealthJob(JobRuns runs, Notifier notifier, ShadowBook book, @Value("${trendpilot.zone}") String zone) {
+    public HealthJob(JobRuns runs, Notifier notifier, ShadowBook book, AppState state,
+                     @Value("${trendpilot.zone}") String zone) {
         this.runs = runs;
         this.notifier = notifier;
         this.book = book;
+        this.state = state;
         this.zone = ZoneId.of(zone);
+    }
+
+    /** 自检中发现的一项异常；key 用于判断"是不是同一个异常"，text 用于展示。 */
+    public record Problem(String key, String text) {
     }
 
     @Scheduled(cron = "0 7,37 * * * *", zone = "${trendpilot.zone}")
     public void check() {
-        Instant now = Instant.now();
-        List<String> problems = problems(now);
-        if (!problems.isEmpty()) {
-            notifier.send("health:" + now.truncatedTo(ChronoUnit.HOURS), "❗ 自检发现异常\n" + Messages.lines(problems));
-        }
+        check(Instant.now().truncatedTo(ChronoUnit.SECONDS));
     }
 
-    public List<String> problems(Instant now) {
-        List<String> out = new ArrayList<>();
-        stale(out, MonitorJob.JOB, now, Duration.ofMinutes(15));
-        stale(out, DiscoveryJob.JOB, now, Duration.ofMinutes(90));
+    /** @return 本次是否发出了提醒（异常或恢复） */
+    public boolean check(Instant now) {
+        List<Problem> problems = problems(now);
+        String current = String.join(",", problems.stream().map(Problem::key).sorted().toList());
+        String previous = state.get(STATE_KEY).orElse("");
+        if (current.equals(previous)) {
+            return false; // 同一组异常已经提醒过，或一直正常
+        }
+        state.put(STATE_KEY, current);
+        String text = problems.isEmpty()
+                ? "✅ 自检恢复正常"
+                : "❗ 自检发现异常\n" + Messages.lines(problems.stream().map(Problem::text).toList());
+        return notifier.send("health:" + now, text);
+    }
+
+    public List<Problem> problems(Instant now) {
+        Instant startup = runs.lastStarted(StartupCheck.JOB).orElse(null);
+        List<Problem> out = new ArrayList<>();
+        stale(out, MonitorJob.JOB, startup, now, Duration.ofMinutes(15));
+        stale(out, DiscoveryJob.JOB, startup, now, Duration.ofMinutes(90));
         return out;
     }
 
-    private void stale(List<String> out, String job, Instant now, Duration max) {
+    private void stale(List<Problem> out, String job, Instant startup, Instant now, Duration max) {
         Instant last = runs.lastStarted(job).orElse(null);
-        if (last == null) {
-            out.add(job + " 还没有运行记录");
-        } else if (Duration.between(last, now).compareTo(max) > 0) {
-            out.add(job + " 上次运行在 " + Duration.between(last, now).toMinutes() + " 分钟前");
+        // 从上次运行和本次启动中较晚的时间算起；启动后还在宽限期内的不算异常
+        Instant since = last == null ? startup : (startup == null || last.isAfter(startup) ? last : startup);
+        if (since == null || Duration.between(since, now).compareTo(max) <= 0) {
+            return;
         }
+        long minutes = Duration.between(since, now).toMinutes();
+        out.add(new Problem(job, last == null || last.isBefore(since)
+                ? job + " 启动 " + minutes + " 分钟了还没有运行"
+                : job + " 上次运行在 " + minutes + " 分钟前"));
     }
 
     @Scheduled(cron = "0 0 21 * * *", zone = "${trendpilot.zone}")
@@ -72,7 +98,7 @@ public class HealthJob {
         positions.forEach(p -> lines.add(String.format(Locale.ROOT, "· %s %d 笔，成本 %.2f U%s%s", p.symbol(),
                 p.tranches(), p.costBasis().doubleValue(), p.protectArmed() ? "，利润保护中" : "",
                 p.lossRecovery() ? "，LOSS_RECOVERY" : "")));
-        List<String> problems = problems(now);
+        List<String> problems = problems(now).stream().map(Problem::text).toList();
         lines.add(problems.isEmpty() ? "任务运行正常" : "异常：" + String.join("；", problems));
         notifier.send("daily:" + now.atZone(zone).toLocalDate(), Messages.lines(lines));
     }

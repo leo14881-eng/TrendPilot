@@ -20,6 +20,8 @@ import com.trendpilot.notify.Notifier;
 @Component
 public class StartupCheck {
 
+    public static final String JOB = "STARTUP";
+
     private static final Logger log = LoggerFactory.getLogger(StartupCheck.class);
 
     private final JobRuns runs;
@@ -37,7 +39,7 @@ public class StartupCheck {
                 .filter(t -> Duration.between(t, now).toMinutes() > 15)
                 .map(t -> "\n上次持仓检查在 " + Duration.between(t, now).toMinutes() + " 分钟前，期间系统中断，不补造中断期间的交易。")
                 .orElse("");
-        runs.record("STARTUP", null, now, now, "SUCCESS", "N/A", "capital_authority=" + CapitalAuthority.CURRENT);
+        runs.record(JOB, null, now, now, "SUCCESS", "N/A", "capital_authority=" + CapitalAuthority.CURRENT);
         log.info("TrendPilot 已启动，capital_authority={}", CapitalAuthority.CURRENT);
         notifier.send("startup:" + now, "TrendPilot 已启动（仅影子模拟）" + gap);
     }

@@ -3,7 +3,7 @@ spring:
     name: trendpilot
   config:
     # 本机私密配置（Telegram Token 等），不进代码仓库
-    import: optional:file:./config/application-local.yml
+    import: optional:file:${trendpilot.local-config:./config/application-local.yml}
   datasource:
     url: jdbc:sqlite:${trendpilot.data-dir:./data}/trendpilot.db
     driver-class-name: org.sqlite.JDBC

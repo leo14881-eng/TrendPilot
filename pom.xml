@@ -80,6 +80,10 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <argLine>-javaagent:${org.mockito:mockito-core:jar} -Xshare:off -Djava.io.tmpdir=${project.build.directory}</argLine>
+                    <systemPropertyVariables>
+                        <!-- 测试不读取本机 Telegram 凭据，避免测试往真实 Telegram 发消息 -->
+                        <trendpilot.local-config>${project.build.directory}/no-local-config.yml</trendpilot.local-config>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
         </plugins>
