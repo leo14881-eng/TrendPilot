@@ -10,6 +10,8 @@ trendpilot:
     enabled: false
   research:
     enabled: false
+  btc-daily:
+    enabled: false
 
 logging:
   file:

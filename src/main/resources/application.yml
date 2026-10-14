@@ -178,3 +178,24 @@ trendpilot.research:
   low-float-ratio: 0.3           # 流通量 / 总量低于 30% 标记 LOW_FLOAT
   # 按 CoinGecko 分类排除：稳定币、代币化股票、代币化黄金
   excluded-categories: [stablecoins, tokenized-stock, tokenized-gold]
+
+# BTC 每日短线（影子，独立账本）：只做多现货、不止损、分 3 档加仓、均价止盈。见 docs/BTC每日短线评估.md
+# 改参数时同时改 version（会自动重新回测一次）
+trendpilot.btc-daily:
+  enabled: true
+  version: btc-v1-2026-10-14
+  symbol: BTCUSDT
+  cap-usdt: 10000
+  cap-until: "2026-11-14"         # 第一个月上限，到期按数据复评
+  tranches: [3000, 3000, 4000]   # 各档金额（含手续费），合计 ≤ cap-usdt
+  k-strong: 0.25                 # 昨收 > EMA20：第 1 档 = 开盘 − 0.25 × ATR
+  k-weak: 0.6                    # 昨收 ≤ EMA20：第 1 档 = 开盘 − 0.6 × ATR
+  step-atr: 0.5                  # 档距 0.5 × ATR
+  tp-atr-mult: 0.5               # 止盈 = 均价 × (1 + max(0.5 × ATR%, 0.8%))
+  tp-min-pct: 0.8
+  carry-tp-pct: 0.3              # 跨天未卖：均价 +0.3% 即卖（扣费后仍小赚），不割肉
+  fee-rate: 0.001
+  slippage-bps: 2
+  atr-days: 14
+  ema-days: 20
+  backtest-days: 365

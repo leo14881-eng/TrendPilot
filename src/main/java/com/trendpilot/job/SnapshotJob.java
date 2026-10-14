@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.trendpilot.btcdaily.BtcDailyService;
 import com.trendpilot.portfolio.ObservationBook;
 import com.trendpilot.portfolio.ShadowBook;
 import com.trendpilot.replay.BlindReplay;
@@ -28,7 +29,7 @@ import com.trendpilot.tracking.TrackingReport;
 import com.trendpilot.variant.ParallelExits;
 
 /**
- * 每日统计快照（供每周策略分析）：V1/V2 对比、信号跟踪、各门槛拦截、候选退出规则回放、影子并行、复盘。
+ * 每日统计快照（供每周策略分析）：V1/V2 对比、信号跟踪、各门槛拦截、候选退出规则回放、影子并行、复盘、BTC 每日短线。
  * 只含统计，不含任何密钥。每天 23:58 写入 data/snapshots/yyyy-MM-dd.json，保留 90 天。
  */
 @Component
@@ -43,6 +44,7 @@ public class SnapshotJob {
     private final ExitReplay exitReplay;
     private final ParallelExits parallel;
     private final BlindReplay blind;
+    private final BtcDailyService btcDaily;
     private final JdbcClient jdbc;
     private final Path dir;
     private final ZoneId zone;
@@ -50,7 +52,7 @@ public class SnapshotJob {
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     public SnapshotJob(ShadowBook v2, ObservationBook v1, TrackingReport tracking, ExitReplay exitReplay,
-                       ParallelExits parallel, BlindReplay blind, JdbcClient jdbc,
+                       ParallelExits parallel, BlindReplay blind, BtcDailyService btcDaily, JdbcClient jdbc,
                        @Value("${trendpilot.data-dir:./data}") String dataDir, @Value("${trendpilot.zone}") String zone) {
         this.v2 = v2;
         this.v1 = v1;
@@ -58,6 +60,7 @@ public class SnapshotJob {
         this.exitReplay = exitReplay;
         this.parallel = parallel;
         this.blind = blind;
+        this.btcDaily = btcDaily;
         this.jdbc = jdbc;
         this.dir = Path.of(dataDir, "snapshots");
         this.zone = ZoneId.of(zone);
@@ -76,6 +79,7 @@ public class SnapshotJob {
         s.put("exitReplay", exitReplay.stats(exitReplay.latest()));
         s.put("parallelShadow", parallel.compare());
         s.put("blindReplay7d", blind.summary(now, 7));
+        s.put("btcDaily", btcDaily.summary(now));
         s.put("decisions7d", rows("""
                 SELECT action, decision, funded, reasons, COUNT(*) AS n, ROUND(AVG(score), 2) AS avg_score
                 FROM decision_log WHERE created_at >= :since
