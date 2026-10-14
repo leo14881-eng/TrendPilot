@@ -12,9 +12,17 @@ import java.util.Map;
  */
 public record ExitRule(String id, String family, Map<String, Double> params, boolean lowTrigger) {
 
-    /** 规则判断需要的状态：净收益、原始收益（%）、持有小时、持有以来最高净收益、相对最高收盘价的回撤（%）、ATR1h%。 */
+    /**
+     * 规则判断需要的状态：净收益、原始收益（%）、持有小时、持有以来最高净收益、相对最高收盘价的回撤（%）、ATR1h%、
+     * BTC 最近 1 小时涨跌（%，没有数据为 NaN）。
+     */
     public record State(double rNet, double rRaw, double holdHours, double peakNet, double drawdownFromMaxPct,
-                        double atrPct) {
+                        double atrPct, double btcRet1hPct) {
+
+        public State(double rNet, double rRaw, double holdHours, double peakNet, double drawdownFromMaxPct,
+                     double atrPct) {
+            this(rNet, rRaw, holdHours, peakNet, drawdownFromMaxPct, atrPct, Double.NaN);
+        }
     }
 
     double v(String k) {
@@ -30,6 +38,8 @@ public record ExitRule(String id, String family, Map<String, Double> params, boo
             case "T2" -> s.holdHours() >= v("T") && s.rNet() <= -v("L2") ? id : null;
             case "P1" -> s.peakNet() >= v("a") && s.drawdownFromMaxPct() >= v("D") ? id : null;
             case "C1" -> s.rNet() <= -v("L") || (s.holdHours() >= v("T") && s.rNet() < 0) ? id : null;
+            // 紧急退出：BTC 1 小时跌幅达到 D% 时全部卖出（只做影子对比，用户规则仍是不止损）
+            case "M1" -> !Double.isNaN(s.btcRet1hPct()) && s.btcRet1hPct() <= -v("D") ? id : null;
             default -> null;
         };
     }
@@ -63,7 +73,7 @@ public record ExitRule(String id, String family, Map<String, Double> params, boo
         return new ExitRule(id.toString(), family, m, low);
     }
 
-    /** 事先登记的全部候选（39 组 + S1/S2 的按最低价触发敏感性版本）。 */
+    /** 事先登记的全部候选（39 组 + S1/S2 的按最低价触发敏感性版本 + 3 组 BTC 急跌紧急退出 M1）。 */
     public static List<ExitRule> grid() {
         List<ExitRule> out = new ArrayList<>();
         for (boolean low : new boolean[]{false, true}) {
@@ -74,6 +84,7 @@ public record ExitRule(String id, String family, Map<String, Double> params, boo
         for (int t : new int[]{24, 48}) for (int l : new int[]{5, 10}) out.add(of("T2", false, "T", t, "L2", l));
         for (int a : new int[]{5, 10}) for (int d : new int[]{10, 15, 20, 25}) out.add(of("P1", false, "a", a, "D", d));
         for (int l : new int[]{15, 20, 25}) for (int t : new int[]{24, 48, 72}) out.add(of("C1", false, "L", l, "T", t));
+        for (int d : new int[]{3, 5, 8}) out.add(of("M1", false, "D", d));
         return out;
     }
 

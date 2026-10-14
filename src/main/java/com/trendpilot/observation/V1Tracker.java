@@ -28,7 +28,6 @@ import com.trendpilot.market.VenueMarket;
 import com.trendpilot.monitor.ExitDecision;
 import com.trendpilot.monitor.ExitPolicy;
 import com.trendpilot.notify.Messages;
-import com.trendpilot.notify.Notifier;
 import com.trendpilot.portfolio.ObservationBook;
 import com.trendpilot.portfolio.Position;
 import com.trendpilot.research.Identity;
@@ -58,16 +57,14 @@ public class V1Tracker {
     private final Markets markets;
     private final EarlySignalCalculator signals;
     private final ExitPolicy exitPolicy;
-    private final Notifier notifier;
     private final StrategyParams params;
 
     public V1Tracker(ObservationBook book, Markets markets, EarlySignalCalculator signals, ExitPolicy exitPolicy,
-                     Notifier notifier, StrategyParams params) {
+                     StrategyParams params) {
         this.book = book;
         this.markets = markets;
         this.signals = signals;
         this.exitPolicy = exitPolicy;
-        this.notifier = notifier;
         this.params = params;
     }
 
@@ -100,9 +97,8 @@ public class V1Tracker {
                     Messages.venueTag(c.venue()), Messages.price(fill.avgPrice()), s.score(), String.join("/", s.hits()))));
         }
         if (!ranked.isEmpty()) {
-            notifier.send("v1-entry:" + gen, "🟢 V1 观察买入 " + ranked.size() + " 个（每个名义 "
-                    + (int) params.capital().tradeSize() + " U，参考价记账，不占 V2 资金）\n"
-                    + "原因：EARLY 至少命中 " + params.early().minHits() + " 个条件\n" + Messages.top(ranked, NOTIFY_TOP, "评分最高"));
+            // 用户要求：V1 不发 Telegram（每天上千条），只记日志和数据库；V1/V2 对比在每日汇总里
+            log.info("V1 观察买入 {} 个 {}\n{}", ranked.size(), gen, Messages.top(ranked, NOTIFY_TOP, "评分最高"));
         }
         return entered;
     }
@@ -166,8 +162,8 @@ public class V1Tracker {
             }
         }
         if (!lines.isEmpty()) {
-            notifier.send("v1-exit:" + gen, "🔵 V1 观察卖出 " + lines.size() + " 个（参考价记账），合计净盈亏 "
-                    + Messages.money(total) + " U\n" + Messages.top(lines, NOTIFY_TOP, "盈亏金额最大"));
+            log.info("V1 观察卖出 {} 个 {}，合计净盈亏 {} U\n{}", lines.size(), gen, Messages.money(total),
+                    Messages.top(lines, NOTIFY_TOP, "盈亏金额最大"));
         }
         return exits;
     }

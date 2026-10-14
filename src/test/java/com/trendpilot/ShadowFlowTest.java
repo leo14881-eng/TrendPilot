@@ -337,9 +337,9 @@ class ShadowFlowTest {
         assertThat(d.v1Entries()).contains("ABCUSDT");
         Position v1 = v1Book.position("ABCUSDT").orElseThrow();
         assertThat(v1.costBasis().doubleValue()).isEqualTo(1001.0, org.assertj.core.data.Offset.offset(0.01));
-        String v1Note = jdbc.sql("SELECT text FROM notification_outbox WHERE event_key LIKE 'v1-entry:%'")
-                .query(String.class).single();
-        assertThat(v1Note).startsWith("🟢 V1 观察买入").contains("ABCUSDT");
+        // V1 不发 Telegram
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM notification_outbox WHERE event_key LIKE 'v1-%'")
+                .query(Integer.class).single()).isZero();
         // V1 不占用 V2 资金
         assertThat(book.deployedCost()).isEqualTo(book.positions().stream()
                 .mapToDouble(p -> p.costBasis().doubleValue()).sum());

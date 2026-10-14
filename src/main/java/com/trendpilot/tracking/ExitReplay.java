@@ -76,6 +76,7 @@ public class ExitReplay {
     public List<Trade> run(Instant now) {
         String runId = now.atZone(zone).toLocalDate().toString();
         List<Trade> all = new ArrayList<>();
+        btcCloses = btcCloses();
         for (String type : List.of("SIGNAL", "V2_ENTRY")) {
             List<Ep> eps = episodes(type);
             int calib = (int) Math.floor(eps.size() * 0.6);
@@ -101,6 +102,23 @@ public class ExitReplay {
                     .param("kb", t.killedBig() ? 1 : 0).param("split", t.split()).update();
         }
         return all;
+    }
+
+    /** BTC 15m 收盘价（开盘时间 → 收盘价），来自本地 K 线缓存，不发请求。 */
+    private java.util.Map<Long, Double> btcCloses = java.util.Map.of();
+
+    private java.util.Map<Long, Double> btcCloses() {
+        java.util.Map<Long, Double> m = new java.util.HashMap<>();
+        jdbc.sql("SELECT open_time, close FROM kline_15m WHERE venue = 'BINANCE' AND symbol = 'BTCUSDT'")
+                .query((rs, i) -> m.put(rs.getLong(1), rs.getDouble(2))).list();
+        return m;
+    }
+
+    /** 截至这根 K 线收盘，BTC 最近 4 根 15m 的涨跌（%）；缺数据为 NaN。 */
+    double btcRet1h(long closeTime) {
+        long open = Math.floorDiv(closeTime - 1, Q) * Q;
+        Double now = btcCloses.get(open), before = btcCloses.get(open - 4 * Q);
+        return now == null || before == null || before <= 0 ? Double.NaN : (now / before - 1) * 100;
     }
 
     /** 主窗口已经看完的样本，按 t0 排序。 */
@@ -150,7 +168,7 @@ public class ExitReplay {
                     break;
                 }
                 ExitRule.State s = new ExitRule.State(rC, c.raw(b.close()), hold, peakNet,
-                        (1 - b.close() / maxClose) * 100, e.atrPct());
+                        (1 - b.close() / maxClose) * 100, e.atrPct(), btcRet1h(b.closeTime()));
                 if (Double.isNaN(stop) && rule.check(s) != null) {
                     reason = rule.id();
                     exitPrice = b.close();
@@ -160,7 +178,8 @@ public class ExitReplay {
             // 2. 现行利润保护（B0）
             if (!armed && c.raw(b.close()) >= 2 && rC > 0) armed = true;
             if (armed) {
-                floor = Math.max(floor, Math.max(0.35, peakNet - 2));
+                // 与现行规则一致：max(本金 0.35%, 最高净利 − 本金 1%, 最高净利 × 60%)
+                floor = Math.max(floor, Math.max(0.35, Math.max(peakNet - 1, peakNet * 0.6)));
                 if (rC > 0 && rC < floor) {
                     reason = "PROFIT_PROTECTION";
                     exitPrice = b.close();

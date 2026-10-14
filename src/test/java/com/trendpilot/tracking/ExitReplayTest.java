@@ -51,6 +51,9 @@ class ExitReplayTest {
         double[] up = {101, 103, 105, 105, 104, 103, 102.5};
         ExitReplay.Trade b0 = replay.simulate(ep(up), null, "CALIB");
         assertThat(b0.reason()).isEqualTo("PROFIT_PROTECTION");
-        assertThat(ExitRule.grid()).hasSize(49);
+        assertThat(ExitRule.grid()).hasSize(52);
+        assertThat(ExitRule.byId("M1_D5").check(new ExitRule.State(-3, -3, 2, 0, 3, 1, -5.5))).isEqualTo("M1_D5");
+        assertThat(ExitRule.byId("M1_D5").check(new ExitRule.State(-3, -3, 2, 0, 3, 1, -4))).isNull();
+        assertThat(ExitRule.byId("M1_D5").check(new ExitRule.State(-3, -3, 2, 0, 3, 1))).isNull();
     }
 }
