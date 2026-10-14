@@ -1,0 +1,7 @@
+target/
+data/
+logs/
+backup/
+config/application-local.yml
+*.iml
+.idea/

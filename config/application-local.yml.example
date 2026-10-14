@@ -1,0 +1,5 @@
+# 复制本文件为 application-local.yml 并填入真实值（该文件不进代码仓库）
+trendpilot:
+  telegram:
+    bot-token: "在 @BotFather 创建机器人后得到的 Token"
+    chat-id: "你的 Chat ID"

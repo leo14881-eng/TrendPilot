@@ -1,0 +1,111 @@
+spring:
+  application:
+    name: trendpilot
+  config:
+    # 本机私密配置（Telegram Token 等），不进代码仓库
+    import: optional:file:./config/application-local.yml
+  datasource:
+    url: jdbc:sqlite:${trendpilot.data-dir:./data}/trendpilot.db
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1   # SQLite 单写者
+  flyway:
+    enabled: true
+  jackson:
+    time-zone: Asia/Ho_Chi_Minh
+
+server:
+  port: 8080
+  address: 127.0.0.1   # 只在本机可访问
+
+trendpilot:
+  zone: Asia/Ho_Chi_Minh
+  telegram:
+    bot-token: ${TELEGRAM_BOT_TOKEN:}
+    chat-id: ${TELEGRAM_CHAT_ID:}
+
+logging:
+  file:
+    name: ./logs/trendpilot.log
+  logback:
+    rollingpolicy:
+      max-history: 30
+
+# 策略参数（人工修改后请同时修改 version）
+trendpilot.strategy:
+  version: v1-2026-10-14
+  fee-rate: 0.001                 # 单边手续费 0.1%
+  universe:
+    quote-asset: USDT
+    # 稳定币、法币、黄金代币等
+    excluded-base-assets: [USDC, FDUSD, TUSD, USDP, DAI, BUSD, USDE, USD1, PYUSD, RLUSD, XUSD, BFUSD, AEUR, EUR, EURI, GBP, TRY, BRL, ARS, JPY, MXN, PLN, RON, UAH, ZAR, PAXG, XAUT]
+    blocklist: []                 # 人工确认身份有问题的标的
+    max-missing-ratio: 0.05       # 缺数据超过 5% 视为扫描不完整，不做新买入
+  early:
+    min-hits: 2
+    rel1h: 0.8
+    rel4h: 1.5
+    accel: 0.5
+    volume-accel: 1.35
+    compression: 1.2
+    momentum-rel1h: 0.25
+  review:
+    min-score: 8
+    min-rel1h: 0.8
+    min-rel4h: 1.5
+    max-signal-age-minutes: 60
+    max-spread-bps: 50
+    depth-band-pct: 2
+    min-depth-usdt: 30000
+    max-slippage-bps: 75
+    min-rr: 1.5
+    chase-threshold-pct: 12       # 高于首次 EARLY 价 12% 以上
+    chase-min-rr: 2
+    hot24h-pct: 20                # 24 小时涨超 20%
+    hot-rel1h-multiplier: 2       # 此时 1h 相对收益要求翻倍，且加速度必须为正
+    risk-drop-pct: 2.5            # RR 风险情景假设跌幅（不是止损线）
+    upside-atr-multiple: 4
+    min-upside-pct: 2
+    max-upside-pct: 15
+    reentry-cooldown-minutes: 60
+  capital:
+    hard-cap: 20000
+    normal-pool: 17000
+    strategic-reserve: 3000
+    trade-size: 1000
+    max-tranches-per-coin: 3
+    regime-limits:
+      - { regime: RISK_OFF, pct: 0.60 }
+      - { regime: NEUTRAL, pct: 0.75 }
+      - { regime: CONSTRUCTIVE, pct: 0.85 }
+      - { regime: STRONG, pct: 0.95 }
+  add:
+    min-drop-pct: 1.5
+    atr-multiple: 1.0
+    third-tranche-multiplier: 1.5
+    min-signal-gap-minutes: 15
+  exit:
+    protect-arm-pct: 2            # 原始收益 ≥2% 且净利 >0 启动利润保护
+    protect-min-floor-pct: 0.35   # 底线至少为本金 0.35%
+    protect-giveback-pct: 2       # 或 最高净利 − 本金 2%
+    review-target-pct: 8          # 原始收益 8% 时复核
+    decay-min-weak: 2             # 至少两项弱条件
+    decay-consecutive: 3          # 连续三个有效观察
+    hard-max-spread-bps: 300      # 严重流动性异常
+    hard-max-slippage-bps: 300
+    hard-min-bid-depth-usdt: 5000
+  risk:
+    btc-shock1h-pct: -3           # BTC 1h 跌超 3% 视为市场冲击，本轮不新增风险
+    risk-off-btc24h-pct: -5
+    risk-off-btc4h-pct: -2.5
+    risk-off-breadth: 0.25
+    constructive-breadth: 0.5
+    strong-breadth: 0.65
+    strong-btc24h-pct: 3
+    loss-exits-freeze: 3          # 窗口内亏损退出 ≥3 次：冻结新增
+    loss-exits-half-budget: 2     # =2 次：额度减半
+    loss-window-hours: 24
+
+trendpilot.binance:
+  base-url: https://api.binance.com
+  max-concurrency: 4
