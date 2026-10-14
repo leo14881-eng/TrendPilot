@@ -44,6 +44,7 @@ public class HealthJob {
     private final AppState state;
     private final ZoneId zone;
     private final TrackingReport tracking;
+    private final com.trendpilot.portfolio.DepthVariantBook depthVariant;
     private final JdbcClient jdbc;
     private final ApiStats api;
     private final Path snapshots;
@@ -54,7 +55,9 @@ public class HealthJob {
 
     public HealthJob(JobRuns runs, Notifier notifier, ShadowBook book, ObservationBook v1, AppState state,
                      @Value("${trendpilot.zone}") String zone, TrackingReport tracking, JdbcClient jdbc, ApiStats api,
-                     @Value("${trendpilot.data-dir:./data}") String dataDir) {
+                     @Value("${trendpilot.data-dir:./data}") String dataDir,
+                     com.trendpilot.portfolio.DepthVariantBook depthVariant) {
+        this.depthVariant = depthVariant;
         this.tracking = tracking;
         this.jdbc = jdbc;
         this.api = api;
@@ -204,6 +207,7 @@ public class HealthJob {
         lines.add("📈 V1 / V2 对比（累计）");
         lines.add(book.stats().line());
         lines.add(v1.stats().line());
+        lines.add(depthVariant.stats().line() + "（深度门槛放宽到 15000 时多买的币，对照用）");
         lines.add("注：V2 按全数量盘口模拟成交，V1 按参考价 + 手续费记账，V1 收益不能当作可执行收益；最大回撤含浮亏。");
         List<String> under = new ArrayList<>();
         for (var ledger : List.of(book, v1)) {

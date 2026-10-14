@@ -83,6 +83,21 @@ class CapitalReviewerTest {
     }
 
     @Test
+    void relaxedDepthReviewOnlyChangesTheDepthGate() {
+        OrderBook mid = TestData.book("ABCUSDT", 104, 2, 10, now); // 每边约 20,800U
+        ReviewResult v2 = reviewer.review(input(mid, okRisk, ticker, null, null, null, true));
+        assertThat(v2.decision()).isEqualTo(Decision.REJECT);
+        assertThat(com.trendpilot.observation.DepthVariantTracker.rejectedOnlyForDepth(v2)).isTrue();
+        ReviewResult relaxed = reviewer.review(input(mid, okRisk, ticker, null, null, null, true), 15_000);
+        assertThat(relaxed.decision()).isEqualTo(Decision.BUY);
+        assertThat(relaxed.fill().complete()).isTrue();
+        // 其他原因被拒的不算"只因深度"
+        OrderBook wideThin = TestData.book("ABCUSDT", 104, 40, 10, now);
+        assertThat(com.trendpilot.observation.DepthVariantTracker.rejectedOnlyForDepth(
+                reviewer.review(input(wideThin, okRisk, ticker, null, null, null, true)))).isFalse();
+    }
+
+    @Test
     void hot24hNeedsStrongerSignal() {
         Ticker24h hot = new Ticker24h("ABCUSDT", 104, 25, 5_000_000);
         // 1h 相对收益 2.97 ≥ 0.8 × 2，且加速度为正 → 仍可买

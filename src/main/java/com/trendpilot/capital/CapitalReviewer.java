@@ -27,6 +27,11 @@ public class CapitalReviewer {
     }
 
     public ReviewResult review(ReviewInput in) {
+        return review(in, params.review().minDepthUsdt());
+    }
+
+    /** minDepthUsdt：盘口深度门槛（影子对照用放宽后的值重新审核，其余规则完全相同）。 */
+    public ReviewResult review(ReviewInput in, double minDepthUsdt) {
         StrategyParams.Review r = params.review();
         EarlySignal s = in.signal();
         Action action = in.position() == null ? Action.BUY : Action.ADD;
@@ -58,7 +63,7 @@ public class CapitalReviewer {
         if (age(in.signalAsOf(), in) > r.maxSignalAgeMinutes()) reject.add("SIGNAL_STALE");
         if (age(in.book().fetchedAt(), in) > r.maxSignalAgeMinutes()) reject.add("BOOK_STALE");
         if (spread > r.maxSpreadBps()) reject.add("SPREAD_GT_" + r.maxSpreadBps() + "BPS");
-        if (bidDepth < r.minDepthUsdt() || askDepth < r.minDepthUsdt()) reject.add("DEPTH_LT_" + r.minDepthUsdt());
+        if (bidDepth < minDepthUsdt || askDepth < minDepthUsdt) reject.add("DEPTH_LT_" + minDepthUsdt);
         if (!fill.complete() || fill.slippageBps() > r.maxSlippageBps()) reject.add("SLIPPAGE_GT_" + r.maxSlippageBps() + "BPS");
         if (in.ticker().priceChangePct() > r.hot24hPct()
                 && (s.rel1h() < r.minRel1h() * r.hotRel1hMultiplier() || s.accel() <= 0)) {

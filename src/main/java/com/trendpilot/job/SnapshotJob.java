@@ -40,6 +40,7 @@ public class SnapshotJob {
 
     private final ShadowBook v2;
     private final ObservationBook v1;
+    private final com.trendpilot.portfolio.DepthVariantBook depthVariant;
     private final TrackingReport tracking;
     private final ExitReplay exitReplay;
     private final ParallelExits parallel;
@@ -53,7 +54,9 @@ public class SnapshotJob {
 
     public SnapshotJob(ShadowBook v2, ObservationBook v1, TrackingReport tracking, ExitReplay exitReplay,
                        ParallelExits parallel, BlindReplay blind, BtcDailyService btcDaily, JdbcClient jdbc,
-                       @Value("${trendpilot.data-dir:./data}") String dataDir, @Value("${trendpilot.zone}") String zone) {
+                       @Value("${trendpilot.data-dir:./data}") String dataDir, @Value("${trendpilot.zone}") String zone,
+                       com.trendpilot.portfolio.DepthVariantBook depthVariant) {
+        this.depthVariant = depthVariant;
         this.v2 = v2;
         this.v1 = v1;
         this.tracking = tracking;
@@ -73,8 +76,9 @@ public class SnapshotJob {
         s.put("at", now);
         s.put("paramsVersion", jdbc.sql("SELECT params_version FROM decision_log ORDER BY id DESC LIMIT 1")
                 .query(String.class).optional().orElse(null));
-        s.put("books", List.of(v2.stats(), v1.stats()));
-        s.put("openPositions", Map.of("V2", v2.positions().size(), "V1", v1.positions().size()));
+        s.put("books", List.of(v2.stats(), v1.stats(), depthVariant.stats()));
+        s.put("openPositions", Map.of("V2", v2.positions().size(), "V1", v1.positions().size(),
+                "V2D15", depthVariant.positions().size()));
         s.put("tracking", tracking.summary(now));
         s.put("exitReplay", exitReplay.stats(exitReplay.latest()));
         s.put("parallelShadow", parallel.compare());

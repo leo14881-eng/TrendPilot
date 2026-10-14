@@ -57,10 +57,13 @@ public class MonitorJob {
     private final JobRuns runs;
     private final AppState state;
     private final ParallelExits parallel;
+    private final com.trendpilot.observation.DepthVariantTracker depthVariant;
 
     public MonitorJob(Markets markets, V1Tracker v1, EarlySignalCalculator signals,
                       ExitPolicy exitPolicy, ShadowBook book, PortfolioLock lock, Notifier notifier, JobRuns runs,
-                      AppState state, ParallelExits parallel) {
+                      AppState state, ParallelExits parallel,
+                      com.trendpilot.observation.DepthVariantTracker depthVariant) {
+        this.depthVariant = depthVariant;
         this.parallel = parallel;
         this.markets = markets;
         this.v1 = v1;
@@ -91,6 +94,13 @@ public class MonitorJob {
             // V1 观察账本与 V2 分开：V2 本轮因缺数据停止时，V1 仍用自己的参考价判断
             List<String> v1Exits = new ArrayList<>();
             lock.run(() -> v1Exits.addAll(v1.manage(gen, now)));
+            // 深度放宽对照账本：失败不影响 V2 / V1
+            try {
+                lock.run(() -> depthVariant.manage(gen, now));
+                depthVariant.book().recordEquity(now);
+            } catch (RuntimeException e) {
+                log.warn("V2D15 对照本轮失败：{}", e.getMessage());
+            }
             book.recordEquity(now);
             v1.recordEquity(now);
             runs.record(JOB, gen, now, Instant.now(), "SUCCESS", r.dataStatus(),

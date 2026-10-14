@@ -29,6 +29,8 @@ server:
   shutdown: graceful   # 自动更新停机时等正在处理的请求结束
 
 trendpilot:
+  variants:
+    depth-min-usdt: 15000   # 深度门槛对照账本 V2D15 用的放宽深度（只做影子对比，不影响 V2）
   zone: Asia/Ho_Chi_Minh
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}

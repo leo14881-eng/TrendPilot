@@ -63,7 +63,7 @@ public class DiscoveryJob {
 
     public static final String JOB = "DISCOVERY";
     /** 盘口覆盖范围：审核看 ±2% 深度，多取 0.5% 余量。 */
-    static final double DEPTH_SPAN_PCT = 2.5;
+    public static final double DEPTH_SPAN_PCT = 2.5;
     /** 稳定币证据：这些交易对相对 1 美元的偏离。 */
     static final Set<String> STABLE_REFERENCES = Set.of("USDCUSDT", "FDUSDUSDT");
 
@@ -88,11 +88,14 @@ public class DiscoveryJob {
     private final StrategyParams params;
     private final SignalTracker tracker;
     private final com.trendpilot.market.KlineStore klineStore;
+    private final com.trendpilot.observation.DepthVariantTracker depthVariant;
 
     public DiscoveryJob(Markets markets, ResearchService research, StreamHub streams, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, RiskRecovery recovery, CapitalReviewer reviewer,
                         CapitalAllocator allocator, ShadowBook book, PortfolioLock lock, Notifier notifier,
                         JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params,
-                        SignalTracker tracker, com.trendpilot.market.KlineStore klineStore) {
+                        SignalTracker tracker, com.trendpilot.market.KlineStore klineStore,
+                        com.trendpilot.observation.DepthVariantTracker depthVariant) {
+        this.depthVariant = depthVariant;
         this.tracker = tracker;
         this.klineStore = klineStore;
         this.markets = markets;
@@ -287,6 +290,7 @@ public class DiscoveryJob {
         Map<String, SignalTracker.SignalInput> trackSignals = new LinkedHashMap<>();
         lock.run(() -> {
             List<ReviewResult> results = new ArrayList<>();
+            List<ReviewResult> relaxed = new ArrayList<>();
             Map<String, Venue> venueOf = new LinkedHashMap<>();
             for (Candidate c : candidates) {
                 EarlySignal s = c.signal();
@@ -303,8 +307,20 @@ public class DiscoveryJob {
                 ReviewInput in = new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
                         books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), pos,
                         lastExit, researched.get(s.symbol()), earlySinceExit, postExitHit);
-                results.add(reviewer.review(in));
+                ReviewResult v2 = reviewer.review(in);
+                results.add(v2);
                 venueOf.put(s.symbol(), c.venue());
+                // 深度门槛放宽对照（V2D15）：V2 只因深度不足被拒的新开仓，用对照账本自己的卖出记录、放宽后的深度门槛重新审核
+                if (pos == null && com.trendpilot.observation.DepthVariantTracker.rejectedOnlyForDepth(v2)) {
+                    var vb = depthVariant.book();
+                    Instant vExit = vb.lastExit(s.symbol()).orElse(null);
+                    int vEarly = vExit == null ? 0 : book.earlyObservationsSince(s.symbol(), vExit);
+                    boolean vHit = vExit == null || !EarlySignalCalculator
+                            .hitsAfter(pool.bars().bars().get(s.symbol()), s, vExit).isEmpty();
+                    relaxed.add(reviewer.review(new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
+                            books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), null,
+                            vExit, researched.get(s.symbol()), vEarly, vHit), depthVariant.minDepthUsdt()));
+                }
             }
             // 不在候选中的 EARLY 只记录首次出现价格
             early.stream().filter(c -> !candidates.contains(c))
@@ -332,6 +348,7 @@ public class DiscoveryJob {
                             main.complete() && poolBy.get(c.venue()).complete(), researched.get(c.signal().symbol()).identity()))
                     .toList();
             v1Entries.addAll(v1.enter(gen, now, v1Candidates, v1Risk));
+            depthVariant.enter(gen, now, venueOf, relaxed);
             for (ReviewResult r : results) {
                 logDecision(gen, venueOf.get(r.symbol()), r, alloc.funded().contains(r), alloc.unfunded().contains(r), now);
             }
