@@ -22,9 +22,22 @@ public class AdminController {
     private static final Logger log = LoggerFactory.getLogger(AdminController.class);
 
     private final ConfigurableApplicationContext context;
+    private final com.trendpilot.notify.Notifier notifier;
 
-    public AdminController(ConfigurableApplicationContext context) {
+    public AdminController(ConfigurableApplicationContext context, com.trendpilot.notify.Notifier notifier) {
         this.context = context;
+        this.notifier = notifier;
+    }
+
+    /** 每周策略分析的结论通过本机服务发 Telegram（调用方不需要也看不到 Token）。key 用于去重。 */
+    @PostMapping("/api/admin/notify")
+    public ResponseEntity<Map<String, Object>> notify(@RequestHeader(value = HEADER, required = false) String token,
+                                                      @org.springframework.web.bind.annotation.RequestBody Map<String, String> body) {
+        if (!"notify".equals(token)) return ResponseEntity.status(403).body(Map.of("status", "FORBIDDEN"));
+        String text = body.getOrDefault("text", "").strip();
+        if (text.isEmpty() || text.length() > 3500) return ResponseEntity.badRequest().body(Map.of("status", "BAD_TEXT"));
+        String key = "weekly:" + body.getOrDefault("key", Integer.toHexString(text.hashCode()));
+        return ResponseEntity.ok(Map.of("sent", notifier.send(key, text)));
     }
 
     @PostMapping("/api/admin/shutdown")
