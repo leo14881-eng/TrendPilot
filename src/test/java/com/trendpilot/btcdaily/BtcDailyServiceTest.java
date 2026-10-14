@@ -41,6 +41,10 @@ class BtcDailyServiceTest {
         r.add("trendpilot.data-dir", () -> dataDir.toString());
         r.add("trendpilot.telegram.bot-token", () -> "");
         r.add("trendpilot.telegram.chat-id", () -> "");
+        // 外部数据源指向本机不存在的端口：立即失败，记为缺失
+        r.add("trendpilot.btc-daily.filters.binance-futures-url", () -> "http://127.0.0.1:9");
+        r.add("trendpilot.btc-daily.filters.fear-greed-url", () -> "http://127.0.0.1:9");
+        r.add("trendpilot.btc-daily.filters.farside-url", () -> "http://127.0.0.1:9/btc/");
     }
 
     @TestConfiguration
@@ -57,12 +61,13 @@ class BtcDailyServiceTest {
     @Autowired JdbcClient jdbc;
     @Autowired KlineStore klines;
     @Autowired Markets markets;
+    @Autowired ContextService context;
 
     @BeforeEach
     void reset() {
         market.reset();
         markets.invalidate();
-        for (String t : new String[]{"btc_daily_plan", "btc_daily_state", "btc_daily_trade", "notification_outbox", "kline_15m"}) {
+        for (String t : new String[]{"btc_daily_plan", "btc_daily_state", "btc_daily_trade", "btc_daily_series", "btc_daily_fetch", "notification_outbox", "kline_15m"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
     }
@@ -71,7 +76,7 @@ class BtcDailyServiceTest {
     void planThenBuyAddAndTakeProfit() {
         LocalDate day = LocalDate.parse("2026-10-15");
         long start = BtcDailyRules.dayStart(day);
-        List<Kline> daily = new ArrayList<>(BtcDailyRulesTest.daily(day.minusDays(1), 40, 60_000, 2_000));
+        List<Kline> daily = new ArrayList<>(BtcDailyRulesTest.daily(day.minusDays(1), 80, 60_000, 2_000));
         daily.add(new Kline(start, 60_000, 60_000, 60_000, 60_000, 1e9, start + 86_399_999L)); // 今天未收盘
         market.daily.put("BTCUSDT", daily);
 
@@ -82,7 +87,7 @@ class BtcDailyServiceTest {
         assertThat(jdbc.sql("SELECT COUNT(*) FROM btc_daily_plan").query(Integer.class).single()).isEqualTo(1);
         String planText = jdbc.sql("SELECT text FROM notification_outbox WHERE event_key = 'btc-daily-plan-2026-10-15'")
                 .query(String.class).single();
-        assertThat(planText).contains("买入策略", "卖出策略", "不止损", "58,800.00");
+        assertThat(planText).contains("买入策略", "卖出策略", "不止损", "58,800.00", "数据缺失");
 
         // 当天：跌到第 2 档以下，再反弹到止盈价以上
         List<Kline> q = new ArrayList<>(quarters(start - 120 * Q, start, 60_000));
@@ -101,6 +106,23 @@ class BtcDailyServiceTest {
         // 独立账本：不写 V1/V2 的表
         assertThat(jdbc.sql("SELECT COUNT(*) FROM position").query(Integer.class).single()).isZero();
         assertThat(klines.latestOpenTime(Venue.BINANCE, "BTCUSDT")).isEqualTo(start + Q);
+    }
+
+    @Test
+    void contextUsesOnlyPublishedData() {
+        LocalDate day = LocalDate.parse("2026-10-15");
+        context.save(ContextService.FUNDING, java.util.Map.of(day.minusDays(1), 0.04, day, 0.5));
+        context.save(ContextService.FNG, java.util.Map.of(day.minusDays(1), 30.0));
+        context.save(ContextService.ETF, java.util.Map.of(day.minusDays(4), -200.0, day.minusDays(3), -500.0,
+                day.minusDays(2), -400.0, day.minusDays(1), 900.0));
+        MarketContext c = context.context(day);
+        assertThat(c.fundingPct()).isEqualTo(0.04);     // 用前一天，不用当天
+        assertThat(c.fearGreed()).isEqualTo(30.0);
+        assertThat(c.etfDay()).isEqualTo(day.minusDays(2)); // 前一天的 ETF 数据计划时还没公布
+        assertThat(c.etf3dM()).isEqualTo(-1100.0);
+        MarketContext.Gate g = c.gate(false, BtcDailyProperties.Filters.defaults());
+        assertThat(g.skipNew()).isTrue();
+        assertThat(g.multiplier()).isEqualTo(0.25);
     }
 
     static List<Kline> quarters(long from, long to, double price) {

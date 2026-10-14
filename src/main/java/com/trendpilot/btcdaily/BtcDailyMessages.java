@@ -15,9 +15,16 @@ final class BtcDailyMessages {
         sb.append("开盘 ").append(money(p.open())).append("｜ATR14 ").append(money(p.atr()))
                 .append("（").append(pct(p.atrPct())).append("）｜昨收")
                 .append(p.strong() ? "高于" : "低于").append(" EMA20，").append(p.strong() ? "偏强" : "偏弱").append('\n');
+        if (!p.reasons().isBlank()) {
+            sb.append("\n市场 / 宏观过滤：\n");
+            for (String r : p.reasons().split("；")) sb.append("  · ").append(r).append('\n');
+        }
         sb.append("\n买入策略：\n");
         if (p.levels().isEmpty()) {
-            sb.append("  资金已用满，今天不再买入，等待止盈\n");
+            sb.append(p.skipNew() && !b.holding() ? "  今天不开新一轮（见上面的过滤原因）\n"
+                    : "  资金已用满，今天不再买入，等待止盈\n");
+        } else if (p.multiplier() < 1 && !p.carried()) {
+            sb.append("  仓位按过滤结果乘 ").append(p.multiplier()).append('\n');
         }
         for (DailyPlan.Level l : p.levels()) {
             sb.append("  第 ").append(l.index() + 1).append(" 档").append(l.index() == 0 ? "" : "（加仓）")
@@ -63,16 +70,22 @@ final class BtcDailyMessages {
         return sb.toString();
     }
 
-    static String backtest(BtcDailyBacktest.Result r, BtcDailyProperties props) {
-        return "【BTC 每日短线】历史回测（参数 " + r.version() + "，规则与实盘影子同一套代码）\n"
-                + "区间 " + r.from() + " ~ " + r.to() + "（" + r.days() + " 天），有买入的天数 " + r.tradeDays()
+    static String backtest(BtcDailyBacktest.Result base, BtcDailyBacktest.Result filtered, BtcDailyProperties props) {
+        return "【BTC 每日短线】历史回测（参数 " + base.version() + "，规则与实盘影子同一套代码）\n"
+                + "\n■ 不加市场 / 宏观过滤\n" + result(base)
+                + "\n\n■ 加过滤（下跌趋势、议息/CPI 日、ETF 流出、资金费率、恐惧贪婪" + (props.filters().fredConfigured() ? "、利率、美元" : "") + "）\n"
+                + result(filtered) + "\n不开新一轮 " + filtered.skippedDays() + " 天，减仓 " + filtered.reducedDays() + " 天"
+                + "\n\n说明：不止损，被套时只等回本；资金上限 " + money(props.capUsdt()) + " USDT。ETF 数据从 2024-01 开始；缺失的数据当天不过滤。";
+    }
+
+    private static String result(BtcDailyBacktest.Result r) {
+        return "区间 " + r.from() + " ~ " + r.to() + "（" + r.days() + " 天），有买入的天数 " + r.tradeDays()
                 + "，完成 " + r.rounds() + " 轮\n"
                 + "已实现 " + signed(r.realized()) + " USDT；期末未卖仓位成本 " + money(r.endCost()) + "，浮动 "
                 + signed(r.endUnrealized()) + "\n"
                 + "最大浮亏 " + money(r.maxFloatLoss()) + " USDT（上限的 " + pct(r.maxFloatLossPct()) + "）\n"
                 + "单轮最长持仓 " + r.maxHoldDays() + " 天，平均 " + r.avgHoldDays() + " 天\n"
-                + "同期一直持有 BTC：" + pct(r.buyHoldPct()) + "\n"
-                + "说明：不止损，被套时只等回本；资金上限 " + money(props.capUsdt()) + " USDT。";
+                + "同期一直持有 BTC：" + pct(r.buyHoldPct());
     }
 
     private static double num(Object o) {

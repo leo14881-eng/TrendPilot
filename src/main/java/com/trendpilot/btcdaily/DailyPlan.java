@@ -10,9 +10,13 @@ import java.util.List;
  * @param carried 生成计划时是否还持有之前未卖的仓位
  * @param levels  还可以买的档位，按价格从高到低
  * @param tpPct   当天新开仓位的止盈幅度（%）；跨天仓位用 carryTpPct
+ * @param skipNew    市场 / 宏观过滤：当天不开新一轮
+ * @param multiplier 市场 / 宏观过滤：新一轮档位金额乘数
+ * @param reasons    过滤原因和缺失的数据源
  */
 public record DailyPlan(LocalDate day, String version, double open, double atr, double ema, double prevClose,
-                        boolean strong, boolean carried, double tpPct, List<Level> levels) {
+                        boolean strong, boolean carried, double tpPct, List<Level> levels, boolean skipNew,
+                        double multiplier, String reasons) {
 
     /** @param index 本轮第几次买入（0 起） */
     public record Level(int index, double price, double usdt) {

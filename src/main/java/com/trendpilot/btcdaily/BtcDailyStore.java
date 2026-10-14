@@ -26,18 +26,21 @@ public class BtcDailyStore {
                 .query((rs, i) -> new DailyPlan(LocalDate.parse(rs.getString("day")), rs.getString("version"),
                         rs.getDouble("open"), rs.getDouble("atr"), rs.getDouble("ema"), rs.getDouble("prev_close"),
                         rs.getInt("strong") == 1, rs.getInt("carried") == 1, rs.getDouble("tp_pct"),
-                        parseLevels(rs.getString("levels"))))
+                        parseLevels(rs.getString("levels")), rs.getInt("skip_new") == 1, rs.getDouble("multiplier"),
+                        rs.getString("reasons")))
                 .optional();
     }
 
     public void savePlan(DailyPlan p, Instant now) {
         jdbc.sql("""
-                INSERT OR IGNORE INTO btc_daily_plan(day, version, open, atr, ema, prev_close, strong, carried, tp_pct, levels, created_at)
-                VALUES (:d, :v, :o, :a, :e, :pc, :s, :c, :tp, :l, :now)
+                INSERT OR IGNORE INTO btc_daily_plan(day, version, open, atr, ema, prev_close, strong, carried, tp_pct, levels,
+                    skip_new, multiplier, reasons, created_at)
+                VALUES (:d, :v, :o, :a, :e, :pc, :s, :c, :tp, :l, :sk, :m, :r, :now)
                 """)
                 .param("d", p.day().toString()).param("v", p.version()).param("o", p.open()).param("a", p.atr())
                 .param("e", p.ema()).param("pc", p.prevClose()).param("s", p.strong() ? 1 : 0)
                 .param("c", p.carried() ? 1 : 0).param("tp", p.tpPct()).param("l", formatLevels(p.levels()))
+                .param("sk", p.skipNew() ? 1 : 0).param("m", p.multiplier()).param("r", p.reasons())
                 .param("now", now.toString()).update();
     }
 

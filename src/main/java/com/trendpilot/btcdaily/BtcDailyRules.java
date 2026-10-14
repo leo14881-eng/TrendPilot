@@ -28,14 +28,30 @@ public final class BtcDailyRules {
         return day.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
     }
 
-    /**
-     * @param dailyBefore 计划日之前已收盘的日线（升序），至少 max(atrDays + 1, emaDays) 根
-     * @param open        计划日日线开盘价
-     */
+    /** 计划需要的最少日线根数。 */
+    public static int dailyNeeded(BtcDailyProperties p) {
+        return Math.max(p.atrDays() + 1, Math.max(p.emaDays(), p.filters().emaLong()) + p.filters().slopeDays());
+    }
+
+    /** 不带市场 / 宏观过滤的计划（回测基准）。 */
     public static DailyPlan plan(LocalDate day, List<Kline> dailyBefore, double open, Book book, BtcDailyProperties p) {
-        int need = Math.max(p.atrDays() + 1, p.emaDays());
+        return plan(day, dailyBefore, open, book, p, null);
+    }
+
+    /**
+     * @param dailyBefore 计划日之前已收盘的日线（升序），至少 {@link #dailyNeeded} 根
+     * @param open        计划日日线开盘价
+     * @param ctx         市场与宏观数据；null 表示不做过滤（回测基准）
+     */
+    public static DailyPlan plan(LocalDate day, List<Kline> dailyBefore, double open, Book book, BtcDailyProperties p,
+                                 MarketContext ctx) {
+        int need = dailyNeeded(p);
         if (dailyBefore.size() < need) {
             throw new IllegalArgumentException("日线不足：需要 " + need + " 根，只有 " + dailyBefore.size());
+        }
+        MarketContext.Gate gate = MarketContext.Gate.NONE;
+        if (ctx != null && p.filters().enabled()) {
+            gate = ctx.gate(downtrend(dailyBefore, p), p.filters());
         }
         double atr = atr(dailyBefore, p.atrDays());
         double ema = ema(dailyBefore, p.emaDays());
@@ -48,10 +64,11 @@ public final class BtcDailyRules {
         if (!book.holding()) {
             double first = open - (strong ? p.kStrong() : p.kWeak()) * atr;
             double spent = 0;
-            for (int i = 0; i < tranches.size(); i++) {
-                if (spent + tranches.get(i) > p.capUsdt() + 1e-6) break;
-                spent += tranches.get(i);
-                levels.add(new DailyPlan.Level(i, round2(first - i * p.stepAtr() * atr), tranches.get(i)));
+            for (int i = 0; i < tranches.size() && !gate.skipNew(); i++) {
+                double usdt = round2(tranches.get(i) * gate.multiplier());
+                if (spent + usdt > p.capUsdt() + 1e-6) break;
+                spent += usdt;
+                levels.add(new DailyPlan.Level(i, round2(first - i * p.stepAtr() * atr), usdt));
             }
         } else {
             double spent = book.cost;
@@ -61,7 +78,19 @@ public final class BtcDailyRules {
                 levels.add(new DailyPlan.Level(i, round2(book.lastBuyPrice - j * p.stepAtr() * atr), tranches.get(i)));
             }
         }
-        return new DailyPlan(day, p.version(), open, atr, ema, prevClose, strong, book.holding(), tpPct, List.copyOf(levels));
+        List<String> notes = new ArrayList<>(gate.reasons());
+        if (ctx != null && !ctx.gaps().isEmpty()) notes.add("数据缺失：" + String.join("、", ctx.gaps()));
+        return new DailyPlan(day, p.version(), open, atr, ema, prevClose, strong, book.holding(), tpPct,
+                List.copyOf(levels), gate.skipNew(), gate.multiplier(), String.join("；", notes));
+    }
+
+    /** 下跌趋势：昨收 < EMA20 且 EMA20 < 长期 EMA 且 EMA20 比 slopeDays 天前低。 */
+    static boolean downtrend(List<Kline> daily, BtcDailyProperties p) {
+        int slope = p.filters().slopeDays();
+        double ema = ema(daily, p.emaDays());
+        double emaBefore = ema(daily.subList(0, daily.size() - slope), p.emaDays());
+        double emaLong = ema(daily, p.filters().emaLong());
+        return daily.getLast().close() < ema && ema < emaLong && ema < emaBefore;
     }
 
     /** 当前持仓的止盈价（含手续费的均价 × (1 + 幅度)）。 */
