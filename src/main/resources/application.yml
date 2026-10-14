@@ -43,7 +43,7 @@ logging:
 
 # 策略参数（人工修改后请同时修改 version）
 trendpilot.strategy:
-  version: v3-2026-10-15-review
+  version: v3.1-2026-10-15-crash
   fee-rate: 0.001                 # 单边手续费 0.1%
   universe:
     quote-asset: USDT
@@ -124,6 +124,9 @@ trendpilot.strategy:
     recovery-observations: 2          # 风险解除后，连续 2 轮正常观察才恢复新增
     recovery-half-budget-observations: 2  # 恢复后再 2 轮只用一半额度
     underwater-loss-pct: 5            # 浮亏超过成本 5% 的持仓，在亏损冻结里按一次亏损计
+    alt-crash-median1h-pct: -5        # 山寨崩盘熔断：Binance 池 1h 涨跌中位数 ≤ -5% 时停止新买入/加仓
+    alt-crash-recover-pct: -2         # 中位数回到 -2% 以上解除（之后仍按恢复期规则逐步恢复）
+    alt-crash-max-hours: 24           # 最长熔断 24 小时
 
 # 信号跟踪与退出策略研究（docs/信号跟踪与退出策略设计.md），只观察，不影响交易
 trendpilot.tracking:

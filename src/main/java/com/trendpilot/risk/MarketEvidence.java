@@ -6,6 +6,11 @@ package com.trendpilot.risk;
  * @param medianSpreadBps    成交额前 50 的标的的中位价差
  * @param stableDeviationPct 主要稳定币相对 1 美元的最大偏离（百分比）
  * @param confirmedShocks    亏损窗口内已确认的市场冲击次数（数据完整时观察到的 BTC 1h 急跌）
+ * @param altCrash           山寨崩盘熔断是否生效（见 {@link RiskRecovery#altCrash}）
  */
-public record MarketEvidence(double medianSpreadBps, double stableDeviationPct, int confirmedShocks) {
+public record MarketEvidence(double medianSpreadBps, double stableDeviationPct, int confirmedShocks, boolean altCrash) {
+
+    public MarketEvidence(double medianSpreadBps, double stableDeviationPct, int confirmedShocks) {
+        this(medianSpreadBps, stableDeviationPct, confirmedShocks, false);
+    }
 }

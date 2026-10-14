@@ -29,6 +29,33 @@ public class RiskRecovery {
     static final String LAST_GEN = "risk:lastGeneration";
     static final String SHOCKS = "risk:shocks";
     static final Duration SAME_EVENT = Duration.ofMinutes(90);
+    static final String ALT_CRASH_SINCE = "risk:altCrashSince";
+
+    /** 熔断状态变化：started 本轮新触发，ended 本轮解除。 */
+    public record AltCrash(boolean active, boolean started, boolean ended, double median1hPct) {
+    }
+
+    /**
+     * 山寨崩盘熔断：池内 1h 涨跌中位数 ≤ 触发线时生效；之后中位数回到恢复线以上、或满最长时间才解除。
+     * 只停止新买入和加仓，不卖出任何仓位。中位数缺失时保持原状态。
+     */
+    public AltCrash altCrash(double median1hPct, Instant now) {
+        Instant since = state.get(ALT_CRASH_SINCE).filter(v -> !v.isBlank()).map(Instant::parse).orElse(null);
+        if (since == null) {
+            if (!Double.isNaN(median1hPct) && median1hPct <= p.altCrashMedian1hPct()) {
+                state.put(ALT_CRASH_SINCE, now.toString());
+                return new AltCrash(true, true, false, median1hPct);
+            }
+            return new AltCrash(false, false, false, median1hPct);
+        }
+        boolean expired = Duration.between(since, now).toHours() >= p.altCrashMaxHours();
+        boolean recovered = !Double.isNaN(median1hPct) && median1hPct >= p.altCrashRecoverPct();
+        if (expired || recovered) {
+            state.put(ALT_CRASH_SINCE, "");
+            return new AltCrash(false, false, true, median1hPct);
+        }
+        return new AltCrash(true, false, false, median1hPct);
+    }
 
     private final AppState state;
     private final StrategyParams.Risk p;

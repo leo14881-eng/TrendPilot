@@ -245,7 +245,7 @@ public class DiscoveryJob {
         // V1 只受市场类风险（BTC 急跌、流动性、稳定币、数据缺失）限制，不受 V2 的亏损冻结和恢复期限制，
         // 否则 V2 浮亏时 V1 也停止采样，对比数据正好在行情差的时候断档
         RiskState v1Risk = riskAssessor.assess(main.btc(), btcTicker, main.universe(), 0,
-                new MarketEvidence(ev.medianSpreadBps(), ev.stableDeviationPct(), 0));
+                new MarketEvidence(ev.medianSpreadBps(), ev.stableDeviationPct(), 0, ev.altCrash()));
         if (main.btc() != null) recovery.recordShockIfAny(raw, now);
         RiskState risk = recovery.apply(raw, gen);
         String prevRegime = state.get("regime").orElse(null);
@@ -388,7 +388,33 @@ public class DiscoveryJob {
         }
         double stable = main.tickers().stream().filter(t -> STABLE_REFERENCES.contains(t.symbol()) && t.lastPrice() > 0)
                 .mapToDouble(t -> Math.abs(t.lastPrice() - 1) * 100).max().orElse(Double.NaN);
-        return new MarketEvidence(medianSpread, stable, recovery.confirmedShocks(now));
+        double median1h = medianReturn1h(main);
+        RiskRecovery.AltCrash crash = recovery.altCrash(median1h, now);
+        if (crash.started()) {
+            notifier.send("alt-crash:" + now, String.format(java.util.Locale.ROOT,
+                    "🚨 山寨崩盘熔断：Binance 池 1 小时涨跌中位数 %.2f%%（触发线 %.1f%%）\n已停止 V1/V2 新买入和加仓，不卖出任何持仓。"
+                            + "\n中位数回到 %.1f%% 以上或满 %d 小时后解除，之后按恢复期逐步恢复。",
+                    median1h, params.risk().altCrashMedian1hPct(), params.risk().altCrashRecoverPct(),
+                    params.risk().altCrashMaxHours()));
+        } else if (crash.ended()) {
+            notifier.send("alt-crash-end:" + now, String.format(java.util.Locale.ROOT,
+                    "✅ 山寨崩盘熔断解除：1 小时涨跌中位数 %.2f%%，之后按恢复期逐步恢复买入", median1h));
+        }
+        return new MarketEvidence(medianSpread, stable, recovery.confirmedShocks(now), crash.active());
+    }
+
+    /** 池内每个标的最近 4 根 15m K 线（约 1 小时）的涨跌，取中位数；样本不足 20 个时为 NaN。 */
+    static double medianReturn1h(Pool main) {
+        if (main.bars() == null) return Double.NaN;
+        List<Double> rets = new ArrayList<>();
+        for (SymbolBars b : main.bars().bars().values()) {
+            List<com.trendpilot.market.Kline> q = b.quarter();
+            if (q.size() < 4 || q.get(q.size() - 4).open() <= 0) continue;
+            rets.add((q.getLast().close() / q.get(q.size() - 4).open() - 1) * 100);
+        }
+        if (rets.size() < 20) return Double.NaN;
+        java.util.Collections.sort(rets);
+        return rets.get(rets.size() / 2);
     }
 
     private Pool loadPool(VenueMarket m, Set<String> alreadyCovered, Instant now) {

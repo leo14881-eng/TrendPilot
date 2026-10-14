@@ -88,4 +88,26 @@ class SystemRiskTest {
         recovery.recordShockIfAny(shock, NOW.plus(Duration.ofHours(6)));
         assertThat(recovery.confirmedShocks(NOW.plus(Duration.ofHours(7)))).isEqualTo(2);
     }
+
+    @Test
+    void altCrashBlocksNewRiskUntilMarketRecovers() {
+        assertThat(assess(new MarketEvidence(5, 0.01, 0, true)).reasons()).contains("ALT_CRASH");
+        assertThat(assess(new MarketEvidence(5, 0.01, 0, true)).newRiskAllowed()).isFalse();
+
+        RiskRecovery.AltCrash a = recovery.altCrash(-6, NOW);
+        assertThat(a.active()).isTrue();
+        assertThat(a.started()).isTrue();
+        // 中位数还在 -2% 以下：继续熔断
+        assertThat(recovery.altCrash(-3, NOW.plus(Duration.ofHours(1))).active()).isTrue();
+        // 数据缺失：保持原状态
+        assertThat(recovery.altCrash(Double.NaN, NOW.plus(Duration.ofHours(2))).active()).isTrue();
+        RiskRecovery.AltCrash end = recovery.altCrash(-1, NOW.plus(Duration.ofHours(3)));
+        assertThat(end.active()).isFalse();
+        assertThat(end.ended()).isTrue();
+        // 最长 24 小时
+        recovery.altCrash(-7, NOW.plus(Duration.ofHours(4)));
+        assertThat(recovery.altCrash(-4, NOW.plus(Duration.ofHours(28))).ended()).isTrue();
+        // 没触发时 -4% 不熔断
+        assertThat(recovery.altCrash(-4, NOW.plus(Duration.ofHours(29))).active()).isFalse();
+    }
 }

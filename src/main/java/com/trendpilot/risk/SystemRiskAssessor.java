@@ -75,6 +75,10 @@ public class SystemRiskAssessor {
             allowed = false;
             reasons.add("STABLECOIN_DEPEG");
         }
+        if (evidence.altCrash()) {
+            allowed = false;
+            reasons.add("ALT_CRASH");
+        }
         int losses = recentLossExits + evidence.confirmedShocks();
         if (losses >= p.lossExitsFreeze()) {
             allowed = false;
