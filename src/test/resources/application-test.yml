@@ -8,6 +8,8 @@ trendpilot:
     enabled: false
   stream:
     enabled: false
+  research:
+    enabled: false
 
 logging:
   file:

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import com.trendpilot.config.StrategyParams;
 import com.trendpilot.market.ExecutionSimulator;
 import com.trendpilot.market.ExecutionSimulator.Fill;
+import com.trendpilot.research.Identity;
 import com.trendpilot.signal.EarlySignal;
 
 /**
@@ -29,13 +30,14 @@ public class CapitalReviewer {
         StrategyParams.Review r = params.review();
         EarlySignal s = in.signal();
         Action action = in.position() == null ? Action.BUY : Action.ADD;
-        List<String> gaps = List.of("UNLOCK_SUPPLY_DATA_NOT_COVERED");
+        List<String> gaps = in.research().gaps();
 
         // 1. 系统层面
         List<String> blocked = new ArrayList<>();
         if (!in.scanComplete()) blocked.add("SCAN_INCOMPLETE");
         if (!in.risk().newRiskAllowed()) blocked.addAll(in.risk().reasons());
         if (in.book() == null || !in.book().usable()) blocked.add("BOOK_MISSING");
+        if (in.research().identity() == Identity.DATA_UNAVAILABLE) blocked.add("IDENTITY_DATA_UNAVAILABLE");
         if (!blocked.isEmpty()) {
             return result(in, action, Decision.SYSTEM_BLOCKED, blocked, gaps, Double.NaN, null);
         }
@@ -48,6 +50,8 @@ public class CapitalReviewer {
         // 2. 硬性拒绝
         List<String> reject = new ArrayList<>();
         if (params.universe().blocklist().contains(s.symbol())) reject.add("IDENTITY_BLOCKLISTED");
+        if (in.research().identity() == Identity.AMBIGUOUS) reject.add("IDENTITY_AMBIGUOUS");
+        if (in.research().identity() == Identity.UNVERIFIED) reject.add("IDENTITY_UNVERIFIED");
         if (!s.early()) reject.add("EARLY_HITS_LT_" + params.early().minHits());
         if (s.score() < r.minScore()) reject.add("SCORE_LT_" + r.minScore());
         if (s.rel1h() < r.minRel1h() && s.rel4h() < r.minRel4h()) reject.add("RELATIVE_STRENGTH_WEAK");

@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,6 +39,8 @@ import com.trendpilot.market.stream.StreamHub;
 import com.trendpilot.notify.Messages;
 import com.trendpilot.notify.Notifier;
 import com.trendpilot.observation.V1Tracker;
+import com.trendpilot.research.ResearchRecord;
+import com.trendpilot.research.ResearchService;
 import com.trendpilot.portfolio.Position;
 import com.trendpilot.portfolio.ShadowBook;
 import com.trendpilot.risk.RiskState;
@@ -59,6 +62,7 @@ public class DiscoveryJob {
     private static final Logger log = LoggerFactory.getLogger(DiscoveryJob.class);
 
     private final Markets markets;
+    private final ResearchService research;
     private final StreamHub streams;
     private final V1Tracker v1;
     private final UniverseFilter universeFilter;
@@ -74,10 +78,11 @@ public class DiscoveryJob {
     private final JdbcClient jdbc;
     private final StrategyParams params;
 
-    public DiscoveryJob(Markets markets, StreamHub streams, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, CapitalReviewer reviewer,
+    public DiscoveryJob(Markets markets, ResearchService research, StreamHub streams, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, CapitalReviewer reviewer,
                         CapitalAllocator allocator, ShadowBook book, PortfolioLock lock, Notifier notifier,
                         JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params) {
         this.markets = markets;
+        this.research = research;
         this.streams = streams;
         this.v1 = v1;
         this.universeFilter = universeFilter;
@@ -192,6 +197,20 @@ public class DiscoveryJob {
                 .filter(c -> (c.signal().early() && c.signal().score() >= params.review().minScore()) || held.contains(c.signal().symbol()))
                 .toList();
         Map<String, OrderBook> books = fetchBooks(candidates);
+
+        // 研究：轮转 + 前 N 个 EARLY + 前 N 个价格异动；所有 EARLY 和候选都要有身份结论（只读本地资料）
+        List<ResearchService.Target> universeTargets = pools.stream().flatMap(p -> p.universe().stream()
+                        .filter(t -> !t.symbol().equals(UniverseFilter.BTC))
+                        .map(t -> new ResearchService.Target(p.venue(), t, "ROTATION")))
+                .toList();
+        List<ResearchService.Target> earlyRanked = early.stream()
+                .sorted(Comparator.comparingDouble((Candidate c) -> -c.signal().score()))
+                .map(c -> new ResearchService.Target(c.venue(), c.ticker(), "EARLY")).toList();
+        Map<String, ResearchService.Target> targets = new LinkedHashMap<>();
+        research.selectTargets(universeTargets, earlyRanked).forEach(t -> targets.put(t.ticker().symbol(), t));
+        java.util.stream.Stream.concat(early.stream(), candidates.stream())
+                .forEach(c -> targets.putIfAbsent(c.signal().symbol(), new ResearchService.Target(c.venue(), c.ticker(), "EARLY")));
+        Map<String, ResearchRecord> researched = research.researchAndRecord(gen, List.copyOf(targets.values()), now);
         Map<Venue, Pool> poolBy = new LinkedHashMap<>();
         pools.forEach(p -> poolBy.put(p.venue(), p));
 
@@ -211,7 +230,7 @@ public class DiscoveryJob {
                 Position pos = book.position(s.symbol()).orElse(null);
                 ReviewInput in = new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
                         books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), pos,
-                        book.lastExit(s.symbol()).orElse(null));
+                        book.lastExit(s.symbol()).orElse(null), researched.get(s.symbol()));
                 results.add(reviewer.review(in));
                 venueOf.put(s.symbol(), c.venue());
             }
@@ -233,7 +252,7 @@ public class DiscoveryJob {
             // V1 宽口径观察：所有 EARLY（不要求评分 8、不占 V2 资金）
             List<V1Tracker.Candidate> v1Candidates = early.stream()
                     .map(c -> new V1Tracker.Candidate(c.venue(), c.signal(), c.ticker(),
-                            main.complete() && poolBy.get(c.venue()).complete()))
+                            main.complete() && poolBy.get(c.venue()).complete(), researched.get(c.signal().symbol()).identity()))
                     .toList();
             v1Entries.addAll(v1.enter(gen, now, v1Candidates, risk));
             for (ReviewResult r : results) {

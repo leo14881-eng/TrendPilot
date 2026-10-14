@@ -31,6 +31,7 @@ import com.trendpilot.notify.Messages;
 import com.trendpilot.notify.Notifier;
 import com.trendpilot.portfolio.ObservationBook;
 import com.trendpilot.portfolio.Position;
+import com.trendpilot.research.Identity;
 import com.trendpilot.risk.RiskState;
 import com.trendpilot.signal.EarlySignal;
 import com.trendpilot.signal.EarlySignalCalculator;
@@ -39,7 +40,7 @@ import com.trendpilot.universe.UniverseFilter;
 /**
  * V1 宽口径观察账本。
  * <ul>
- * <li>进入：EARLY 至少两个条件、所在池扫描完整、系统风险允许新增、不在黑名单、该币当前没有 V1 观察、
+ * <li>进入：EARLY 至少两个条件、所在池扫描完整、系统风险允许新增、没有明确身份错误（黑名单、身份歧义）、该币当前没有 V1 观察、
  *     距上次 V1 退出至少一个再入场冷却期。没有评分门槛、资金池和数量上限。</li>
  * <li>记账：每笔名义 1,000U，按参考价 + 手续费记账（不请求盘口），样本收益不能当作可执行组合收益。</li>
  * <li>退出：与 V2 相同的退出顺序（硬失效 → 利润保护 → 论点失效 → 8% 复核），价格取一次批量的 24h 行情。</li>
@@ -69,7 +70,7 @@ public class V1Tracker {
     }
 
     /** Discovery 中的一个 EARLY 信号。 */
-    public record Candidate(Venue venue, EarlySignal signal, Ticker24h ticker, boolean scanComplete) {
+    public record Candidate(Venue venue, EarlySignal signal, Ticker24h ticker, boolean scanComplete, Identity identity) {
     }
 
     /** @return 本轮新进入 V1 的标的 */
@@ -82,7 +83,8 @@ public class V1Tracker {
         for (Candidate c : early) {
             EarlySignal s = c.signal();
             if (!s.early() || !c.scanComplete() || c.ticker() == null) continue;
-            if (params.universe().blocklist().contains(s.symbol())) continue;
+            // 明确的身份错误也不进 V1；身份资料缺失不算错误
+            if (params.universe().blocklist().contains(s.symbol()) || c.identity() == Identity.AMBIGUOUS) continue;
             if (book.position(s.symbol()).isPresent()) continue;
             Instant lastExit = book.lastExit(s.symbol()).orElse(null);
             if (lastExit != null && Duration.between(lastExit, now).toMinutes() < params.review().reentryCooldownMinutes()) {

@@ -13,6 +13,8 @@ import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.Ticker24h;
 import com.trendpilot.market.Venue;
 import com.trendpilot.portfolio.Position;
+import com.trendpilot.research.Identity;
+import com.trendpilot.research.ResearchRecord;
 import com.trendpilot.risk.Regime;
 import com.trendpilot.risk.RiskState;
 import com.trendpilot.signal.EarlySignal;
@@ -28,10 +30,17 @@ class CapitalReviewerTest {
     private final RiskState okRisk = new RiskState(Regime.CONSTRUCTIVE, true, 1, 1, 0, 0, 0.6, 0, List.of());
     private final Ticker24h ticker = new Ticker24h("ABCUSDT", 104, 5, 5_000_000);
     private final OrderBook goodBook = TestData.book("ABCUSDT", 104, 2, 100, now);
+    private ResearchRecord research = verified(Identity.VERIFIED);
+
+    private static ResearchRecord verified(Identity identity) {
+        return new ResearchRecord(Venue.BINANCE, "ABCUSDT", "abc", identity, 1e8, 2e8, 0.5, Double.NaN, Double.NaN,
+                Double.NaN, List.of(), List.of("VALUE_CAPTURE_NOT_COVERED", "UNLOCK_SCHEDULE_NOT_COVERED"));
+    }
 
     private ReviewInput input(OrderBook book, RiskState risk, Ticker24h t, BigDecimal firstSeen, Position pos,
                               Instant lastExit, boolean complete) {
-        return new ReviewInput("D-1", now.minusSeconds(60), now, complete, strong, t, book, risk, firstSeen, pos, lastExit);
+        return new ReviewInput("D-1", now.minusSeconds(60), now, complete, strong, t, book, risk, firstSeen, pos, lastExit,
+                research);
     }
 
     @Test
@@ -40,7 +49,7 @@ class CapitalReviewerTest {
         assertThat(r.decision()).isEqualTo(Decision.BUY);
         assertThat(r.action()).isEqualTo(Action.BUY);
         assertThat(r.rr()).isGreaterThan(1.5);
-        assertThat(r.gaps()).contains("UNLOCK_SUPPLY_DATA_NOT_COVERED");
+        assertThat(r.gaps()).contains("UNLOCK_SCHEDULE_NOT_COVERED");
     }
 
     @Test
@@ -123,5 +132,22 @@ class CapitalReviewerTest {
     private Position position(BigDecimal lastPrice, Instant lastSignal, int tranches) {
         return new Position(Venue.BINANCE, "ABCUSDT", new BigDecimal("10"), new BigDecimal("1001"), new BigDecimal("1000"), tranches,
                 lastPrice, lastSignal, "D-0", lastSignal, false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false);
+    }
+
+    @Test
+    void identityGates() {
+        research = verified(Identity.AMBIGUOUS);
+        ReviewResult ambiguous = reviewer.review(input(goodBook, okRisk, ticker, null, null, null, true));
+        assertThat(ambiguous.decision()).isEqualTo(Decision.REJECT);
+        assertThat(ambiguous.reasons()).contains("IDENTITY_AMBIGUOUS");
+
+        research = verified(Identity.UNVERIFIED);
+        assertThat(reviewer.review(input(goodBook, okRisk, ticker, null, null, null, true)).reasons())
+                .contains("IDENTITY_UNVERIFIED");
+
+        research = ResearchRecord.unavailable(Venue.BINANCE, "ABCUSDT");
+        ReviewResult unavailable = reviewer.review(input(goodBook, okRisk, ticker, null, null, null, true));
+        assertThat(unavailable.decision()).isEqualTo(Decision.SYSTEM_BLOCKED);
+        assertThat(unavailable.reasons()).contains("IDENTITY_DATA_UNAVAILABLE");
     }
 }

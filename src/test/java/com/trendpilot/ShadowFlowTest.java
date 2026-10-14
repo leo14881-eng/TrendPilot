@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +21,8 @@ import org.springframework.test.context.DynamicPropertySource;
 import com.trendpilot.job.DiscoveryJob;
 import com.trendpilot.job.MonitorJob;
 import com.trendpilot.market.Markets;
+import com.trendpilot.research.CoinGeckoClient;
+import com.trendpilot.research.ResearchService;
 import com.trendpilot.market.Ticker24h;
 import com.trendpilot.market.Venue;
 import com.trendpilot.portfolio.ObservationBook;
@@ -64,6 +67,7 @@ class ShadowFlowTest {
     @Autowired ObservationBook v1Book;
     @Autowired JdbcClient jdbc;
     @Autowired Markets markets;
+    @Autowired ResearchService research;
 
     @org.junit.jupiter.api.BeforeEach
     void reset() {
@@ -74,6 +78,12 @@ class ShadowFlowTest {
                 "kline_15m", "v1_position"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
+        // 身份资料：测试标的在 CoinGecko 上唯一对应一个项目（资料时间放在测试截面之后，不算过期）
+        Instant fresh = Instant.parse("2026-12-31T00:00:00Z");
+        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "XYZ", "BYO", "WEAK", "AAA", "BBB", "CCC")
+                .map(b -> new CoinGeckoClient.ExchangeTicker(b, "USDT", b.toLowerCase() + "-coin")).toList();
+        research.saveIdentity(Venue.BINANCE, listed, fresh);
+        research.saveIdentity(Venue.BYBIT, listed, fresh);
     }
 
     @Test
@@ -209,5 +219,21 @@ class ShadowFlowTest {
         assertThat(stats.winRatePct()).isEqualTo(100);
         assertThat(stats.avgHoldHours()).isEqualTo(10 / 60.0, org.assertj.core.data.Offset.offset(1e-9));
         assertThat(stats.line()).startsWith("V1：买入 1 笔，平仓 1 笔，胜率 100%");
+    }
+
+    @Test
+    void unverifiedIdentityBlocksV2ButNotV1AndResearchIsRecorded() {
+        Instant t0 = Instant.parse("2026-10-19T10:17:00Z");
+        market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        market.put("NEWUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("NEWUSDT", 104, 2, 100, t0));
+
+        DiscoveryJob.Report d = discovery.runOnce(t0);
+        assertThat(d.entries()).isEmpty();
+        assertThat(d.v1Entries()).contains("NEWUSDT");
+        String reasons = jdbc.sql("SELECT reasons FROM decision_log WHERE symbol = 'NEWUSDT'").query(String.class).single();
+        assertThat(reasons).contains("IDENTITY_UNVERIFIED");
+        String identity = jdbc.sql("SELECT identity FROM research_record WHERE symbol = 'NEWUSDT' ORDER BY id DESC LIMIT 1")
+                .query(String.class).single();
+        assertThat(identity).isEqualTo("UNVERIFIED");
     }
 }

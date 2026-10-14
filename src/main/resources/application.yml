@@ -124,3 +124,15 @@ trendpilot.stream:
   enabled: true
   binance-url: wss://stream.binance.com:9443/stream
   bybit-url: wss://stream.bybit.com/v5/public/spot
+
+# 研究资料（CoinGecko、DefiLlama 公开接口；可在 config/application-local.yml 填 coingecko-api-key）
+trendpilot.research:
+  enabled: true
+  coingecko-base-url: https://api.coingecko.com/api/v3
+  coingecko-api-key: ${COINGECKO_API_KEY:}
+  defillama-base-url: https://api.llama.fi
+  rotation: 25
+  top-early: 10
+  top-movers: 10
+  min-interval-ms: 4000          # 免费额度下每 4 秒最多一次请求
+  low-float-ratio: 0.3           # 流通量 / 总量低于 30% 标记 LOW_FLOAT
