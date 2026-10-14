@@ -16,9 +16,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.trendpilot.market.BarsLoader;
-import com.trendpilot.market.MarketDataSource;
+import com.trendpilot.market.DepthCache;
 import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.SymbolBars;
+import com.trendpilot.market.SymbolDirectory;
 import com.trendpilot.market.SymbolInfo;
 import com.trendpilot.monitor.ExitDecision;
 import com.trendpilot.monitor.ExitPolicy;
@@ -41,7 +42,8 @@ public class MonitorJob {
 
     private static final Logger log = LoggerFactory.getLogger(MonitorJob.class);
 
-    private final MarketDataSource market;
+    private final SymbolDirectory directory;
+    private final DepthCache depthCache;
     private final BarsLoader barsLoader;
     private final EarlySignalCalculator signals;
     private final ExitPolicy exitPolicy;
@@ -51,10 +53,11 @@ public class MonitorJob {
     private final JobRuns runs;
     private final AppState state;
 
-    public MonitorJob(MarketDataSource market, BarsLoader barsLoader, EarlySignalCalculator signals,
+    public MonitorJob(SymbolDirectory directory, DepthCache depthCache, BarsLoader barsLoader, EarlySignalCalculator signals,
                       ExitPolicy exitPolicy, ShadowBook book, PortfolioLock lock, Notifier notifier, JobRuns runs,
                       AppState state) {
-        this.market = market;
+        this.directory = directory;
+        this.depthCache = depthCache;
         this.barsLoader = barsLoader;
         this.signals = signals;
         this.exitPolicy = exitPolicy;
@@ -99,13 +102,13 @@ public class MonitorJob {
         }
         List<String> symbols = snapshot.stream().map(Position::symbol).toList();
 
-        // 必需数据：交易状态 + 全数量盘口；缺任何一个就停止本轮
+        // 必需数据：交易状态（缓存的整表）+ 全数量盘口；缺任何一个就停止本轮
         Map<String, Observed> observed = new LinkedHashMap<>();
         List<String> missing = new ArrayList<>();
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             Map<String, Future<Observed>> fs = new LinkedHashMap<>();
             symbols.forEach(s -> fs.put(s, pool.submit(
-                    () -> new Observed(market.symbol(s), market.depth(s, DiscoveryJob.DEPTH_LIMIT)))));
+                    () -> new Observed(directory.get(s), depthCache.get(s, DiscoveryJob.DEPTH_LIMIT)))));
             for (var e : fs.entrySet()) {
                 try {
                     Observed o = e.getValue().get();
@@ -121,7 +124,7 @@ public class MonitorJob {
             return new Report(gen, snapshot.size(), List.of(), "STOPPED_MISSING:" + missing);
         }
 
-        // 信号指标（可选）：K 线缺失时该持仓本轮不算有效观察
+        // 信号指标（可选）：K 线走本地缓存，只有新收盘的 15m K 线才请求；缺失时该持仓本轮不算有效观察
         List<String> barNames = new ArrayList<>(symbols);
         barNames.add(UniverseFilter.BTC);
         BarsLoader.Result bars = barsLoader.load(barNames, now);

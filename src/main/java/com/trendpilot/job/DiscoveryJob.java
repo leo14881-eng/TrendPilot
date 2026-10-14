@@ -26,9 +26,11 @@ import com.trendpilot.capital.ReviewInput;
 import com.trendpilot.capital.ReviewResult;
 import com.trendpilot.config.StrategyParams;
 import com.trendpilot.market.BarsLoader;
+import com.trendpilot.market.DepthCache;
 import com.trendpilot.market.MarketDataSource;
 import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.SymbolBars;
+import com.trendpilot.market.SymbolDirectory;
 import com.trendpilot.market.Ticker24h;
 import com.trendpilot.notify.Messages;
 import com.trendpilot.notify.Notifier;
@@ -53,6 +55,8 @@ public class DiscoveryJob {
     private static final Logger log = LoggerFactory.getLogger(DiscoveryJob.class);
 
     private final MarketDataSource market;
+    private final SymbolDirectory directory;
+    private final DepthCache depthCache;
     private final UniverseFilter universeFilter;
     private final BarsLoader barsLoader;
     private final EarlySignalCalculator signals;
@@ -67,11 +71,13 @@ public class DiscoveryJob {
     private final JdbcClient jdbc;
     private final StrategyParams params;
 
-    public DiscoveryJob(MarketDataSource market, UniverseFilter universeFilter, BarsLoader barsLoader,
+    public DiscoveryJob(MarketDataSource market, SymbolDirectory directory, DepthCache depthCache, UniverseFilter universeFilter, BarsLoader barsLoader,
                         EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, CapitalReviewer reviewer,
                         CapitalAllocator allocator, ShadowBook book, PortfolioLock lock, Notifier notifier,
                         JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params) {
         this.market = market;
+        this.directory = directory;
+        this.depthCache = depthCache;
         this.universeFilter = universeFilter;
         this.barsLoader = barsLoader;
         this.signals = signals;
@@ -88,7 +94,7 @@ public class DiscoveryJob {
     }
 
     public record Report(String generation, int universe, int missing, int early, int reviewed, List<String> entries,
-                         boolean scanComplete) {
+                         boolean scanComplete, int klineRequests) {
     }
 
     @Scheduled(cron = "0 17 * * * *", zone = "${trendpilot.zone}")
@@ -102,7 +108,7 @@ public class DiscoveryJob {
             Report r = discover(gen, now);
             runs.record(JOB, gen, now, Instant.now(), "SUCCESS", r.scanComplete() ? "COMPLETE" : "PARTIAL_DATA",
                     "universe=" + r.universe() + " missing=" + r.missing() + " early=" + r.early()
-                            + " reviewed=" + r.reviewed() + " entries=" + r.entries());
+                            + " reviewed=" + r.reviewed() + " klineRequests=" + r.klineRequests() + " entries=" + r.entries());
             log.info("Discovery 完成 {}", r);
             return r;
         } catch (RuntimeException e) {
@@ -110,14 +116,14 @@ public class DiscoveryJob {
             runs.record(JOB, gen, now, Instant.now(), "FAILED", "N/A", String.valueOf(e.getMessage()));
             notifier.send("fail:" + JOB + ":" + now.truncatedTo(ChronoUnit.HOURS),
                     Messages.failure(JOB, String.valueOf(e.getMessage())));
-            return new Report(gen, 0, 0, 0, 0, List.of(), false);
+            return new Report(gen, 0, 0, 0, 0, List.of(), false, 0);
         }
     }
 
     private Report discover(String gen, Instant now) {
-        // 1. 行情全集与 K 线（锁外）
+        // 1. 行情全集与 K 线（锁外）：全量 24h 行情一次请求，交易对信息走缓存，K 线只增量拉取
         List<Ticker24h> tickers = market.tickers24h();
-        List<Ticker24h> universe = universeFilter.select(market.symbols(), tickers);
+        List<Ticker24h> universe = universeFilter.select(directory.all(), tickers);
         List<String> names = new ArrayList<>(universe.stream().map(Ticker24h::symbol).toList());
         if (!names.contains(UniverseFilter.BTC)) {
             names.add(UniverseFilter.BTC);
@@ -192,14 +198,14 @@ public class DiscoveryJob {
             }
         });
         return new Report(gen, universe.size(), bars.missing().size(), early.size(), candidates.size(), entries,
-                scanComplete);
+                scanComplete, bars.requests());
     }
 
     private Map<String, OrderBook> fetchBooks(List<String> symbols) {
         Map<String, OrderBook> out = new LinkedHashMap<>();
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             Map<String, Future<OrderBook>> fs = new LinkedHashMap<>();
-            symbols.forEach(s -> fs.put(s, pool.submit(() -> market.depth(s, DEPTH_LIMIT))));
+            symbols.forEach(s -> fs.put(s, pool.submit(() -> depthCache.get(s, DEPTH_LIMIT))));
             for (var e : fs.entrySet()) {
                 try {
                     out.put(e.getKey(), e.getValue().get());

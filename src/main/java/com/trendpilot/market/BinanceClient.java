@@ -47,20 +47,6 @@ public class BinanceClient implements MarketDataSource {
     }
 
     @Override
-    public SymbolInfo symbol(String symbol) {
-        try {
-            JsonNode root = get(() -> http.get().uri("/api/v3/exchangeInfo?symbol={s}", symbol), "exchangeInfo " + symbol);
-            JsonNode s = root.path("symbols").path(0);
-            return s.isMissingNode() ? null : toSymbol(s);
-        } catch (MarketDataException e) {
-            if (e.getCause() instanceof HttpStatusCodeException h && h.getStatusCode().value() == 400) {
-                return null; // 标的不存在（已下架）
-            }
-            throw e;
-        }
-    }
-
-    @Override
     public List<Ticker24h> tickers24h() {
         JsonNode root = get(() -> http.get().uri("/api/v3/ticker/24hr"), "ticker24hr");
         List<Ticker24h> out = new ArrayList<>();
@@ -72,9 +58,12 @@ public class BinanceClient implements MarketDataSource {
     }
 
     @Override
-    public List<Kline> klines(String symbol, String interval, int limit) {
-        JsonNode root = get(() -> http.get().uri("/api/v3/klines?symbol={s}&interval={i}&limit={l}", symbol, interval, limit),
-                "klines " + symbol + " " + interval);
+    public List<Kline> klines(String symbol, String interval, Long startTime, int limit) {
+        JsonNode root = startTime == null
+                ? get(() -> http.get().uri("/api/v3/klines?symbol={s}&interval={i}&limit={l}", symbol, interval, limit),
+                        "klines " + symbol + " " + interval)
+                : get(() -> http.get().uri("/api/v3/klines?symbol={s}&interval={i}&startTime={t}&limit={l}", symbol,
+                        interval, startTime, limit), "klines " + symbol + " " + interval);
         List<Kline> out = new ArrayList<>(root.size());
         for (JsonNode k : root) {
             out.add(new Kline(k.get(0).asLong(), k.get(1).asDouble(), k.get(2).asDouble(), k.get(3).asDouble(),
