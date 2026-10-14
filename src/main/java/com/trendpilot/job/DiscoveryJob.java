@@ -506,14 +506,15 @@ public class DiscoveryJob {
         if (unfunded) reasons.add("BUDGET_WAIT");
         jdbc.sql("""
                 INSERT INTO decision_log(generation, venue, symbol, action, decision, funded, score, rr, spread_bps,
-                    slippage_bps, reasons, gaps, params_version, created_at)
-                VALUES (:g, :venue, :s, :a, :d, :f, :score, :rr, :sp, :sl, :r, :gaps, :v, :t)
+                    slippage_bps, reasons, gaps, params_version, created_at, bid_depth, ask_depth)
+                VALUES (:g, :venue, :s, :a, :d, :f, :score, :rr, :sp, :sl, :r, :gaps, :v, :t, :bd, :ad)
                 """)
                 .param("g", gen).param("venue", venue.name()).param("s", r.symbol()).param("a", r.action().name()).param("d", r.decision().name())
                 .param("f", funded ? 1 : 0).param("score", r.score()).param("rr", nan(r.rr()))
                 .param("sp", nan(r.spreadBps())).param("sl", nan(r.slippageBps()))
                 .param("r", String.join(",", reasons)).param("gaps", String.join(",", r.gaps()))
-                .param("v", params.version()).param("t", now.toString()).update();
+                .param("v", params.version()).param("t", now.toString())
+                .param("bd", nan(r.bidDepth())).param("ad", nan(r.askDepth())).update();
     }
 
     private static Double nan(double v) {
