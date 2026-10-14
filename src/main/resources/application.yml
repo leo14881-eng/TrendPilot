@@ -42,7 +42,7 @@ logging:
 
 # 策略参数（人工修改后请同时修改 version）
 trendpilot.strategy:
-  version: v1-2026-10-14
+  version: v2-2026-10-14-protect
   fee-rate: 0.001                 # 单边手续费 0.1%
   universe:
     quote-asset: USDT
@@ -99,7 +99,8 @@ trendpilot.strategy:
   exit:
     protect-arm-pct: 2            # 原始收益 ≥2% 且净利 >0 启动利润保护
     protect-min-floor-pct: 0.35   # 底线至少为本金 0.35%
-    protect-giveback-pct: 2       # 或 最高净利 − 本金 2%
+    protect-giveback-pct: 1       # 或 最高净利 − 本金 1%（2026-10-14 由 2 收紧）
+    protect-lock-ratio: 0.6       # 或 最高净利的 60%（2026-10-14 新增）：三者取高
     review-target-pct: 8          # 原始收益 8% 时复核
     decay-min-weak: 2             # 至少两项弱条件
     decay-consecutive: 3          # 连续三个有效观察

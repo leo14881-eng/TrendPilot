@@ -39,13 +39,13 @@ class ExitPolicyTest {
         assertThat(up.sell()).isFalse();
         assertThat(up.notes()).containsExactly("PROTECT_ARM");
         assertThat(up.updated().protectArmed()).isTrue();
-        // 底线 = max(本金 0.35%, 最高净利 − 本金 2%) ≈ 27.9 − 20.0
-        assertThat(up.updated().protectFloor().doubleValue()).isBetween(7.5, 8.5);
+        // 底线 = max(本金 0.35%, 最高净利 − 本金 1%, 最高净利 × 60%) ≈ max(3.5, 27.9 − 10.0, 16.7)
+        assertThat(up.updated().protectFloor().doubleValue()).isBetween(17.5, 18.5);
 
-        ExitDecision stillAbove = policy.evaluate(up.updated(), trading, book(101.2), neutral);
+        ExitDecision stillAbove = policy.evaluate(up.updated(), trading, book(102.4), neutral);
         assertThat(stillAbove.sell()).isFalse();
 
-        ExitDecision below = policy.evaluate(stillAbove.updated(), trading, book(100.6), neutral);
+        ExitDecision below = policy.evaluate(stillAbove.updated(), trading, book(101.5), neutral);
         assertThat(below.sell()).isTrue();
         assertThat(below.reason()).isEqualTo("PROFIT_PROTECTION");
         assertThat(below.netPnl().signum()).isPositive();
@@ -57,6 +57,16 @@ class ExitPolicyTest {
         ExitDecision gap = policy.evaluate(up.updated(), trading, book(99), neutral);
         assertThat(gap.sell()).isFalse();
         assertThat(gap.notes()).contains("PROTECTION_GAPPED");
+    }
+
+    @Test
+    void largePeakLocksSixtyPercent() {
+        // 最高净利约 57.8：底线 = max(57.8 − 10, 57.8 × 60%) ≈ 47.8，盈利 35 U 时已经卖出
+        ExitDecision a = policy.evaluate(bought(), trading, book(106), neutral);
+        assertThat(a.updated().protectFloor().doubleValue()).isBetween(47.0, 49.0);
+        ExitDecision b = policy.evaluate(a.updated(), trading, book(104.5), neutral);
+        assertThat(b.sell()).isTrue();
+        assertThat(b.netPnl().doubleValue()).isGreaterThan(35.0);
     }
 
     @Test

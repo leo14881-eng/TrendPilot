@@ -43,6 +43,8 @@ public class FastWatch {
     private final Map<String, String> lastKind = new ConcurrentHashMap<>();
     /** 每个持仓上一次快速确认的时间。 */
     private final Map<String, Instant> lastConfirm = new ConcurrentHashMap<>();
+    /** 两次 Monitor 之间看到的最高可退出净利（已启动保护的持仓）。 */
+    private final Map<String, BigDecimal> peakSeen = new ConcurrentHashMap<>();
     private final com.trendpilot.job.MonitorJob monitor;
     static final long CONFIRM_GAP_SECONDS = 60;
 
@@ -70,6 +72,8 @@ public class FastWatch {
         }
         lastKind.keySet().removeIf(k -> positions.stream().noneMatch(p -> key(p).equals(k)));
         lastConfirm.keySet().removeIf(k -> positions.stream().noneMatch(p -> key(p).equals(k)));
+        peakSeen.keySet().removeIf(k -> positions.stream().noneMatch(p -> key(p).equals(k)));
+        Map<String, BigDecimal> hints = new java.util.HashMap<>();
         Set<String> confirm = new java.util.HashSet<>();
         for (Position p : positions) {
             StreamHub.Quote q = hub.quote(p.venue(), p.symbol(), MAX_QUOTE_AGE_SECONDS);
@@ -80,10 +84,12 @@ public class FastWatch {
                 if (last == null || now.isAfter(last.plusSeconds(CONFIRM_GAP_SECONDS))) {
                     lastConfirm.put(key(p), now);
                     confirm.add(p.symbol());
+                    BigDecimal seen = peakSeen.get(key(p));
+                    if (seen != null) hints.put(p.symbol(), seen);
                 }
             }
         }
-        if (!confirm.isEmpty()) monitor.confirmNow(confirm, now);
+        if (!confirm.isEmpty()) monitor.confirmNow(confirm, now, hints);
     }
 
     /** @return 本次观察结论（HOLD / WOULD_ARM / WOULD_PROTECT_SELL / GAPPED） */
@@ -97,9 +103,15 @@ public class FastWatch {
         double spreadBps = (ask - bid) / mid * 10_000;
 
         String kind = "HOLD";
+        // 底线按实时最高净利估算（与 Monitor 同一公式），避免两次检查之间的新高没被计入
+        BigDecimal peak = p.peakNet().max(BigDecimal.valueOf(net));
+        if (p.protectArmed()) peakSeen.merge(key(p), peak, BigDecimal::max);
+        peak = peak.max(peakSeen.getOrDefault(key(p), BigDecimal.ZERO));
+        double floor = com.trendpilot.monitor.ExitPolicy.protectionFloor(p.costBasis(), peak, p.protectFloor(), e)
+                .doubleValue();
         if (p.protectArmed()) {
             if (net <= 0) kind = "GAPPED";
-            else if (net < p.protectFloor().doubleValue()) kind = "WOULD_PROTECT_SELL";
+            else if (net < floor) kind = "WOULD_PROTECT_SELL";
         } else if (rawRet >= e.protectArmPct() && net > 0) {
             kind = "WOULD_ARM";
         }
@@ -114,7 +126,7 @@ public class FastWatch {
             if (kind.equals("WOULD_PROTECT_SELL")) {
                 notifier.send("fastwatch:" + key(p) + ":" + now.getEpochSecond() / 3600, String.format(Locale.ROOT,
                         "👀 FastWatch：V2 %s%s 估算净利 %.2f U 已低于保护底线 %.2f U\n正在立即用全数量盘口确认，确认后马上卖出",
-                        p.symbol(), Messages.venueTag(p.venue()), net, p.protectFloor().doubleValue()));
+                        p.symbol(), Messages.venueTag(p.venue()), net, floor));
             }
         }
         return kind;

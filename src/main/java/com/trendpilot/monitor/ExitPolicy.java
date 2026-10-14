@@ -73,9 +73,7 @@ public class ExitPolicy {
         }
         if (p.protectArmed()) {
             BigDecimal peak = p.peakNet().max(net);
-            BigDecimal minFloor = pct(principal, e.protectMinFloorPct());
-            BigDecimal giveback = peak.subtract(pct(principal, e.protectGivebackPct()));
-            BigDecimal floor = p.protectFloor().max(minFloor.max(giveback)); // 只上调
+            BigDecimal floor = protectionFloor(principal, peak, p.protectFloor(), e);
             p = p.withProtection(true, floor, peak);
             if (net.signum() > 0 && net.compareTo(floor) < 0) {
                 return new ExitDecision(pos.symbol(), true, "PROFIT_PROTECTION", p, notes, net, rawRet, fill);
@@ -118,6 +116,18 @@ public class ExitPolicy {
 
         // 5. 继续持有
         return new ExitDecision(pos.symbol(), false, "HOLD", p, notes, net, rawRet, fill);
+    }
+
+    /**
+     * 保护底线 = max(本金 × 最低比例, 最高净利 − 本金 × 回吐比例, 最高净利 × 锁定比例)，只上调。
+     * FastWatch 用同一公式按实时最高净利估算底线。
+     */
+    public static BigDecimal protectionFloor(BigDecimal principal, BigDecimal peak, BigDecimal current,
+                                             StrategyParams.Exit e) {
+        BigDecimal minFloor = pct(principal, e.protectMinFloorPct());
+        BigDecimal giveback = peak.subtract(pct(principal, e.protectGivebackPct()));
+        BigDecimal lock = peak.multiply(BigDecimal.valueOf(e.protectLockRatio()));
+        return current.max(minFloor).max(giveback).max(lock);
     }
 
     private static BigDecimal pct(BigDecimal v, double pct) {

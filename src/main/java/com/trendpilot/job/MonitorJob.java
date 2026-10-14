@@ -110,6 +110,11 @@ public class MonitorJob {
      * 按与 5 分钟检查完全相同的退出规则判断，确认就立刻卖出，不等下一轮。
      */
     public Report confirmNow(java.util.Set<String> symbols, Instant now) {
+        return confirmNow(symbols, now, Map.of());
+    }
+
+    /** peakHints：FastWatch 在两次检查之间看到的最高可退出净利，用来把保护底线及时上调。 */
+    public Report confirmNow(java.util.Set<String> symbols, Instant now, Map<String, java.math.BigDecimal> peakHints) {
         String gen = Generations.of("F", now);
         try {
             for (Position p : book.positions()) {
@@ -117,7 +122,7 @@ public class MonitorJob {
                     markets.get(p.venue()).depth().invalidate(p.symbol());
                 }
             }
-            Report r = monitor(gen, now, symbols);
+            Report r = monitor(gen, now, symbols, peakHints);
             runs.record(FAST_JOB, gen, now, Instant.now(), "SUCCESS", r.dataStatus(),
                     "symbols=" + symbols + " exits=" + r.exits());
             return r;
@@ -129,10 +134,11 @@ public class MonitorJob {
     }
 
     private Report monitor(String gen, Instant now) {
-        return monitor(gen, now, null);
+        return monitor(gen, now, null, Map.of());
     }
 
-    private Report monitor(String gen, Instant now, java.util.Set<String> only) {
+    private Report monitor(String gen, Instant now, java.util.Set<String> only,
+                           Map<String, java.math.BigDecimal> peakHints) {
         List<Position> snapshot = book.positions().stream()
                 .filter(p -> only == null || only.contains(p.symbol())).toList();
         if (snapshot.isEmpty()) {
@@ -197,8 +203,11 @@ public class MonitorJob {
 
         List<String> exits = new ArrayList<>();
         lock.run(() -> {
-            for (Position pos : book.positions()) {
-                if (only != null && !only.contains(pos.symbol())) continue;
+            for (Position current : book.positions()) {
+                if (only != null && !only.contains(current.symbol())) continue;
+                java.math.BigDecimal hint = peakHints.get(current.symbol());
+                Position pos = hint != null && current.protectArmed() && hint.compareTo(current.peakNet()) > 0
+                        ? current.withProtection(true, current.protectFloor(), hint) : current;
                 Observed o = observed.get(pos.symbol());
                 if (o == null) {
                     continue; // 抓取之后新开的仓，下轮再看

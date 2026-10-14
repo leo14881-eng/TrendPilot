@@ -54,7 +54,7 @@ public record StrategyParams(
     public record Add(double minDropPct, double atrMultiple, double thirdTrancheMultiplier, int minSignalGapMinutes) {
     }
 
-    public record Exit(double protectArmPct, double protectMinFloorPct, double protectGivebackPct,
+    public record Exit(double protectArmPct, double protectMinFloorPct, double protectGivebackPct, double protectLockRatio,
                        double reviewTargetPct, int decayMinWeak, int decayConsecutive,
                        double hardMaxSpreadBps, double hardMaxSlippageBps, double hardMinBidDepthUsdt) {
     }
