@@ -126,6 +126,7 @@ public class StreamHub {
             if (protocol.ping() != null) {
                 scheduler.scheduleAtFixedRate(() -> connection.send(protocol.ping()), 20, 20, TimeUnit.SECONDS);
             }
+            scheduler.scheduleAtFixedRate(connection::reconnectIfStale, 60, 30, TimeUnit.SECONDS);
             // 交易所会在 24 小时左右强制断开，提前主动重连
             scheduler.scheduleAtFixedRate(connection::reconnect, 23, 23, TimeUnit.HOURS);
         }

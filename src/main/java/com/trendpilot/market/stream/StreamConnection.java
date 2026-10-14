@@ -16,13 +16,24 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 一条自动重连的 WebSocket 连接。断线后有界指数退避重连（最长 5 分钟），重连后由 onOpen 重新订阅；
+ * 一条自动重连的 WebSocket 连接：
+ * <ul>
+ * <li>断线或连接失败：指数退避重连（2 秒起翻倍，最长 5 分钟，加 ±20% 随机抖动，避免多条连接同时重连）；
+ *     重连后由 onOpen 重新订阅。</li>
+ * <li>连上后 60 秒内又断（例如被交易所限流拒绝），不清零失败次数，退避继续加长，不会快速循环重连。</li>
+ * <li>僵死检测：连接看似正常但超过 {@link #STALE_MS} 没有任何消息或 ping（半开 TCP），主动断开重连。</li>
+ * <li>同一时间只排一个重连，断开、出错、僵死检测同时触发也不会重复连接。</li>
+ * </ul>
  * 重连成功不代表数据已经完整，K 线缺口仍由 REST 补齐。
  */
 final class StreamConnection {
 
     private static final Logger log = LoggerFactory.getLogger(StreamConnection.class);
     private static final Duration MAX_BACKOFF = Duration.ofMinutes(5);
+    /** 没有任何消息（含 ping/pong）超过这个时间视为僵死；Binance 服务器约 20 秒 ping 一次，Bybit 由我们每 20 秒 ping。 */
+    static final long STALE_MS = 200_000;
+    /** 连接保持超过这个时间才算稳定，清零失败次数。 */
+    static final long STABLE_MS = 60_000;
 
     private final String name;
     private final URI uri;
@@ -36,6 +47,7 @@ final class StreamConnection {
     private volatile long connectedAtMs;
     private volatile long lastMessageMs;
     private int failures;
+    private final java.util.concurrent.atomic.AtomicBoolean reconnectPending = new java.util.concurrent.atomic.AtomicBoolean();
 
     StreamConnection(String name, URI uri, Consumer<String> onMessage, Consumer<StreamConnection> onOpen,
                      ScheduledExecutorService scheduler) {
@@ -51,6 +63,7 @@ final class StreamConnection {
     }
 
     void connect() {
+        reconnectPending.set(false);
         if (closed) return;
         http.newWebSocketBuilder().buildAsync(uri, new Listener()).whenComplete((ws, err) -> {
             if (err != null) {
@@ -59,11 +72,30 @@ final class StreamConnection {
                 return;
             }
             socket = ws;
-            failures = 0;
             connectedAtMs = System.currentTimeMillis();
+            lastMessageMs = connectedAtMs;
             log.info("{} WebSocket 已连接", name);
             onOpen.accept(this);
         });
+    }
+
+    /** 僵死检测（StreamHub 每 30 秒调用）：连着但太久没消息就主动重连。 */
+    void reconnectIfStale() {
+        if (stale(socket != null, lastMessageMs, System.currentTimeMillis())) {
+            log.warn("{} WebSocket {} 秒没有收到任何消息，判定僵死，重连", name,
+                    (System.currentTimeMillis() - lastMessageMs) / 1000);
+            reconnect();
+        }
+    }
+
+    static boolean stale(boolean connected, long lastMessageMs, long nowMs) {
+        return connected && nowMs - lastMessageMs > STALE_MS;
+    }
+
+    /** 第 failures 次失败后的等待：2^failures 秒（上限 5 分钟），乘以 0.8~1.2 的随机抖动。 */
+    static long backoffMs(int failures, double random) {
+        long base = Math.min(MAX_BACKOFF.toMillis(), 1000L << Math.min(failures, 9));
+        return Math.round(base * (0.8 + 0.4 * random));
     }
 
     /** 已连接且最近 90 秒内收到过消息。 */
@@ -95,7 +127,7 @@ final class StreamConnection {
         WebSocket ws = socket;
         socket = null;
         if (ws != null) ws.abort();
-        connect();
+        if (reconnectPending.compareAndSet(false, true)) connect();
     }
 
     void close() {
@@ -106,9 +138,11 @@ final class StreamConnection {
 
     private void scheduleReconnect() {
         socket = null;
-        if (closed) return;
+        if (closed || !reconnectPending.compareAndSet(false, true)) return;
+        if (connectedAtMs > 0 && System.currentTimeMillis() - connectedAtMs >= STABLE_MS) failures = 0; // 上次连接稳定过
+        connectedAtMs = 0;
         failures++;
-        long delay = Math.min(MAX_BACKOFF.toMillis(), 1000L << Math.min(failures, 9));
+        long delay = backoffMs(failures, java.util.concurrent.ThreadLocalRandom.current().nextDouble());
         log.warn("{} WebSocket {} 毫秒后重连（第 {} 次）", name, delay, failures);
         scheduler.schedule(this::connect, delay, TimeUnit.MILLISECONDS);
     }
