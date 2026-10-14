@@ -67,7 +67,7 @@ class BtcDailyServiceTest {
     void reset() {
         market.reset();
         markets.invalidate();
-        for (String t : new String[]{"btc_daily_plan", "btc_daily_state", "btc_daily_trade", "btc_daily_series", "btc_daily_fetch", "notification_outbox", "kline_15m"}) {
+        for (String t : new String[]{"btc_daily_plan", "btc_daily_state", "btc_daily_trade", "btc_daily_series", "btc_daily_fetch", "btc_daily_round", "notification_outbox", "kline_15m"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
     }
@@ -103,6 +103,13 @@ class BtcDailyServiceTest {
         assertThat(s.get("rounds")).isEqualTo(1);
         assertThat(jdbc.sql("SELECT COUNT(*) FROM notification_outbox WHERE event_key LIKE 'btc-daily-fill-%'")
                 .query(Integer.class).single()).isEqualTo(3);
+        Map<String, Object> round = jdbc.sql("SELECT * FROM btc_daily_round").query().singleRow();
+        assertThat(round.get("buys")).isEqualTo(2);
+        assertThat(((Number) round.get("hold_minutes")).longValue()).isEqualTo(30);
+        assertThat((String) round.get("open_filters")).contains("数据缺失");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM btc_daily_trade WHERE filled_at IS NOT NULL AND filters LIKE '%数据缺失%'")
+                .query(Integer.class).single()).isEqualTo(3);
+        assertThat(s).containsKeys("roundStats", "recentRounds");
         // 独立账本：不写 V1/V2 的表
         assertThat(jdbc.sql("SELECT COUNT(*) FROM position").query(Integer.class).single()).isZero();
         assertThat(klines.latestOpenTime(Venue.BINANCE, "BTCUSDT")).isEqualTo(start + Q);

@@ -71,6 +71,16 @@ class BtcDailyRulesTest {
         });
         assertThat(book.holding()).isFalse();
         assertThat(book.rounds()).isEqualTo(1);
+        Book.Round round = book.lastRound;
+        assertThat(round.buys()).isEqualTo(3);
+        assertThat(round.holdMinutes()).isEqualTo(60);
+        assertThat(round.maePct()).isLessThan(-20);
+        assertThat(round.mfePct()).isPositive();
+        // 不止损，但四个候选止损都被记录为"会触发"，假设亏损越来越大
+        assertThat(round.stopHits()).containsOnlyKeys("3.0", "5.0", "8.0", "12.0");
+        assertThat(round.stopHits().get("3.0").pnl()).isNegative();
+        assertThat(round.stopHits().get("12.0").pnl()).isLessThan(round.stopHits().get("3.0").pnl());
+        assertThat(book.stopHits()).isEmpty();
 
         // 当天已完成一轮：不再开新仓
         assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 4, 58_000, 58_000, 50_000, 51_000), P)).isEmpty();

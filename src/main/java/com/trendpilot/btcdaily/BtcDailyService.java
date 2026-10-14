@@ -83,8 +83,9 @@ public class BtcDailyService {
                 last = bar.openTime();
                 if (!f.isEmpty()) {
                     fills.addAll(f);
-                    store.save(book, last, f, props.version(), now);
-                    for (Fill x : f) notifier.send(fillKey(x), BtcDailyMessages.fill(x, book, plan, props));
+                    store.save(book, last, f, props.version(), plan.reasons(), book.lastRound, now);
+                    Book.Round round = book.lastRound;
+                    for (Fill x : f) notifier.send(fillKey(x), BtcDailyMessages.fill(x, book, plan, round, props));
                 }
             }
         }
@@ -178,11 +179,16 @@ public class BtcDailyService {
             pos.put("takeProfitPrice", BtcDailyRules.round2(BtcDailyRules.takeProfitPrice(plan, b, props)));
         }
         Long lastBar = st.lastBarOpen();
-        if (b.holding() && lastBar != null) {
-            klines.range(Venue.BINANCE, props.symbol(), lastBar, lastBar).stream().findFirst().ifPresent(k ->
-                    pos.put("unrealized", BtcDailyRules.round2(b.unrealized(k.close(), props.feeRate()))));
+        Double lastPrice = lastBar == null ? null : klines.range(Venue.BINANCE, props.symbol(), lastBar, lastBar)
+                .stream().findFirst().map(Kline::close).orElse(null);
+        if (b.holding() && lastPrice != null) {
+            pos.put("unrealized", BtcDailyRules.round2(b.unrealized(lastPrice, props.feeRate())));
         }
         pos.put("roundMaxFloatLoss", BtcDailyRules.round2(b.roundMaxFloatLoss()));
+        pos.put("maePct", BtcDailyRules.round2(b.maePct()));
+        pos.put("mfePct", BtcDailyRules.round2(b.mfePct()));
+        pos.put("openFilters", b.openFilters);
+        pos.put("stopHits", b.stopHits());
         s.put("position", pos);
         s.put("realized", BtcDailyRules.round2(b.realized()));
         s.put("rounds", b.rounds());
@@ -190,6 +196,8 @@ public class BtcDailyService {
         s.put("maxFloatLoss", BtcDailyRules.round2(b.maxFloatLoss()));
         s.put("lastBarAt", lastBar == null ? null : Instant.ofEpochMilli(lastBar));
         s.put("stale", lastBar == null || now.toEpochMilli() - lastBar > Duration.ofHours(1).toMillis());
+        s.put("roundStats", store.roundStats(b, lastPrice, props.stopCandidatesPct(), props.feeRate()));
+        s.put("recentRounds", store.recentRounds(20));
         s.put("recentTrades", store.recentTrades(20));
         s.put("backtest", store.backtest(props.version()).map(this::readJson).orElse(null));
         return s;

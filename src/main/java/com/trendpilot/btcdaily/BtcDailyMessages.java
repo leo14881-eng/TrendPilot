@@ -50,7 +50,7 @@ final class BtcDailyMessages {
         return sb.toString();
     }
 
-    static String fill(Fill f, Book b, DailyPlan p, BtcDailyProperties props) {
+    static String fill(Fill f, Book b, DailyPlan p, Book.Round round, BtcDailyProperties props) {
         StringBuilder sb = new StringBuilder("【BTC 每日短线·影子】");
         if (f.side() == Fill.Side.BUY) {
             sb.append(f.reason()).append('\n');
@@ -65,6 +65,16 @@ final class BtcDailyMessages {
                     .append(money(f.usdt())).append(" USDT（手续费 ").append(money(f.fee())).append("）\n");
             sb.append("本轮盈亏 ").append(signed(f.pnl())).append(" USDT（").append(pct(f.pnl() / cost * 100))
                     .append("），买入 ").append(f.level()).append(" 次\n");
+            if (round != null) {
+                sb.append("持仓 ").append(hold(round.holdMinutes())).append("｜期间最大浮亏 ").append(pct(round.maePct()))
+                        .append("，最大浮盈 ").append(pct(round.mfePct())).append('\n');
+                if (!round.stopHits().isEmpty()) {
+                    sb.append("如果设了止损（只记录，不执行）：");
+                    round.stopHits().forEach((k, h) -> sb.append(k.replace(".0", "")).append("% 会亏 ")
+                            .append(money(h.pnl())).append("；"));
+                    sb.append('\n');
+                }
+            }
             sb.append("累计：完成 ").append(b.rounds()).append(" 轮，已实现 ").append(signed(b.realized())).append(" USDT");
         }
         return sb.toString();
@@ -75,7 +85,17 @@ final class BtcDailyMessages {
                 + "\n■ 不加市场 / 宏观过滤\n" + result(base)
                 + "\n\n■ 加过滤（下跌趋势、议息/CPI 日、ETF 流出、资金费率、恐惧贪婪" + (props.filters().fredConfigured() ? "、利率、美元" : "") + "）\n"
                 + result(filtered) + "\n不开新一轮 " + filtered.skippedDays() + " 天，减仓 " + filtered.reducedDays() + " 天"
+                + "\n\n■ 如果加止损（基于加过滤版本，只做对比）\n" + stops(filtered)
                 + "\n\n说明：不止损，被套时只等回本；资金上限 " + money(props.capUsdt()) + " USDT。ETF 数据从 2024-01 开始；缺失的数据当天不过滤。";
+    }
+
+    private static String stops(BtcDailyBacktest.Result r) {
+        StringBuilder sb = new StringBuilder("不止损（实际规则）：总盈亏 " + signed(r.realized() + r.endUnrealized()) + " USDT\n");
+        for (BtcDailyBacktest.StopAlt a : r.stopAlts()) {
+            sb.append("止损 ").append(String.format(Locale.ROOT, "%.0f%%", a.stopPct())).append("：触发 ").append(a.hits())
+                    .append(" 次，总盈亏 ").append(signed(a.pnl())).append(" USDT\n");
+        }
+        return sb.toString().stripTrailing();
     }
 
     private static String result(BtcDailyBacktest.Result r) {
@@ -86,6 +106,11 @@ final class BtcDailyMessages {
                 + "最大浮亏 " + money(r.maxFloatLoss()) + " USDT（上限的 " + pct(r.maxFloatLossPct()) + "）\n"
                 + "单轮最长持仓 " + r.maxHoldDays() + " 天，平均 " + r.avgHoldDays() + " 天\n"
                 + "同期一直持有 BTC：" + pct(r.buyHoldPct());
+    }
+
+    static String hold(long minutes) {
+        return minutes >= 1440 ? String.format(Locale.ROOT, "%.1f 天", minutes / 1440.0)
+                : String.format(Locale.ROOT, "%.1f 小时", minutes / 60.0);
     }
 
     private static double num(Object o) {
