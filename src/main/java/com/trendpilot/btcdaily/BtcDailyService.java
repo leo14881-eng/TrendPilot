@@ -171,7 +171,7 @@ public class BtcDailyService {
     /** 实盘生效的参数：卖出方式需要回测确认时，确认前和回测不达标都按 FIXED。 */
     BtcDailyProperties live() {
         BtcDailyProperties.Exit x = props.exit();
-        if ("FIXED".equals(x.mode()) || !x.requireBacktest()) return props;
+        if ("FIXED".equals(x.mode()) || (!x.requireBacktest() && !"AUTO".equals(x.mode()))) return props;
         String mode = liveExit;
         if (mode == null) {
             mode = store.backtest(props.version()).map(this::liveExitOf).orElse(null);
@@ -195,18 +195,30 @@ public class BtcDailyService {
     }
 
     /**
-     * 配置的卖出方式和现行 FIXED 比：总盈亏不低于 FIXED，最大回撤不超过 FIXED 的 1.1 倍，
-     * 最长被套不多于 FIXED 2 天，才算"不比现行差"，实盘才切换；否则仍用 FIXED，等用户决定。
+     * 候选卖出方式（AUTO 时为 candidates，否则为 mode 本身）和现行 FIXED 比：总盈亏不低于 FIXED，
+     * 最大回撤不超过 FIXED 的 1.1 倍，最长被套不多于 FIXED 2 天，才算"不比现行差"；
+     * 达标的里选总盈亏最高的实盘生效，都不达标仍用 FIXED，等用户决定。
      */
     static String decideExit(BtcDailyProperties.Exit x, Map<String, BtcDailyBacktest.Result> exits) {
-        if ("FIXED".equals(x.mode()) || !x.requireBacktest()) return x.mode();
+        if ("FIXED".equals(x.mode())) return "FIXED";
+        List<String> cands = "AUTO".equals(x.mode()) ? x.candidates() : List.of(x.mode());
+        if (!x.requireBacktest() && !"AUTO".equals(x.mode())) return x.mode();
         BtcDailyBacktest.Result f = exits.get("FIXED");
-        BtcDailyBacktest.Result r = exits.get(x.mode());
-        if (f == null || r == null) return "FIXED";
-        boolean notWorse = r.totalPnl() >= f.totalPnl() - 0.01
-                && r.maxDrawdown() <= f.maxDrawdown() * 1.1 + 0.01
-                && r.maxHoldDays() <= f.maxHoldDays() + 2;
-        return notWorse ? x.mode() : "FIXED";
+        if (f == null) return "FIXED";
+        String best = "FIXED";
+        double bestPnl = Double.NEGATIVE_INFINITY;
+        for (String c : cands) {
+            BtcDailyBacktest.Result r = exits.get(c);
+            if (r == null) continue;
+            boolean notWorse = r.totalPnl() >= f.totalPnl() - 0.01
+                    && r.maxDrawdown() <= f.maxDrawdown() * 1.1 + 0.01
+                    && r.maxHoldDays() <= f.maxHoldDays() + 2;
+            if (notWorse && r.totalPnl() > bestPnl) {
+                best = c;
+                bestPnl = r.totalPnl();
+            }
+        }
+        return best;
     }
 
     private List<Kline> daily(VenueMarket m) {
@@ -240,9 +252,9 @@ public class BtcDailyService {
         context.loadHistory(firstDay.minusDays(2), now);
         BtcDailyBacktest.Result base = BtcDailyBacktest.run(daily, hourly, props, null);
         BtcDailyBacktest.Result filtered = BtcDailyBacktest.run(daily, hourly, props, context::context);
-        // 卖出方式对比（都加过滤）：现行 FIXED、移动止盈 TRAIL、8% 宽止损 STOP
+        // 卖出方式对比（都加过滤）：现行 FIXED、回本后跟踪 TRAIL、先卖一半剩下跟踪 PARTIAL、8% 宽止损 STOP
         Map<String, BtcDailyBacktest.Result> exits = new java.util.LinkedHashMap<>();
-        for (String mode : List.of("FIXED", "TRAIL", "STOP")) {
+        for (String mode : List.of("FIXED", "TRAIL", "PARTIAL", "STOP")) {
             exits.put(mode, BtcDailyBacktest.run(daily, hourly, props.withExitMode(mode), context::context));
         }
         String chosen = decideExit(props.exit(), exits);

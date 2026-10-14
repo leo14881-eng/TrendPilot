@@ -33,6 +33,9 @@ public final class Book {
     final Map<String, StopHit> stopHits = new LinkedHashMap<>();
     /** 移动止盈（TRAIL）启动后的最高价；0 表示未启动。 */
     double trailPeak;
+    /** 本轮已部分卖出的成本和到手金额（PARTIAL 先卖一半时累计，整轮结束清零）。 */
+    double soldCost;
+    double soldProceeds;
     /** 最近一次卖出完成的一轮（由调用方取走落库）。 */
     Round lastRound;
 
@@ -109,6 +112,10 @@ public final class Book {
 
     public Map<String, StopHit> stopHits() {
         return Map.copyOf(stopHits);
+    }
+
+    public double trailPeak() {
+        return trailPeak;
     }
 
     public double maxFloatLoss() {

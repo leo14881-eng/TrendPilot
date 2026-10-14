@@ -141,11 +141,18 @@ class BtcDailyServiceTest {
         assertThat(BtcDailyService.decideExit(x, exits)).isEqualTo("FIXED");
         exits.put("TRAIL", result(700, 800, 40));   // 被套更久
         assertThat(BtcDailyService.decideExit(x, exits)).isEqualTo("FIXED");
+        // AUTO：达标的里选总盈亏最高
+        exits.put("TRAIL", result(600, 800, 30));
+        exits.put("PARTIAL", result(900, 850, 31));
+        assertThat(BtcDailyService.decideExit(x, exits)).isEqualTo("PARTIAL");
+        exits.put("PARTIAL", result(900, 2000, 31));
+        assertThat(BtcDailyService.decideExit(x, exits)).isEqualTo("TRAIL");
+        assertThat(BtcDailyService.decideExit(x.withMode("FIXED"), exits)).isEqualTo("FIXED");
     }
 
     static BtcDailyBacktest.Result result(double total, double dd, long hold) {
         return new BtcDailyBacktest.Result("v", null, null, 365, 100, total, 0, 0, hold, 1, 0, 0, 100, 0, 0, 0,
-                List.of(), "X", total, total / 100, dd, dd / 100, 90, 10, -5, 2, 1);
+                List.of(), "X", total, total / 100, dd, dd / 100, 90, 10, -5, 2, 1, 0, 0);
     }
 
     @Test
