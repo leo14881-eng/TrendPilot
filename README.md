@@ -5,16 +5,17 @@
 - 设计：[docs/技术方案.md](docs/技术方案.md)
 - 规则与参数：[docs/规则说明.md](docs/规则说明.md)
 
-## 当前进度：MVP
+## 当前进度：完整版（不含 Sentinel）
 
-单服务（Spring Boot + SQLite），只接 Binance 现货公开行情：
+单服务（Spring Boot + SQLite），只用免费公开接口：
 
-- 每小时 :17 Discovery：全市场扫描 → EARLY 信号 → 系统风险 → 买入/加仓审核 → 资金分配 → V2 影子账本
-- 每 5 分钟 Monitor：硬失效、利润保护、论点失效、8% 复核
-- Telegram：影子买卖、保护触发、市场状态变化、任务异常、每日汇总
+- 每小时 :17 Discovery：Binance 池 + Bybit 独立池 → EARLY 信号 → 系统风险 → 研究 → V2 审核与资金分配 → V1 观察
+- 每 5 分钟 Monitor：硬失效、利润保护、论点失效、8% 复核（V1、V2 各自记账）
+- WebSocket：15m K 线缓存（Binance、Bybit），持仓最优价供 FastWatch 每 15 秒观察
+- 研究：CoinGecko（身份、供给、分类）、DefiLlama（TVL、手续费、收入），解锁记为研究缺口
+- 复盘：Blind Replay 每小时 :31，Missed Replay 每天 23:55
+- Telegram：每条买卖标明 V1/V2、币、金额、原因；每日 21:00 汇总含 V1/V2 盈利对比
 - 本机状态接口：http://localhost:8080/api/status
-
-暂不包含：WebSocket、Bybit、V1 账本、深度研究（解锁/供给）、复盘回放。
 
 ## 本机运行（Windows）
 
