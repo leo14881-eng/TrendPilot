@@ -13,6 +13,15 @@ public record OrderBook(String symbol, List<Level> bids, List<Level> asks, Insta
     public record Level(BigDecimal price, BigDecimal qty) {
     }
 
+    /**
+     * 参考价"盘口"：买卖价都等于参考价、数量不限。V1 观察账本用它按参考价 + 手续费记账，
+     * 不代表真实可成交深度。
+     */
+    public static OrderBook reference(String symbol, double price, Instant at) {
+        Level l = new Level(BigDecimal.valueOf(price), new BigDecimal("1e15"));
+        return new OrderBook(symbol, List.of(l), List.of(l), at);
+    }
+
     public boolean usable() {
         return !bids.isEmpty() && !asks.isEmpty();
     }

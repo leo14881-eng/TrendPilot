@@ -26,6 +26,7 @@ import com.trendpilot.market.VenueMarket;
 import com.trendpilot.monitor.ExitDecision;
 import com.trendpilot.monitor.ExitPolicy;
 import com.trendpilot.notify.Messages;
+import com.trendpilot.observation.V1Tracker;
 import com.trendpilot.notify.Notifier;
 import com.trendpilot.portfolio.Position;
 import com.trendpilot.portfolio.ShadowBook;
@@ -45,6 +46,7 @@ public class MonitorJob {
     private static final Logger log = LoggerFactory.getLogger(MonitorJob.class);
 
     private final Markets markets;
+    private final V1Tracker v1;
     private final EarlySignalCalculator signals;
     private final ExitPolicy exitPolicy;
     private final ShadowBook book;
@@ -53,10 +55,11 @@ public class MonitorJob {
     private final JobRuns runs;
     private final AppState state;
 
-    public MonitorJob(Markets markets, EarlySignalCalculator signals,
+    public MonitorJob(Markets markets, V1Tracker v1, EarlySignalCalculator signals,
                       ExitPolicy exitPolicy, ShadowBook book, PortfolioLock lock, Notifier notifier, JobRuns runs,
                       AppState state) {
         this.markets = markets;
+        this.v1 = v1;
         this.signals = signals;
         this.exitPolicy = exitPolicy;
         this.book = book;
@@ -81,8 +84,11 @@ public class MonitorJob {
         String gen = Generations.of("M", now);
         try {
             Report r = monitor(gen, now);
+            // V1 观察账本与 V2 分开：V2 本轮因缺数据停止时，V1 仍用自己的参考价判断
+            List<String> v1Exits = new ArrayList<>();
+            lock.run(() -> v1Exits.addAll(v1.manage(gen, now)));
             runs.record(JOB, gen, now, Instant.now(), "SUCCESS", r.dataStatus(),
-                    "positions=" + r.positions() + " exits=" + r.exits());
+                    "positions=" + r.positions() + " exits=" + r.exits() + " v1Exits=" + v1Exits);
             return r;
         } catch (RuntimeException e) {
             log.error("Monitor 失败 {}", gen, e);

@@ -20,7 +20,10 @@ import org.springframework.test.context.DynamicPropertySource;
 import com.trendpilot.job.DiscoveryJob;
 import com.trendpilot.job.MonitorJob;
 import com.trendpilot.market.Markets;
+import com.trendpilot.market.Ticker24h;
 import com.trendpilot.market.Venue;
+import com.trendpilot.portfolio.ObservationBook;
+import com.trendpilot.portfolio.Position;
 import com.trendpilot.portfolio.ShadowBook;
 import com.trendpilot.support.FakeMarket;
 import com.trendpilot.support.TestData;
@@ -58,6 +61,7 @@ class ShadowFlowTest {
     @Autowired DiscoveryJob discovery;
     @Autowired MonitorJob monitor;
     @Autowired ShadowBook book;
+    @Autowired ObservationBook v1Book;
     @Autowired JdbcClient jdbc;
     @Autowired Markets markets;
 
@@ -67,7 +71,7 @@ class ShadowFlowTest {
         bybit.reset();
         markets.invalidate();
         for (String t : new String[]{"position", "shadow_event", "early_seen", "notification_outbox", "app_state",
-                "kline_15m"}) {
+                "kline_15m", "v1_position"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
     }
@@ -115,7 +119,7 @@ class ShadowFlowTest {
         assertThat(book.positions()).isEmpty();
         assertThat(book.realizedPnl()).isPositive();
 
-        Integer events = jdbc.sql("SELECT COUNT(*) FROM shadow_event WHERE type IN ('BUY','SELL','PROTECT_ARM')")
+        Integer events = jdbc.sql("SELECT COUNT(*) FROM shadow_event WHERE book = 'V2' AND type IN ('BUY','SELL','PROTECT_ARM')")
                 .query(Integer.class).single();
         assertThat(events).isEqualTo(3);
         Integer outbox = jdbc.sql("SELECT COUNT(*) FROM notification_outbox WHERE status = 'PREPARED'")
@@ -171,5 +175,34 @@ class ShadowFlowTest {
         assertThat(d.entries()).isEmpty();
         assertThat(d.early()).isZero();
         assertThat(d.pools()).contains("BYBIT=1/PARTIAL_DATA");
+    }
+
+    @Test
+    void earlyBelowScoreEightGoesToV1OnlyAndExitsByReferencePrice() {
+        Instant t0 = Instant.parse("2026-10-18T10:17:00Z");
+        market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
+        market.put("WEAKUSDT", 1.0, TestData.flatQuarters(t0, 10), null);
+
+        DiscoveryJob.Report d = discovery.runOnce(t0);
+        assertThat(d.v1Entries()).contains("ABCUSDT");
+        Position v1 = v1Book.position("ABCUSDT").orElseThrow();
+        assertThat(v1.costBasis().doubleValue()).isEqualTo(1001.0, org.assertj.core.data.Offset.offset(0.01));
+        String v1Note = jdbc.sql("SELECT text FROM notification_outbox WHERE event_key LIKE 'v1-entry:%'")
+                .query(String.class).single();
+        assertThat(v1Note).startsWith("🟢 V1 观察买入").contains("ABCUSDT");
+        // V1 不占用 V2 资金
+        assertThat(book.deployedCost()).isEqualTo(book.positions().stream()
+                .mapToDouble(p -> p.costBasis().doubleValue()).sum());
+
+        // 参考价涨 3% 后回落到保护底线以下：V1 按参考价保护卖出
+        Ticker24h up = market.tickers.get("ABCUSDT");
+        market.tickers.put("ABCUSDT", new Ticker24h("ABCUSDT", up.lastPrice() * 1.03, 5, 1e7));
+        monitor.runOnce(t0.plusSeconds(300));
+        assertThat(v1Book.position("ABCUSDT").orElseThrow().protectArmed()).isTrue();
+        market.tickers.put("ABCUSDT", new Ticker24h("ABCUSDT", up.lastPrice() * 1.007, 5, 1e7));
+        monitor.runOnce(t0.plusSeconds(600));
+        assertThat(v1Book.position("ABCUSDT")).isEmpty();
+        assertThat(v1Book.realizedPnl()).isPositive();
     }
 }

@@ -36,6 +36,7 @@ import com.trendpilot.market.Venue;
 import com.trendpilot.market.VenueMarket;
 import com.trendpilot.notify.Messages;
 import com.trendpilot.notify.Notifier;
+import com.trendpilot.observation.V1Tracker;
 import com.trendpilot.portfolio.Position;
 import com.trendpilot.portfolio.ShadowBook;
 import com.trendpilot.risk.RiskState;
@@ -57,6 +58,7 @@ public class DiscoveryJob {
     private static final Logger log = LoggerFactory.getLogger(DiscoveryJob.class);
 
     private final Markets markets;
+    private final V1Tracker v1;
     private final UniverseFilter universeFilter;
     private final EarlySignalCalculator signals;
     private final SystemRiskAssessor riskAssessor;
@@ -70,10 +72,11 @@ public class DiscoveryJob {
     private final JdbcClient jdbc;
     private final StrategyParams params;
 
-    public DiscoveryJob(Markets markets, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, CapitalReviewer reviewer,
+    public DiscoveryJob(Markets markets, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, CapitalReviewer reviewer,
                         CapitalAllocator allocator, ShadowBook book, PortfolioLock lock, Notifier notifier,
                         JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params) {
         this.markets = markets;
+        this.v1 = v1;
         this.universeFilter = universeFilter;
         this.signals = signals;
         this.riskAssessor = riskAssessor;
@@ -89,7 +92,7 @@ public class DiscoveryJob {
     }
 
     public record Report(String generation, int universe, int missing, int early, int reviewed, List<String> entries,
-                         boolean scanComplete, int klineRequests, String pools) {
+                         boolean scanComplete, int klineRequests, String pools, List<String> v1Entries) {
     }
 
     @Scheduled(cron = "0 17 * * * *", zone = "${trendpilot.zone}")
@@ -104,7 +107,7 @@ public class DiscoveryJob {
             runs.record(JOB, gen, now, Instant.now(), "SUCCESS", r.scanComplete() ? "COMPLETE" : "PARTIAL_DATA",
                     "universe=" + r.universe() + " missing=" + r.missing() + " early=" + r.early()
                             + " reviewed=" + r.reviewed() + " klineRequests=" + r.klineRequests() + " entries=" + r.entries()
-                            + " pools=" + r.pools());
+                            + " v1Entries=" + r.v1Entries().size() + " pools=" + r.pools());
             log.info("Discovery 完成 {}", r);
             return r;
         } catch (RuntimeException e) {
@@ -112,7 +115,7 @@ public class DiscoveryJob {
             runs.record(JOB, gen, now, Instant.now(), "FAILED", "N/A", String.valueOf(e.getMessage()));
             notifier.send("fail:" + JOB + ":" + now.truncatedTo(ChronoUnit.HOURS),
                     Messages.failure(JOB, String.valueOf(e.getMessage())));
-            return new Report(gen, 0, 0, 0, 0, List.of(), false, 0, "N/A");
+            return new Report(gen, 0, 0, 0, 0, List.of(), false, 0, "N/A", List.of());
         }
     }
 
@@ -191,6 +194,7 @@ public class DiscoveryJob {
 
         // 5. 审核与分配（锁内）
         List<String> entries = new ArrayList<>();
+        List<String> v1Entries = new ArrayList<>();
         lock.run(() -> {
             List<ReviewResult> results = new ArrayList<>();
             Map<String, Venue> venueOf = new LinkedHashMap<>();
@@ -223,6 +227,12 @@ public class DiscoveryJob {
                 entries.add(r.action() + ":" + r.symbol());
                 notifier.send("entry:" + gen + ":" + r.symbol(), Messages.entry(venueOf.get(r.symbol()), r));
             }
+            // V1 宽口径观察：所有 EARLY（不要求评分 8、不占 V2 资金）
+            List<V1Tracker.Candidate> v1Candidates = early.stream()
+                    .map(c -> new V1Tracker.Candidate(c.venue(), c.signal(), c.ticker(),
+                            main.complete() && poolBy.get(c.venue()).complete()))
+                    .toList();
+            v1Entries.addAll(v1.enter(gen, now, v1Candidates, risk));
             for (ReviewResult r : results) {
                 logDecision(gen, venueOf.get(r.symbol()), r, alloc.funded().contains(r), alloc.unfunded().contains(r), now);
             }
@@ -234,7 +244,7 @@ public class DiscoveryJob {
                         : p.universe().size() + "/" + (p.complete() ? "COMPLETE" : "PARTIAL_DATA")))
                 .collect(Collectors.joining(" "));
         return new Report(gen, universe, missing, early.size(), candidates.size(), entries, main.complete(), requests,
-                poolNote);
+                poolNote, v1Entries);
     }
 
     private Pool loadPool(VenueMarket m, Set<String> alreadyCovered, Instant now) {
