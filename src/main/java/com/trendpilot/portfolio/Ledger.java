@@ -85,22 +85,34 @@ public abstract class Ledger {
         Position p = new Position(cur.venue(), cur.symbol(), cur.qty().add(fill.qty()), cur.costBasis().add(fill.totalCost()),
                 cur.entryNotional().add(fill.notional()), cur.tranches() + 1, fill.avgPrice(), now, generation,
                 cur.openedAt(), false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false);
+        Excursion ex = excursion(cur.symbol());
         jdbc.sql("DELETE FROM " + table + " WHERE symbol = :s").param("s", cur.symbol()).update();
         insertPosition(p, now);
+        jdbc.sql("UPDATE " + table + " SET max_net = :max, min_net = :min, first_profit_at = :fp WHERE symbol = :s")
+                .param("max", ex.maxNet()).param("min", ex.minNet()).param("fp", ex.firstProfitAt())
+                .param("s", cur.symbol()).update();
         event(cur.venue(), cur.symbol(), "ADD", fill, null, book + "_ADD", generation, now);
         return p;
     }
 
     @Transactional
     public void close(Position cur, Fill fill, BigDecimal pnl, String reason, String generation, Instant now) {
+        Excursion ex = excursion(cur.symbol());
+        double finalNet = pnl.doubleValue();
+        double maxNet = ex.maxNet() == null ? finalNet : Math.max(ex.maxNet(), finalNet);
+        double minNet = ex.minNet() == null ? finalNet : Math.min(ex.minNet(), finalNet);
+        Instant firstProfit = ex.firstProfitAt() != null ? Instant.parse(ex.firstProfitAt()) : finalNet > 0 ? now : null;
         jdbc.sql("DELETE FROM " + table + " WHERE symbol = :s").param("s", cur.symbol()).update();
         event(cur.venue(), cur.symbol(), "SELL", fill, pnl, reason, generation, now);
         jdbc.sql("""
-                UPDATE shadow_event SET cost_usdt = :cost, hold_minutes = :hold
+                UPDATE shadow_event SET cost_usdt = :cost, hold_minutes = :hold, max_net = :max, min_net = :min,
+                    minutes_to_profit = :mtp
                 WHERE id = (SELECT MAX(id) FROM shadow_event WHERE book = :b AND symbol = :s AND type = 'SELL')
                 """)
                 .param("cost", cur.costBasis().toPlainString())
                 .param("hold", Duration.between(cur.openedAt(), now).toMinutes())
+                .param("max", maxNet).param("min", minNet)
+                .param("mtp", firstProfit == null ? null : Duration.between(cur.openedAt(), firstProfit).toMinutes())
                 .param("b", book).param("s", cur.symbol()).update();
     }
 
@@ -108,26 +120,42 @@ public abstract class Ledger {
     public void update(Position p, BigDecimal markNet, Instant now) {
         jdbc.sql("UPDATE " + table + """
                  SET protect_armed = :armed, protect_floor = :floor, peak_net = :peak,
-                    weak_streak = :streak, loss_recovery = :recovery, mark_net = :mark, updated_at = :now
+                    weak_streak = :streak, loss_recovery = :recovery, mark_net = :mark, updated_at = :now,
+                    max_net = MAX(COALESCE(max_net, :markD), :markD), min_net = MIN(COALESCE(min_net, :markD), :markD),
+                    first_profit_at = COALESCE(first_profit_at, CASE WHEN :markD > 0 THEN :now END)
                  WHERE symbol = :s
                 """)
-                .param("mark", markNet.toPlainString())
+                .param("mark", markNet.toPlainString()).param("markD", markNet.doubleValue())
                 .param("armed", p.protectArmed() ? 1 : 0).param("floor", p.protectFloor().toPlainString())
                 .param("peak", p.peakNet().toPlainString()).param("streak", p.weakStreak())
                 .param("recovery", p.lossRecovery() ? 1 : 0).param("now", now.toString()).param("s", p.symbol())
                 .update();
     }
 
+    /** 持仓期间的最大可退出净利、最小可退出净利（U）与首次转盈利时间；还没观察过时为 null。 */
+    record Excursion(Double maxNet, Double minNet, String firstProfitAt) {
+    }
+
+    private Excursion excursion(String symbol) {
+        return jdbc.sql("SELECT max_net, min_net, first_profit_at FROM " + table + " WHERE symbol = :s")
+                .param("s", symbol)
+                .query((rs, i) -> new Excursion(rs.getObject(1) == null ? null : rs.getDouble(1),
+                        rs.getObject(2) == null ? null : rs.getDouble(2), rs.getString(3)))
+                .optional().orElse(new Excursion(null, null, null));
+    }
+
     /** 账本统计，用于 V1 / V2 收益对比。 */
     public BookStats stats() {
         List<Object[]> sells = jdbc.sql("""
-                SELECT pnl_usdt, cost_usdt, hold_minutes FROM shadow_event
+                SELECT pnl_usdt, cost_usdt, hold_minutes, max_net, min_net, minutes_to_profit FROM shadow_event
                 WHERE book = :b AND type = 'SELL' AND pnl_usdt IS NOT NULL ORDER BY id
                 """).param("b", book)
-                .query((rs, i) -> new Object[]{rs.getString(1), rs.getString(2), rs.getObject(3)}).list();
+                .query((rs, i) -> new Object[]{rs.getString(1), rs.getString(2), rs.getObject(3), rs.getObject(4),
+                        rs.getObject(5), rs.getObject(6)}).list();
         int wins = 0;
         double realized = 0, peak = 0, maxDrawdown = 0, retSum = 0, holdSum = 0;
-        int retCount = 0, holdCount = 0;
+        int retCount = 0, holdCount = 0, excursionCount = 0, profitCount = 0;
+        double maxUpSum = 0, maxDownSum = 0, toProfitSum = 0;
         for (Object[] r : sells) {
             double pnl = Double.parseDouble((String) r[0]);
             if (pnl > 0) wins++;
@@ -137,6 +165,16 @@ public abstract class Ledger {
             if (r[1] != null) {
                 retSum += pnl / Double.parseDouble((String) r[1]) * 100;
                 retCount++;
+            }
+            if (r[1] != null && r[3] != null && r[4] != null) {
+                double cost = Double.parseDouble((String) r[1]);
+                maxUpSum += ((Number) r[3]).doubleValue() / cost * 100;
+                maxDownSum += ((Number) r[4]).doubleValue() / cost * 100;
+                excursionCount++;
+            }
+            if (r[5] != null) {
+                toProfitSum += ((Number) r[5]).doubleValue();
+                profitCount++;
             }
             if (r[2] != null) {
                 holdSum += ((Number) r[2]).doubleValue();
@@ -151,7 +189,9 @@ public abstract class Ledger {
         return new BookStats(book, entries, sells.size(), wins, realized, unrealized,
                 open.size(), open.stream().mapToDouble(p -> p.costBasis().doubleValue()).sum(),
                 retCount == 0 ? Double.NaN : retSum / retCount, holdCount == 0 ? Double.NaN : holdSum / holdCount / 60,
-                maxDrawdown);
+                maxDrawdown, excursionCount == 0 ? Double.NaN : maxUpSum / excursionCount,
+                excursionCount == 0 ? Double.NaN : maxDownSum / excursionCount,
+                profitCount == 0 ? Double.NaN : toProfitSum / profitCount / 60);
     }
 
     /** 状态类事件（PROTECT_ARM 等），不涉及成交。 */

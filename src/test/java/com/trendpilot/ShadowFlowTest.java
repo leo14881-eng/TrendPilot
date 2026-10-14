@@ -172,6 +172,13 @@ class ShadowFlowTest {
         assertThat(m2.exits()).containsExactly("PROFIT_PROTECTION:ABCUSDT");
         assertThat(book.positions()).isEmpty();
         assertThat(book.realizedPnl()).isPositive();
+        // 每笔卖出记录最大浮盈、最大浮亏、首次转盈利用时（第一次 Monitor 就有净利：5 分钟）
+        var ex = jdbc.sql("SELECT max_net, min_net, minutes_to_profit, pnl_usdt FROM shadow_event WHERE book = 'V2' AND type = 'SELL'")
+                .query((rs, i) -> new double[]{rs.getDouble(1), rs.getDouble(2), rs.getDouble(3), Double.parseDouble(rs.getString(4))})
+                .single();
+        assertThat(ex[0]).isGreaterThan(ex[3]);
+        assertThat(ex[1]).isLessThanOrEqualTo(ex[3]);
+        assertThat(ex[2]).isEqualTo(5.0);
 
         Integer events = jdbc.sql("SELECT COUNT(*) FROM shadow_event WHERE book = 'V2' AND type IN ('BUY','SELL','PROTECT_ARM')")
                 .query(Integer.class).single();

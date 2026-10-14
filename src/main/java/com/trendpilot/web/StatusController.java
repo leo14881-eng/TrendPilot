@@ -44,7 +44,7 @@ public class StatusController {
                 Map.entry("realizedPnl", book.realizedPnl()),
                 Map.entry("blindReplay7d", blind.summary(java.time.Instant.now(), 7)),
                 Map.entry("recentRuns", rows("SELECT job, generation, started_at, program_status, data_status, note FROM job_run ORDER BY id DESC LIMIT 20")),
-                Map.entry("recentEvents", rows("SELECT book, venue, symbol, type, price, notional_usdt, pnl_usdt, reason_code, created_at FROM shadow_event ORDER BY id DESC LIMIT 20")),
+                Map.entry("recentEvents", rows("SELECT book, venue, symbol, type, price, notional_usdt, pnl_usdt, reason_code, hold_minutes, max_net, min_net, minutes_to_profit, created_at FROM shadow_event ORDER BY id DESC LIMIT 20")),
                 Map.entry("recentDecisions", rows("SELECT generation, venue, symbol, action, decision, funded, score, rr, reasons FROM decision_log ORDER BY id DESC LIMIT 30")),
                 Map.entry("missedReplay", rows("SELECT day, venue, symbol, change_pct, first_early_at, outcome, reasons FROM missed_replay ORDER BY day DESC, change_pct DESC LIMIT 20")));
     }

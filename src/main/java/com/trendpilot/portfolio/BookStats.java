@@ -12,10 +12,13 @@ import java.util.Locale;
  * @param avgReturnPct   每笔平仓净收益率（相对含费成本）的平均值
  * @param avgHoldHours   平均持有小时数
  * @param maxDrawdown    已实现盈亏累计曲线的最大回撤
+ * @param avgMaxNetPct   已平仓每笔持有期间最大可退出净利（相对成本）的平均值，即平均最大浮盈
+ * @param avgMinNetPct   同上的最小值的平均，即平均最大浮亏（负数）
+ * @param avgHoursToProfit 曾经转为盈利的平仓，从买入到第一次可退出净利 > 0 的平均小时数
  */
 public record BookStats(String book, int entries, int closed, int wins, double realizedPnl, double unrealizedPnl,
                         int openPositions, double openCost, double avgReturnPct, double avgHoldHours,
-                        double maxDrawdown) {
+                        double maxDrawdown, double avgMaxNetPct, double avgMinNetPct, double avgHoursToProfit) {
 
     public double winRatePct() {
         return closed == 0 ? Double.NaN : wins * 100.0 / closed;
@@ -28,6 +31,13 @@ public record BookStats(String book, int entries, int closed, int wins, double r
                 realizedPnl, unrealizedPnl,
                 Double.isNaN(avgReturnPct) ? "-" : String.format(Locale.ROOT, "%.2f%%", avgReturnPct),
                 Double.isNaN(avgHoldHours) ? "-" : String.format(Locale.ROOT, "%.1f 小时", avgHoldHours),
-                maxDrawdown, openPositions);
+                maxDrawdown, openPositions)
+                + String.format(Locale.ROOT, "，平均最大浮盈 %s，平均最大浮亏 %s，平均转盈利用时 %s",
+                pct(avgMaxNetPct), pct(avgMinNetPct),
+                Double.isNaN(avgHoursToProfit) ? "-" : String.format(Locale.ROOT, "%.1f 小时", avgHoursToProfit));
+    }
+
+    private static String pct(double v) {
+        return Double.isNaN(v) ? "-" : String.format(Locale.ROOT, "%.2f%%", v);
     }
 }
