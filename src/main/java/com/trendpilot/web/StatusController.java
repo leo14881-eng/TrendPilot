@@ -22,10 +22,15 @@ public class StatusController {
     private final JdbcClient jdbc;
     private final StreamHub streams;
     private final BlindReplay blind;
+    private final com.trendpilot.research.ResearchService research;
+    private final com.trendpilot.research.CoinGeckoClient coinGecko;
 
     public StatusController(ShadowBook book, ObservationBook v1, JdbcClient jdbc, StreamHub streams,
-                            BlindReplay blind) {
+                            BlindReplay blind, com.trendpilot.research.ResearchService research,
+                            com.trendpilot.research.CoinGeckoClient coinGecko) {
         this.blind = blind;
+        this.research = research;
+        this.coinGecko = coinGecko;
         this.book = book;
         this.v1 = v1;
         this.streams = streams;
@@ -40,6 +45,8 @@ public class StatusController {
                 Map.entry("v1Positions", v1.positions()),
                 Map.entry("comparison", List.of(book.stats(), v1.stats())),
                 Map.entry("websocket", streams.health()),
+                Map.entry("research", Map.of("coinGeckoRateLimited", coinGecko.rateLimited(),
+                        "backoffUntil", research.backoffs())),
                 Map.entry("deployedCost", book.deployedCost()),
                 Map.entry("realizedPnl", book.realizedPnl()),
                 Map.entry("blindReplay7d", blind.summary(java.time.Instant.now(), 7)),

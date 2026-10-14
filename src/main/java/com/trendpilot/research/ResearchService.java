@@ -34,7 +34,7 @@ import com.trendpilot.market.Venue;
 public class ResearchService {
 
     static final Duration IDENTITY_TTL = Duration.ofHours(24);
-    static final Duration MARKET_TTL = Duration.ofHours(6);
+    static final Duration MARKET_TTL = Duration.ofHours(12);
     static final Duration PROTOCOL_TTL = Duration.ofHours(24);
     static final Map<Venue, String> EXCHANGE_IDS = Map.of(Venue.BINANCE, "binance", Venue.BYBIT, "bybit_spot");
 
@@ -45,6 +45,7 @@ public class ResearchService {
     private final JdbcClient jdbc;
     private final ResearchProperties props;
     private int rotationCursor;
+    private final Map<String, Backoff> backoff = new java.util.concurrent.ConcurrentHashMap<>();
 
     public ResearchService(CoinGeckoClient coinGecko, DefiLlamaClient defiLlama, JdbcClient jdbc,
                            ResearchProperties props) {
@@ -56,50 +57,65 @@ public class ResearchService {
 
     // ---------- 资料刷新（后台任务调用，失败只记日志，旧资料保留但会过期） ----------
 
-    /** 刷新到期的资料。@return 本次刷新了哪些 */
+    /**
+     * 刷新到期的资料。每项失败后进入退避（2、4、8…小时，封顶 24 小时），期间不再请求；
+     * CoinGecko 限流时本轮剩余的 CoinGecko 项全部跳过。失败只影响研究缺口，不阻塞 Discovery。
+     *
+     * @return 本次刷新了哪些
+     */
     public List<String> refreshDue(Instant now) {
         List<String> done = new ArrayList<>();
         if (!props.enabled()) return done;
+        boolean[] limited = {false};
         for (Venue v : Venue.values()) {
             if (stale("SELECT MAX(updated_at) FROM coin_identity WHERE venue = '" + v + "'", IDENTITY_TTL, now)) {
-                try {
-                    refreshIdentity(v, now);
-                    done.add("IDENTITY_" + v);
-                } catch (RuntimeException e) {
-                    log.warn("身份资料刷新失败 {}：{}", v, e.getMessage());
-                }
+                attempt("IDENTITY_" + v, true, limited, now, done, () -> refreshIdentity(v, now));
             }
         }
         if (stale("SELECT MAX(updated_at) FROM coin_market", MARKET_TTL, now)) {
-            try {
-                List<String> ids = jdbc.sql("SELECT DISTINCT coin_id FROM coin_identity").query(String.class).list();
-                if (!ids.isEmpty()) {
-                    saveMarkets(coinGecko.markets(ids), now);
-                    done.add("MARKETS");
-                }
-            } catch (RuntimeException e) {
-                log.warn("市值供给资料刷新失败：{}", e.getMessage());
-            }
+            List<String> ids = jdbc.sql("SELECT DISTINCT coin_id FROM coin_identity").query(String.class).list();
+            if (!ids.isEmpty()) attempt("MARKETS", true, limited, now, done, () -> saveMarkets(coinGecko.markets(ids), now));
         }
         if (stale("SELECT MAX(updated_at) FROM coin_category", IDENTITY_TTL, now)) {
             for (String category : props.excludedCategories()) {
-                try {
-                    saveCategory(category, coinGecko.categoryCoinIds(category), now);
-                    done.add("CATEGORY_" + category);
-                } catch (RuntimeException e) {
-                    log.warn("分类资料刷新失败 {}：{}", category, e.getMessage());
-                }
+                attempt("CATEGORY_" + category, true, limited, now, done,
+                        () -> saveCategory(category, coinGecko.categoryCoinIds(category), now));
             }
         }
         if (stale("SELECT MAX(updated_at) FROM protocol_value", PROTOCOL_TTL, now)) {
-            try {
-                saveProtocols(defiLlama.protocolsByGeckoId(), now);
-                done.add("DEFILLAMA");
-            } catch (RuntimeException e) {
-                log.warn("DefiLlama 资料刷新失败：{}", e.getMessage());
-            }
+            attempt("DEFILLAMA", false, limited, now, done, () -> saveProtocols(defiLlama.protocolsByGeckoId(), now));
         }
         return done;
+    }
+
+    private void attempt(String item, boolean coinGeckoItem, boolean[] limited, Instant now, List<String> done,
+                         Runnable work) {
+        Backoff b = backoff.get(item);
+        if (b != null && now.isBefore(b.retryAt())) return;
+        if (coinGeckoItem && limited[0]) return;
+        try {
+            work.run();
+            backoff.remove(item);
+            done.add(item);
+        } catch (RuntimeException e) {
+            if (e instanceof CoinGeckoClient.RateLimited) limited[0] = true;
+            int failures = b == null ? 1 : b.failures() + 1;
+            Duration wait = Duration.ofHours(Math.min(24, 1L << Math.min(failures, 5)));
+            backoff.put(item, new Backoff(failures, now.plus(wait)));
+            log.warn("研究资料 {} 刷新失败（连续第 {} 次，{} 小时后再试，期间记为研究缺口）：{}", item, failures,
+                    wait.toHours(), e.getMessage());
+        }
+    }
+
+    /** 某项资料连续失败次数与下次可重试时间。 */
+    record Backoff(int failures, Instant retryAt) {
+    }
+
+    /** 当前处在失败退避中的资料项（供状态接口展示）。 */
+    public Map<String, Instant> backoffs() {
+        Map<String, Instant> out = new LinkedHashMap<>();
+        backoff.forEach((k, v) -> out.put(k, v.retryAt()));
+        return out;
     }
 
     private boolean stale(String sql, Duration ttl, Instant now) {

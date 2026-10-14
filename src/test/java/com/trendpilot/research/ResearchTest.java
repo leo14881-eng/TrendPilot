@@ -2,6 +2,7 @@ package com.trendpilot.research;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import java.nio.file.Path;
@@ -44,7 +45,7 @@ class ResearchTest {
     void coinGeckoPaginatesExchangeTickersAndParsesMarkets() {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        var fastProps = new ResearchProperties(true, "https://cg.test", "", "https://llama.test", 25, 10, 10, 0, 0.3, List.of());
+        var fastProps = new ResearchProperties(true, "https://cg.test", "", "https://llama.test", 25, 10, 10, 0, 0, 1000, 0.3, List.of());
         CoinGeckoClient client = new CoinGeckoClient(fastProps, builder);
         server.expect(requestTo("https://cg.test/exchanges/binance/tickers?page=1")).andRespond(withSuccess("""
                 {"tickers":[{"base":"ABC","target":"USDT","coin_id":"abc"},{"base":"ABC","target":"BTC","coin_id":"abc"}]}""",
@@ -93,5 +94,36 @@ class ResearchTest {
                 new CoinGeckoClient.ExchangeTicker("OK", "USDT", "ok")), now);
         research.saveCategory("tokenized-stock", List.of("lly-token"), now);
         assertThat(research.excludedSymbols(Venue.BYBIT)).containsExactly("LLYBUSDT");
+    }
+
+    @Test
+    void rateLimitHonoursRetryAfterThenGivesUpWithoutHammering() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        var p = new ResearchProperties(true, "https://cg.test", "", "https://llama.test", 25, 10, 10, 12_000, 2_500, 600_000, 0.3, List.of());
+        long[] clock = {0};
+        List<Long> waits = new java.util.ArrayList<>();
+        CoinGeckoClient client = new CoinGeckoClient(p, builder, () -> clock[0], ms -> { waits.add(ms); clock[0] += ms; });
+        org.springframework.http.HttpHeaders retry = new org.springframework.http.HttpHeaders();
+        retry.add("Retry-After", "30");
+        server.expect(requestTo(org.hamcrest.Matchers.startsWith("https://cg.test/coins/markets")))
+                .andRespond(withStatus(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS).headers(retry));
+        server.expect(requestTo(org.hamcrest.Matchers.startsWith("https://cg.test/coins/markets")))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+        assertThat(client.markets(List.of("abc"))).isEmpty();
+        assertThat(waits).containsExactly(30_000L);
+
+        // 第二次请求要等满 12 秒间隔；之后全部 429 且无 Retry-After：60s、120s、240s 指数退避，第 4 次后放弃
+        server.reset();
+        waits.clear();
+        for (int i = 0; i < CoinGeckoClient.MAX_ATTEMPTS; i++) {
+            server.expect(requestTo(org.hamcrest.Matchers.startsWith("https://cg.test/coins/markets")))
+                    .andRespond(withStatus(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
+        }
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> client.markets(List.of("abc")))
+                .isInstanceOf(CoinGeckoClient.RateLimited.class);
+        assertThat(waits).containsExactly(12_000L, 60_000L, 120_000L, 240_000L);
+        assertThat(client.rateLimited()).isTrue();
+        server.verify();
     }
 }

@@ -162,7 +162,9 @@ trendpilot.research:
   rotation: 25
   top-early: 10
   top-movers: 10
-  min-interval-ms: 4000          # 免费额度下每 4 秒最多一次请求
+  min-interval-ms: 12000         # 无 key 免费档：每 12 秒最多一次（约每分钟 5 次）
+  demo-min-interval-ms: 2500     # 配了免费 Demo key 时
+  max-backoff-ms: 600000         # 429 指数退避上限 10 分钟
   low-float-ratio: 0.3           # 流通量 / 总量低于 30% 标记 LOW_FLOAT
   # 按 CoinGecko 分类排除：稳定币、代币化股票、代币化黄金
   excluded-categories: [stablecoins, tokenized-stock, tokenized-gold]
