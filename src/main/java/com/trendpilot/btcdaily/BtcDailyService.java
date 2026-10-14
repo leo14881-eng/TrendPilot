@@ -196,8 +196,15 @@ public class BtcDailyService {
         context.loadHistory(firstDay.minusDays(2), now);
         BtcDailyBacktest.Result base = BtcDailyBacktest.run(daily, hourly, props, null);
         BtcDailyBacktest.Result filtered = BtcDailyBacktest.run(daily, hourly, props, context::context);
-        store.saveBacktest(props.version(), json.writeValueAsString(Map.of("base", base, "filtered", filtered)), now);
+        // 卖出方式对比（都加过滤）：现行 FIXED、移动止盈 TRAIL、8% 宽止损 STOP
+        Map<String, BtcDailyBacktest.Result> exits = new java.util.LinkedHashMap<>();
+        for (String mode : List.of("FIXED", "TRAIL", "STOP")) {
+            exits.put(mode, BtcDailyBacktest.run(daily, hourly, props.withExitMode(mode), context::context));
+        }
+        store.saveBacktest(props.version(), json.writeValueAsString(
+                Map.of("base", base, "filtered", filtered, "exits", exits)), now);
         notifier.send("btc-daily-backtest-" + props.version(), BtcDailyMessages.backtest(base, filtered, props));
+        notifier.send("btc-daily-exits-" + props.version(), BtcDailyMessages.exits(exits, props));
         log.info("BTC 每日短线回测完成：基准 {}，加过滤 {}", base, filtered);
     }
 

@@ -93,6 +93,33 @@ final class BtcDailyMessages {
                 + "\n\n说明：不止损，被套时只等回本；资金上限 " + money(props.capUsdt()) + " USDT。ETF 数据从 2024-01 开始；缺失的数据当天不过滤。";
     }
 
+    static String exits(Map<String, BtcDailyBacktest.Result> exits, BtcDailyProperties props) {
+        BtcDailyProperties.Exit x = props.exit();
+        Map<String, String> names = Map.of(
+                "FIXED", "现行：跨天 +" + fmt(props.carryTpPct()) + "% 就卖、不止损",
+                "TRAIL", "移动止盈：涨到止盈线后跟踪最高价，回落 " + fmt(x.trailAtr()) + "×ATR 卖（最低保 +" + fmt(x.trailFloorPct()) + "%）、不止损",
+                "STOP", "现行 + 跌 " + fmt(x.hardStopPct()) + "% 止损");
+        StringBuilder sb = new StringBuilder("【BTC 每日短线】卖出方式回测对比（近一年，同一套买入和过滤规则）\n");
+        BtcDailyBacktest.Result any = exits.values().iterator().next();
+        sb.append("区间 ").append(any.from()).append(" ~ ").append(any.to()).append("，同期持有 BTC ").append(pct(any.buyHoldPct())).append('\n');
+        for (var e : exits.entrySet()) {
+            BtcDailyBacktest.Result r = e.getValue();
+            sb.append("\n■ ").append(names.getOrDefault(e.getKey(), e.getKey())).append('\n')
+                    .append("年化 ").append(pct(r.annualPct())).append("（总盈亏 ").append(signed(r.totalPnl())).append(" USDT，含期末浮动）\n")
+                    .append("最大回撤 ").append(money(r.maxDrawdown())).append(" USDT（").append(pct(r.maxDrawdownPct())).append("）")
+                    .append("｜最长被套 ").append(r.maxHoldDays()).append(" 天\n")
+                    .append("完成 ").append(r.rounds()).append(" 轮，胜率 ").append(pct(r.winRate()))
+                    .append("｜平均赚 ").append(signed(r.avgWin())).append("，平均亏 ").append(signed(r.avgLoss()))
+                    .append("，盈亏比 ").append(r.winLossRatio() == 0 ? "—（没有亏损的轮）" : String.valueOf(r.winLossRatio())).append('\n');
+        }
+        sb.append("\n实盘仍按现行规则，等你选定后再切换。");
+        return sb.toString();
+    }
+
+    private static String fmt(double v) {
+        return v == Math.rint(v) ? String.valueOf((long) v) : String.valueOf(v);
+    }
+
     private static String stops(BtcDailyBacktest.Result r) {
         StringBuilder sb = new StringBuilder("不止损（实际规则）：总盈亏 " + signed(r.realized() + r.endUnrealized()) + " USDT\n");
         for (BtcDailyBacktest.StopAlt a : r.stopAlts()) {

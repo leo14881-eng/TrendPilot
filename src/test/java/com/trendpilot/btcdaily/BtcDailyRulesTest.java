@@ -145,6 +145,13 @@ class BtcDailyRulesTest {
         assertThat(r.maxHoldDays()).isGreaterThan(0);
         assertThat(r.rounds()).isGreaterThan(0);
         assertThat(r.realized()).isPositive();
+        assertThat(r.maxDrawdown()).isPositive();
+        assertThat(r.winRate()).isEqualTo(100.0);
+        assertThat(r.exitMode()).isEqualTo("FIXED");
+        // 同一段行情：8% 止损会在下跌中卖出（亏损轮），移动止盈不会
+        BtcDailyBacktest.Result stopped = BtcDailyBacktest.run(d, hourly, P.withExitMode("STOP"), null);
+        assertThat(stopped.losses()).isPositive();
+        assertThat(BtcDailyBacktest.run(d, hourly, P.withExitMode("TRAIL"), null).losses()).isZero();
     }
 
     @Test
@@ -234,5 +241,37 @@ class BtcDailyRulesTest {
         assertThat(f).hasSize(2);
         assertThat(BtcDailyMessages.fill(f.get(0), book, plan, null, P)).contains("成本 3,000.00");
         assertThat(BtcDailyMessages.fill(f.get(1), book, plan, null, P)).contains("成本 6,000.00");
+    }
+
+    @Test
+    void trailingExitLetsWinnersRunButNeverBelowFloor() {
+        BtcDailyProperties trail = P.withExitMode("TRAIL");
+        Book book = new Book();
+        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, trail);
+        BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 58_700, 58_750), trail);
+        double arm = BtcDailyRules.takeProfitPrice(plan, book, trail);
+        // 碰到止盈线：不卖，开始跟踪
+        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 1, 58_750, arm + 10, 58_700, arm), trail)).isEmpty();
+        // 继续涨：仍不卖
+        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 2, arm, arm + 1500, arm, arm + 1400), trail)).isEmpty();
+        // 从最高价回落超过 0.5 × ATR（1,000）：卖出，赚得比固定止盈多
+        double peak = arm + 1500;
+        List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 3, peak - 500, peak - 400, peak - 1200, peak - 1100), trail);
+        assertThat(f).singleElement().satisfies(x -> {
+            assertThat(x.reason()).isEqualTo("移动止盈");
+            assertThat(x.price()).isGreaterThan(arm);
+        });
+    }
+
+    @Test
+    void wideStopSellsAtEightPercentLoss() {
+        BtcDailyProperties stop = P.withExitMode("STOP");
+        Book book = new Book();
+        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, stop);
+        BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 58_700, 58_750), stop);
+        double avg = book.avgCost();
+        List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 1, 58_000, 58_000, avg * 0.91, avg * 0.915), stop);
+        assertThat(f).extracting(Fill::side).contains(Fill.Side.SELL);
+        assertThat(f.stream().filter(x -> x.side() == Fill.Side.SELL).findFirst().orElseThrow().reason()).isEqualTo("止损 8%");
     }
 }
