@@ -185,7 +185,7 @@ trendpilot.research:
 # 改参数时同时改 version（会自动重新回测一次）
 trendpilot.btc-daily:
   enabled: true
-  version: btc-v2.3-2026-10-15   # 卖出：TRAIL / 先卖一半剩下跟踪 PARTIAL 回测择优，确认后生效
+  version: btc-v2.3.1-2026-10-15 # 卖出暂保持旧规则（FIXED），等短线整体重新设计；回测仍对比 TRAIL / PARTIAL
   symbol: BTCUSDT
   cap-usdt: 10000
   cap-until: "2026-11-14"         # 第一个月上限，到期按数据复评
@@ -205,7 +205,7 @@ trendpilot.btc-daily:
   # AUTO：上线回测从 candidates 里选不比 FIXED 差且总盈亏最高的一种。用户 2026-10-15 要求加大止盈空间
   # 回滚：mode 改回 FIXED（或指定 TRAIL / PARTIAL）并改 version
   exit:
-    mode: AUTO
+    mode: FIXED                    # 2026-10-15 用户要求整体重新设计短线，确认前实盘保持旧规则；回测仍对比各卖法
     candidates: [TRAIL, PARTIAL]
     require-backtest: true         # 回测确认前和都不达标时按 FIXED
     trail-atr: 0.5                 # TRAIL：从最高价回落 0.5 × ATR 全卖，最低按原止盈价

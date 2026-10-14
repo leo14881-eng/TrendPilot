@@ -120,12 +120,12 @@ class BtcDailyServiceTest {
     }
 
     @Test
-    void trailingTakesEffectOnlyAfterBacktestConfirms() {
-        // 没有回测结论：按 FIXED 运行
+    void liveExitStaysFixedWhileConfigSaysFixed() {
+        // 配置为 FIXED（等用户确认新设计）：即使回测结论是 TRAIL 也不切换
         assertThat(service.live().exit().mode()).isEqualTo("FIXED");
         store.saveBacktest(service.live().version(), "{\"liveExit\":\"TRAIL\"}", Instant.now());
-        assertThat(service.live().exit().mode()).isEqualTo("TRAIL");
-        assertThat(service.summary(Instant.now())).containsEntry("exitMode", "TRAIL");
+        assertThat(service.live().exit().mode()).isEqualTo("FIXED");
+        assertThat(service.summary(Instant.now())).containsEntry("exitMode", "FIXED");
     }
 
     @Test
