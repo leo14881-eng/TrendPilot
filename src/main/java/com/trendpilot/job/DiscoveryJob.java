@@ -240,7 +240,7 @@ public class DiscoveryJob {
                 quotes.put(pool.venue(), Map.of());
             }
         }
-        MarketEvidence ev = evidence(quotes.getOrDefault(Venue.BINANCE, Map.of()), main, now);
+        MarketEvidence ev = evidence(quotes.getOrDefault(Venue.BINANCE, Map.of()), main, pools, now);
         RiskState raw = riskAssessor.assess(main.btc(), btcTicker, main.universe(), lossExits, ev);
         // V1 只受市场类风险（BTC 急跌、流动性、稳定币、数据缺失）限制，不受 V2 的亏损冻结和恢复期限制，
         // 否则 V2 浮亏时 V1 也停止采样，对比数据正好在行情差的时候断档
@@ -371,7 +371,7 @@ public class DiscoveryJob {
     }
 
     /** 流动性（全市场最优价一次请求）与稳定币证据；拿不到时为 NaN，由风险评估保守处理。 */
-    private MarketEvidence evidence(Map<String, BookTicker> quotes, Pool main, Instant now) {
+    private MarketEvidence evidence(Map<String, BookTicker> quotes, Pool main, List<Pool> pools, Instant now) {
         double medianSpread = Double.NaN;
         try {
             List<Ticker24h> top = main.universe().stream()
@@ -388,17 +388,26 @@ public class DiscoveryJob {
         }
         double stable = main.tickers().stream().filter(t -> STABLE_REFERENCES.contains(t.symbol()) && t.lastPrice() > 0)
                 .mapToDouble(t -> Math.abs(t.lastPrice() - 1) * 100).max().orElse(Double.NaN);
-        double median1h = medianReturn1h(main);
+        // 每个交易所分别算，取最差的那个：任何一个交易所的山寨崩了就熔断（熔断对所有交易所生效）
+        double median1h = Double.NaN;
+        String worst = "";
+        for (Pool pool : pools) {
+            double m = medianReturn1h(pool);
+            if (!Double.isNaN(m) && (Double.isNaN(median1h) || m < median1h)) {
+                median1h = m;
+                worst = pool.venue().name();
+            }
+        }
         RiskRecovery.AltCrash crash = recovery.altCrash(median1h, now);
         if (crash.started()) {
             notifier.send("alt-crash:" + now, String.format(java.util.Locale.ROOT,
-                    "🚨 山寨崩盘熔断：Binance 池 1 小时涨跌中位数 %.2f%%（触发线 %.1f%%）\n已停止 V1/V2 新买入和加仓，不卖出任何持仓。"
+                    "🚨 山寨崩盘熔断：%s 1 小时涨跌中位数 %.2f%%（触发线 %.1f%%）\n已停止 V1/V2 新买入和加仓，不卖出任何持仓。"
                             + "\n中位数回到 %.1f%% 以上或满 %d 小时后解除，之后按恢复期逐步恢复。",
-                    median1h, params.risk().altCrashMedian1hPct(), params.risk().altCrashRecoverPct(),
+                    worst, median1h, params.risk().altCrashMedian1hPct(), params.risk().altCrashRecoverPct(),
                     params.risk().altCrashMaxHours()));
         } else if (crash.ended()) {
             notifier.send("alt-crash-end:" + now, String.format(java.util.Locale.ROOT,
-                    "✅ 山寨崩盘熔断解除：1 小时涨跌中位数 %.2f%%，之后按恢复期逐步恢复买入", median1h));
+                    "✅ 山寨崩盘熔断解除：各交易所 1 小时涨跌中位数最差 %.2f%%（%s），之后按恢复期逐步恢复买入", median1h, worst));
         }
         return new MarketEvidence(medianSpread, stable, recovery.confirmedShocks(now), crash.active());
     }
