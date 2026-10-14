@@ -43,7 +43,7 @@ logging:
 
 # 策略参数（人工修改后请同时修改 version）
 trendpilot.strategy:
-  version: v2-2026-10-14-protect
+  version: v3-2026-10-15-review
   fee-rate: 0.001                 # 单边手续费 0.1%
   universe:
     quote-asset: USDT
@@ -65,7 +65,7 @@ trendpilot.strategy:
     min-score: 8
     min-rel1h: 0.8
     min-rel4h: 1.5
-    max-signal-age-minutes: 60
+    max-signal-age-minutes: 30    # 信号取最近整点小时收盘，Discovery 在 :17 跑，正常 17 分钟
     max-spread-bps: 50
     depth-band-pct: 2
     min-depth-usdt: 30000

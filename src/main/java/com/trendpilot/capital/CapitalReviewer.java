@@ -76,8 +76,10 @@ public class CapitalReviewer {
 
         // 4. 等待条件
         List<String> wait = new ArrayList<>();
+        // 追涨和加仓都用本次盘口模拟成交均价比较，不用最多旧 17 分钟的小时收盘价
+        double current = fill.complete() && fill.avgPrice() != null ? fill.avgPrice().doubleValue() : s.price();
         boolean chasing = in.firstSeenPrice() != null
-                && s.price() > in.firstSeenPrice().doubleValue() * (1 + r.chaseThresholdPct() / 100);
+                && current > in.firstSeenPrice().doubleValue() * (1 + r.chaseThresholdPct() / 100);
         double minRr = chasing ? r.chaseMinRr() : r.minRr();
         if (rr < minRr) wait.add((chasing ? "CHASE_" : "") + "RR_LT_" + minRr);
         if (action == Action.BUY && in.lastExitAt() != null
@@ -88,8 +90,12 @@ public class CapitalReviewer {
         if (action == Action.BUY && in.lastExitAt() != null && in.earlySinceExit() < r.reentryMinEarlyObservations()) {
             wait.add("REENTRY_EVIDENCE_" + in.earlySinceExit() + "_OF_" + r.reentryMinEarlyObservations());
         }
+        // 信号本身不能全靠卖出前的涨幅：至少一项命中要完全基于卖出后的 K 线
+        if (action == Action.BUY && in.lastExitAt() != null && !in.postExitHit()) {
+            wait.add("REENTRY_HITS_BEFORE_EXIT");
+        }
         if (action == Action.ADD) {
-            wait.addAll(addConditions(in, costsPct));
+            wait.addAll(addConditions(in, costsPct, current));
         }
         if (!wait.isEmpty()) {
             return result(in, action, Decision.WAIT, wait, gaps, rr, fill);
@@ -98,7 +104,7 @@ public class CapitalReviewer {
     }
 
     /** 加仓不是跌了就补：要重新通过审核、比上一笔低出足够幅度、信号间隔足够、新的 generation。 */
-    private List<String> addConditions(ReviewInput in, double costsPct) {
+    private List<String> addConditions(ReviewInput in, double costsPct, double current) {
         StrategyParams.Add a = params.add();
         List<String> wait = new ArrayList<>();
         var pos = in.position();
@@ -112,7 +118,7 @@ public class CapitalReviewer {
         double drop = Math.max(a.minDropPct(), a.atrMultiple() * in.signal().atr1hPct()) + costsPct;
         if (pos.tranches() >= 2) drop *= a.thirdTrancheMultiplier();
         double maxPrice = pos.lastTranchePrice().doubleValue() * (1 - drop / 100);
-        if (in.signal().price() > maxPrice) wait.add("ADD_DROP_LT_" + Math.round(drop * 100) / 100.0 + "PCT");
+        if (current > maxPrice) wait.add("ADD_DROP_LT_" + Math.round(drop * 100) / 100.0 + "PCT");
         if (Duration.between(pos.lastSignalAt(), in.now()).toMinutes() < a.minSignalGapMinutes()) wait.add("ADD_SIGNAL_GAP");
         if (in.generation().equals(pos.lastGeneration())) wait.add("ADD_SAME_GENERATION");
         if (pos.lossRecovery()) wait.add("LOSS_RECOVERY");

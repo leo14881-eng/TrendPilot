@@ -75,6 +75,25 @@ public class EarlySignalCalculator {
                 ret15m, atr, List.copyOf(hits), hits.size() >= p.minHits(), round2(score));
     }
 
+    /**
+     * 命中条件里窗口完全在 since 之后开始的那些（用于再入场：信号不能全靠卖出前的涨幅）。
+     * REL_1H / MOMENTUM 看最近 2 根小时 K 线，VOLUME 看最近 4 根 15m K 线；其余条件窗口更长，不算。
+     */
+    public static List<String> hitsAfter(SymbolBars bars, EarlySignal s, java.time.Instant since) {
+        if (bars == null || s == null || bars.hourly().size() < 2 || bars.quarter().size() < 4) return List.of();
+        long t = since.toEpochMilli();
+        List<Kline> h = bars.hourly();
+        List<Kline> q = bars.quarter();
+        boolean hourWindow = h.get(h.size() - 2).openTime() >= t;
+        boolean quarterWindow = q.get(q.size() - 4).openTime() >= t;
+        List<String> out = new ArrayList<>();
+        for (String hit : s.hits()) {
+            if ((hit.equals("REL_1H") || hit.equals("MOMENTUM")) && hourWindow) out.add(hit);
+            if (hit.equals("VOLUME") && quarterWindow) out.add(hit);
+        }
+        return out;
+    }
+
     private static boolean enough(SymbolBars b) {
         return b != null && b.hourly().size() >= MIN_HOURLY && b.quarter().size() >= MIN_QUARTER;
     }

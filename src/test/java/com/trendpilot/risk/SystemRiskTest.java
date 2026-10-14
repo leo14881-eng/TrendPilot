@@ -81,5 +81,11 @@ class SystemRiskTest {
         recovery.recordShockIfAny(new RiskState(Regime.RISK_OFF, false, 0, Double.NaN, Double.NaN, Double.NaN,
                 Double.NaN, 0, List.of("BTC_OR_BREADTH_MISSING")), NOW);
         assertThat(recovery.confirmedShocks(NOW.plus(Duration.ofHours(2)))).isEqualTo(1);
+        // 连续三轮急跌算一次冲击；隔开很久的另一次急跌另算
+        recovery.recordShockIfAny(shock, NOW.plus(Duration.ofHours(1)));
+        recovery.recordShockIfAny(shock, NOW.plus(Duration.ofHours(2)));
+        assertThat(recovery.confirmedShocks(NOW.plus(Duration.ofHours(3)))).isEqualTo(1);
+        recovery.recordShockIfAny(shock, NOW.plus(Duration.ofHours(6)));
+        assertThat(recovery.confirmedShocks(NOW.plus(Duration.ofHours(7)))).isEqualTo(2);
     }
 }

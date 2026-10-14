@@ -107,11 +107,14 @@ public class BlindReplay {
                 .param("id", id).param("h", h).query(Integer.class).single() > 0;
     }
 
+    static final List<String> BANDS = List.of("<6", "6-8", "8-9", "≥9");
+
     static String band(double score) {
-        if (score < 8) return "<8";
-        if (score < 10) return "8-10";
-        if (score < 12) return "10-12";
-        return "≥12";
+        // 评分满分 10，分档落在实际出现的区间里，方便按分档决定门槛
+        if (score < 6) return "<6";
+        if (score < 8) return "6-8";
+        if (score < 9) return "8-9";
+        return "≥9";
     }
 
     /** 最近 days 天信号的分档统计（按评分档、持有期排序）。 */
@@ -134,7 +137,7 @@ public class BlindReplay {
                     list.stream().mapToDouble(Row::maxUp).average().orElse(0)));
         });
         out.sort((a, b) -> a.scoreBand().equals(b.scoreBand()) ? Integer.compare(a.horizonH(), b.horizonH())
-                : a.scoreBand().compareTo(b.scoreBand()));
+                : Integer.compare(BANDS.indexOf(a.scoreBand()), BANDS.indexOf(b.scoreBand())));
         return out;
     }
 }

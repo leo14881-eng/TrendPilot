@@ -160,7 +160,9 @@ public class MonitorJob {
                     continue;
                 }
                 infos.put(p, pool.submit(() -> m.directory().get(p.symbol())));
-                books.put(p, pool.submit(() -> m.depth().get(p.symbol(), DiscoveryJob.DEPTH_LIMIT)));
+                // 全数量卖出：买盘总额要覆盖持仓价值的 1.5 倍，否则取 500 档
+                books.put(p, pool.submit(() -> m.depth().getCovering(p.symbol(), DiscoveryJob.DEPTH_SPAN_PCT,
+                        p.costBasis().doubleValue() * 1.5)));
             }
             for (Position p : infos.keySet()) {
                 SymbolInfo info;

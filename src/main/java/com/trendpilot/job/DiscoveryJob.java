@@ -62,7 +62,8 @@ import com.trendpilot.universe.UniverseFilter;
 public class DiscoveryJob {
 
     public static final String JOB = "DISCOVERY";
-    static final int DEPTH_LIMIT = 500;
+    /** 盘口覆盖范围：审核看 ±2% 深度，多取 0.5% 余量。 */
+    static final double DEPTH_SPAN_PCT = 2.5;
     /** 稳定币证据：这些交易对相对 1 美元的偏离。 */
     static final Set<String> STABLE_REFERENCES = Set.of("USDCUSDT", "FDUSDUSDT");
 
@@ -193,7 +194,10 @@ public class DiscoveryJob {
         VenueMarket bybit = markets.get(Venue.BYBIT);
         if (bybit != null) {
             try {
-                pools.add(loadPool(bybit, binanceListed, now));
+                // Bybit 上的持仓即使 Binance 也有这个币，也用 Bybit 自己的信号和盘口审核加仓
+                Set<String> covered = new java.util.HashSet<>(binanceListed);
+                book.positions().stream().filter(p -> p.venue() == Venue.BYBIT).forEach(p -> covered.remove(p.symbol()));
+                pools.add(loadPool(bybit, covered, now));
             } catch (RuntimeException e) {
                 log.warn("Bybit 独立池本轮不可用：{}", e.getMessage());
                 pools.add(new Pool(bybit, List.of(), List.of(), null, null, false, "BYBIT_UNAVAILABLE: " + e.getMessage()));
@@ -209,7 +213,11 @@ public class DiscoveryJob {
                 SymbolBars b = pool.bars().bars().get(t.symbol());
                 if (b != null && !t.symbol().equals(UniverseFilter.BTC)) {
                     EarlySignal s = signals.compute(b, pool.btc());
-                    if (s != null) bySymbol.putIfAbsent(t.symbol(), new Candidate(pool.venue(), s, t));
+                    if (s == null) continue;
+                    Venue held = book.position(t.symbol()).map(Position::venue).orElse(null);
+                    // 有持仓的币用持仓所在交易所的信号（加仓按持仓的盘口审核）
+                    if (held == pool.venue()) bySymbol.put(t.symbol(), new Candidate(pool.venue(), s, t));
+                    else bySymbol.putIfAbsent(t.symbol(), new Candidate(pool.venue(), s, t));
                 }
             }
         }
@@ -290,9 +298,11 @@ public class DiscoveryJob {
                 Position pos = book.position(s.symbol()).orElse(null);
                 Instant lastExit = book.lastExit(s.symbol()).orElse(null);
                 int earlySinceExit = lastExit == null ? 0 : book.earlyObservationsSince(s.symbol(), lastExit);
+                boolean postExitHit = lastExit == null || !EarlySignalCalculator
+                        .hitsAfter(pool.bars().bars().get(s.symbol()), s, lastExit).isEmpty();
                 ReviewInput in = new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
                         books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), pos,
-                        lastExit, researched.get(s.symbol()), earlySinceExit);
+                        lastExit, researched.get(s.symbol()), earlySinceExit, postExitHit);
                 results.add(reviewer.review(in));
                 venueOf.put(s.symbol(), c.venue());
             }
@@ -414,7 +424,7 @@ public class DiscoveryJob {
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             Map<String, Future<OrderBook>> fs = new LinkedHashMap<>();
             candidates.forEach(c -> fs.put(c.signal().symbol(),
-                    pool.submit(() -> markets.get(c.venue()).depth().get(c.signal().symbol(), DEPTH_LIMIT))));
+                    pool.submit(() -> markets.get(c.venue()).depth().getCovering(c.signal().symbol(), DEPTH_SPAN_PCT, 0))));
             for (var e : fs.entrySet()) {
                 try {
                     out.put(e.getKey(), e.getValue().get());

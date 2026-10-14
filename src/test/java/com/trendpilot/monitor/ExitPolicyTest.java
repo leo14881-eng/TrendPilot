@@ -86,6 +86,30 @@ class ExitPolicyTest {
     }
 
     @Test
+    void liquidityHardInvalidNeedsTwoSeparateMonitorRounds() {
+        Position p = bought();
+        OrderBook thin = TestData.book("ABCUSDT", 95, 400, 1000, now);   // 价差 800bps
+        ExitDecision first = policy.evaluate(p, trading, thin, neutral);
+        assertThat(first.sell()).isFalse();
+        assertThat(first.notes()).contains("LIQUIDITY_STRIKE_1");
+        // 1 分钟后的快速确认不算第二轮
+        assertThat(policy.evaluate(p, trading, TestData.book("ABCUSDT", 95, 400, 1000, now.plusSeconds(60)), neutral).sell())
+                .isFalse();
+        ExitDecision second = policy.evaluate(p, trading, TestData.book("ABCUSDT", 95, 400, 1000, now.plusSeconds(300)), neutral);
+        assertThat(second.sell()).isTrue();
+        assertThat(second.reason()).isEqualTo("HARD_INVALID_LIQUIDITY");
+    }
+
+    @Test
+    void liquidityRecoveryResetsStrike() {
+        Position p = bought();
+        policy.evaluate(p, trading, TestData.book("ABCUSDT", 95, 400, 1000, now), neutral);
+        policy.evaluate(p, trading, TestData.book("ABCUSDT", 95, 1, 1000, now.plusSeconds(300)), neutral);
+        assertThat(policy.evaluate(p, trading, TestData.book("ABCUSDT", 95, 400, 1000, now.plusSeconds(600)), neutral).sell())
+                .isFalse();
+    }
+
+    @Test
     void thesisDecayNeedsThreeConsecutiveWeakObservations() {
         Position p = bought();
         ExitDecision d1 = policy.evaluate(p, trading, book(101), weak);

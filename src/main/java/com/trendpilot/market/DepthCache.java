@@ -33,6 +33,25 @@ public class DepthCache {
         cache.keySet().removeIf(k -> k.startsWith(symbol + "/"));
     }
 
+    /** 先取 100 档（Binance 权重 5）；不够覆盖 ±bandPct 或买盘总额不够 minBidNotional 时再取 500 档（权重 25）。 */
+    public OrderBook getCovering(String symbol, double bandPct, double minBidNotional) {
+        OrderBook b = get(symbol, SHALLOW);
+        return covers(b, bandPct, minBidNotional) ? b : get(symbol, DEEP);
+    }
+
+    static final int SHALLOW = 100;
+    static final int DEEP = 500;
+
+    static boolean covers(OrderBook b, double bandPct, double minBidNotional) {
+        if (b.bids().size() < SHALLOW && b.asks().size() < SHALLOW) return true; // 交易所只有这么多档
+        if (!b.usable()) return false;
+        double mid = b.mid().doubleValue();
+        boolean bidSpan = b.bids().size() < SHALLOW || b.bids().getLast().price().doubleValue() <= mid * (1 - bandPct / 100);
+        boolean askSpan = b.asks().size() < SHALLOW || b.asks().getLast().price().doubleValue() >= mid * (1 + bandPct / 100);
+        double bidTotal = b.bids().stream().mapToDouble(l -> l.price().doubleValue() * l.qty().doubleValue()).sum();
+        return bidSpan && askSpan && (b.bids().size() < SHALLOW || bidTotal >= minBidNotional);
+    }
+
     public OrderBook get(String symbol, int limit) {
         String key = symbol + "/" + limit;
         Instant now = Instant.now();

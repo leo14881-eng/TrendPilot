@@ -17,7 +17,8 @@ import com.trendpilot.job.AppState;
  * <ul>
  * <li>一旦本轮不允许新增风险，进入恢复期；之后需要连续 recoveryObservations 轮独立的正常观察（不同 generation）
  *     才允许新增，再连续 recoveryHalfBudgetObservations 轮只用一半额度，之后完全恢复。</li>
- * <li>数据完整时观察到的 BTC 1h 急跌记为已确认的市场冲击，在亏损窗口内计入亏损冻结。数据缺失不算冲击。</li>
+ * <li>数据完整时观察到的 BTC 1h 急跌记为已确认的市场冲击，在亏损窗口内计入亏损冻结。数据缺失不算冲击。
+ *     连续轮次（间隔不超过 90 分钟）的急跌合并为一次冲击。</li>
  * </ul>
  */
 @Component
@@ -27,6 +28,7 @@ public class RiskRecovery {
     static final String STREAK = "risk:normalStreak";
     static final String LAST_GEN = "risk:lastGeneration";
     static final String SHOCKS = "risk:shocks";
+    static final Duration SAME_EVENT = Duration.ofMinutes(90);
 
     private final AppState state;
     private final StrategyParams.Risk p;
@@ -47,7 +49,13 @@ public class RiskRecovery {
         if (!Double.isNaN(raw.btc1hPct()) && raw.btc1hPct() <= p.btcShock1hPct()) {
             List<Instant> times = new ArrayList<>(shockTimes());
             times.removeIf(t -> Duration.between(t, now).toHours() >= p.lossWindowHours());
-            if (!times.contains(now)) times.add(now);
+            // 连续几轮 Discovery 都看到急跌算同一次冲击：上一次在 90 分钟内就只更新时间，不重复计数
+            Instant last = times.isEmpty() ? null : times.getLast();
+            if (last != null && !now.isBefore(last) && Duration.between(last, now).compareTo(SAME_EVENT) <= 0) {
+                times.set(times.size() - 1, now);
+            } else if (!times.contains(now)) {
+                times.add(now);
+            }
             state.put(SHOCKS, times.stream().map(Instant::toString).collect(Collectors.joining(",")));
         }
     }

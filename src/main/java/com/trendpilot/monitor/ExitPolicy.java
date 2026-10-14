@@ -18,7 +18,9 @@ import com.trendpilot.signal.EarlySignal;
 /**
  * 五分钟持仓管理的退出顺序：
  * <ol>
- * <li>硬失效（下架/停止交易/黑名单/严重流动性异常）：允许亏损退出</li>
+ * <li>硬失效（下架/停止交易/黑名单/严重流动性异常）：允许亏损退出。下架、黑名单立即执行；
+ *     流动性异常要在两个独立的 Monitor 轮次（相隔至少 4 分钟、不超过 15 分钟）都成立才执行，
+ *     避免盘口瞬间被抽空就亏损卖出</li>
  * <li>持久利润保护：可退出净利跌破底线但仍 &gt; 0 时卖出；跳空后净利 ≤ 0 只记录，不亏损卖出</li>
  * <li>普通论点失效：至少两项弱条件且连续三个有效观察代次（每出现一根新的小时 K 线才算一次，
  *     5 分钟轮次里同一份 K 线不重复计数）；有净利退出，亏损进入 LOSS_RECOVERY 观察</li>
@@ -32,7 +34,12 @@ public class ExitPolicy {
 
     private static final MathContext MC = MathContext.DECIMAL64;
 
+    static final java.time.Duration STRIKE_MIN_GAP = java.time.Duration.ofMinutes(4);
+    static final java.time.Duration STRIKE_MAX_GAP = java.time.Duration.ofMinutes(15);
+
     private final StrategyParams params;
+    /** 每个持仓第一次观察到流动性异常的时间（进程内；重启后重新计数，偏保守）。 */
+    private final java.util.Map<String, java.time.Instant> liquidityStrike = new java.util.concurrent.ConcurrentHashMap<>();
 
     public ExitPolicy(StrategyParams params) {
         this.params = params;
@@ -58,7 +65,9 @@ public class ExitPolicy {
         else if (book.spreadBps() > e.hardMaxSpreadBps() || !fill.complete()
                 || fill.slippageBps() > e.hardMaxSlippageBps()
                 || book.bidDepthWithin(params.review().depthBandPct()) < e.hardMinBidDepthUsdt()) {
-            hard = "HARD_INVALID_LIQUIDITY";
+            hard = liquidityConfirmed(pos, book.fetchedAt(), notes) ? "HARD_INVALID_LIQUIDITY" : null;
+        } else {
+            liquidityStrike.remove(key(pos));
         }
         if (hard != null) {
             return new ExitDecision(pos.symbol(), true, hard, pos, notes, net, rawRet, fill);
@@ -132,5 +141,23 @@ public class ExitPolicy {
 
     private static BigDecimal pct(BigDecimal v, double pct) {
         return v.multiply(BigDecimal.valueOf(pct / 100), MC);
+    }
+
+    private boolean liquidityConfirmed(Position pos, java.time.Instant now, List<String> notes) {
+        java.time.Instant first = liquidityStrike.get(key(pos));
+        if (first != null && now.isBefore(first.plus(STRIKE_MAX_GAP))) {
+            if (!now.isBefore(first.plus(STRIKE_MIN_GAP))) {
+                liquidityStrike.remove(key(pos));
+                return true;
+            }
+            return false; // 同一轮或快速确认：不算第二次
+        }
+        liquidityStrike.put(key(pos), now);
+        notes.add("LIQUIDITY_STRIKE_1");
+        return false;
+    }
+
+    private static String key(Position p) {
+        return p.venue() + ":" + p.symbol() + ":" + p.openedAt() + ":" + p.costBasis();
     }
 }
