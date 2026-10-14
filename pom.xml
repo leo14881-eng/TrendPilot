@@ -79,7 +79,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>-javaagent:${org.mockito:mockito-core:jar} -Xshare:off</argLine>
+                    <argLine>-javaagent:${org.mockito:mockito-core:jar} -Xshare:off -Djava.io.tmpdir=${project.build.directory}</argLine>
                 </configuration>
             </plugin>
         </plugins>

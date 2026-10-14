@@ -3,6 +3,8 @@ package com.trendpilot.support;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +25,19 @@ import com.trendpilot.market.SymbolBars;
  * 1h K 线由 BarsLoader.toHourly 合成，和生产路径一致。
  */
 public final class TestData {
+
+    /**
+     * 测试数据库目录：放在 target/test-data 下，由 mvn clean 清理。
+     * 不用 @TempDir：Windows 上 Spring 上下文缓存期间 SQLite 文件被占用，JUnit 删不掉会报错。
+     */
+    public static Path dataDir() {
+        try {
+            return Files.createDirectories(Path.of("target", "test-data", java.util.UUID.randomUUID().toString()));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
 
     public static final long Q = BarsLoader.QUARTER_MS;
 

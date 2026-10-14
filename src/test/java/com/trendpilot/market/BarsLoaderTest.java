@@ -10,7 +10,6 @@ import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -28,8 +27,7 @@ import com.trendpilot.support.TestData;
 @ActiveProfiles("test")
 class BarsLoaderTest {
 
-    @TempDir
-    static Path dataDir;
+    static final Path dataDir = TestData.dataDir();
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry r) {

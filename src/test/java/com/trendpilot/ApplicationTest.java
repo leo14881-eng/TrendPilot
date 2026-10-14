@@ -5,21 +5,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.trendpilot.support.TestData;
 import com.trendpilot.notify.Notifier;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @org.springframework.test.context.ActiveProfiles("test")
 class ApplicationTest {
 
-    @TempDir
-    static Path dataDir;
+    static final Path dataDir = TestData.dataDir();
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry r) {

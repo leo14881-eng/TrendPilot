@@ -1,3 +1,7 @@
 trendpilot:
   scheduling:
     enabled: false
+
+logging:
+  file:
+    name: target/test.log
