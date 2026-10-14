@@ -2,7 +2,7 @@
 TrendPilot 自动更新与守护。由计划任务 "TrendPilot-AutoUpdate" 每 10 分钟以普通用户身份运行，不需要管理员。
 
 每次运行：
-  1. 守护：服务没在跑就启动；状态接口连续 3 次（约 30 分钟）无响应就重启。
+  1. 确认守护任务 TrendPilot-Watchdog 已注册（服务停止/卡死的检测与拉起由它每 2 分钟负责）。
   2. 更新：GitHub main 有新提交时，在源码目录拉取并构建（含全部测试），
      成功后平滑停机、换上新 jar 和文件、启动、健康检查；健康检查失败自动回滚到上一版。
      构建失败则继续跑旧版，同一提交只提醒一次。
@@ -27,6 +27,7 @@ $Version = Join-Path $Bin 'version.txt'
 $Failed  = Join-Path $Bin 'failed-commit.txt'
 $Health  = Join-Path $Bin 'health-failures.txt'
 $Denied  = Join-Path $Bin 'stop-denied.txt'
+$Updating = Join-Path $Bin 'updating.flag'
 $LogFile = Join-Path $AppDir 'logs\auto-update.log'
 
 New-Item -ItemType Directory -Force -Path $Bin, (Join-Path $AppDir 'logs') | Out-Null
@@ -129,25 +130,16 @@ $mutex = New-Object System.Threading.Mutex($false, 'Local\TrendPilotAutoUpdate')
 if (-not $mutex.WaitOne(0)) { exit 0 }
 
 try {
-    # ---------- 1. 守护 ----------
-    if (-not (Get-ServicePid)) {
-        Write-Log '服务未运行，启动中'
-        if (-not (Start-TrendPilot)) { Send-Telegram '❗ TrendPilot 启动失败，详见 logs\console.log' }
-    } elseif (-not (Test-Healthy)) {
-        $n = [int]('0' + (Read-Text $Health)) + 1
-        Set-Content $Health "$n"
-        Write-Log "状态接口无响应（连续第 $n 次）"
-        if ($n -ge 3) {
-            if (Stop-TrendPilot) {
-                if (Start-TrendPilot) { Send-Telegram '♻️ TrendPilot 无响应约 30 分钟，已自动重启' }
-                else { Send-Telegram '❗ TrendPilot 无响应，自动重启后仍未恢复，详见 logs\console.log' }
-            } else {
-                Report-StopDenied 'TrendPilot 无响应'
-            }
-        }
-    } else {
-        Set-Content $Health '0'
-        Remove-Item $Denied -ErrorAction SilentlyContinue
+    # ---------- 1. 计划任务齐全（守护任务由 install-autoupdate.ps1 注册，缺了就补装） ----------
+    # 安装脚本有变化（例如服务改为隐藏窗口运行）或守护任务缺失时重新注册
+    $installer = Join-Path $PSScriptRoot 'install-autoupdate.ps1'
+    $hash = (Get-FileHash $installer -Algorithm SHA256).Hash
+    $hashFile = Join-Path $Bin 'installer.sha256'
+    & schtasks.exe /Query /TN 'TrendPilot-Watchdog' 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0 -or $hash -ne (Read-Text $hashFile)) {
+        Set-Content $hashFile $hash
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'install-autoupdate.ps1') | Out-Null
+        Write-Log '已重新注册计划任务（服务、自动更新、守护）'
     }
 
     # ---------- 2. 检查新提交 ----------
@@ -175,7 +167,8 @@ try {
         exit 1
     }
 
-    # ---------- 4. 平滑停机 → 替换 → 启动 → 健康检查 ----------
+    # ---------- 4. 平滑停机 → 替换 → 启动 → 健康检查（期间守护任务不干预） ----------
+    Set-Content $Updating (Get-Date)
     if (-not (Stop-TrendPilot)) {
         Report-StopDenied "新版本 $short 已构建好"
         exit 1
@@ -206,5 +199,6 @@ try {
 } catch {
     Write-Log "自动更新出错：$($_.Exception.Message)"
 } finally {
+    Remove-Item $Updating -ErrorAction SilentlyContinue
     $mutex.ReleaseMutex()
 }

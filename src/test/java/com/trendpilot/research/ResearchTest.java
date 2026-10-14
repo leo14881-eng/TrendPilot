@@ -45,7 +45,7 @@ class ResearchTest {
     void coinGeckoPaginatesExchangeTickersAndParsesMarkets() {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        var fastProps = new ResearchProperties(true, "https://cg.test", "", "https://llama.test", 25, 10, 10, 0, 0, 1000, 0.3, List.of());
+        var fastProps = new ResearchProperties(true, "https://cg.test", "", "https://llama.test", "https://llama-data.test", 25, 10, 10, 0, 0, 1000, 0.3, List.of());
         CoinGeckoClient client = new CoinGeckoClient(fastProps, builder);
         server.expect(requestTo("https://cg.test/exchanges/binance/tickers?page=1")).andRespond(withSuccess("""
                 {"tickers":[{"base":"ABC","target":"USDT","coin_id":"abc"},{"base":"ABC","target":"BTC","coin_id":"abc"}]}""",
@@ -100,7 +100,7 @@ class ResearchTest {
     void rateLimitHonoursRetryAfterThenGivesUpWithoutHammering() {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        var p = new ResearchProperties(true, "https://cg.test", "", "https://llama.test", 25, 10, 10, 12_000, 2_500, 600_000, 0.3, List.of());
+        var p = new ResearchProperties(true, "https://cg.test", "", "https://llama.test", "https://llama-data.test", 25, 10, 10, 12_000, 2_500, 600_000, 0.3, List.of());
         long[] clock = {0};
         List<Long> waits = new java.util.ArrayList<>();
         CoinGeckoClient client = new CoinGeckoClient(p, builder, () -> clock[0], ms -> { waits.add(ms); clock[0] += ms; });
@@ -125,5 +125,33 @@ class ResearchTest {
         assertThat(waits).containsExactly(12_000L, 60_000L, 120_000L, 240_000L);
         assertThat(client.rateLimited()).isTrue();
         server.verify();
+    }
+
+    @Test
+    void unlockScheduleFromDefiLlamaDataset() throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        long now = this.now.getEpochSecond();
+        var entry = mapper.readTree("""
+                {"gecko_id":"abc","circSupply":1000,"maxSupply":2000,
+                 "unlockEvents":[
+                   {"timestamp":%d,"summary":{"totalTokensCliff":500,"totalNewWeeklyRate":7}},
+                   {"timestamp":%d,"summary":{"totalTokensCliff":40}},
+                   {"timestamp":%d,"summary":{"totalTokensCliff":999}}],
+                 "nextEvent":{"date":%d,"toUnlock":40}}""".formatted(now - 86400 * 100, now + 86400 * 3,
+                now + 86400 * 60, now + 86400 * 3));
+        DefiLlamaClient.Unlock u = DefiLlamaClient.parseUnlock(entry, this.now);
+        // 30 天内：一次性 40 + 线性 7/周 × 30/7 = 30 → 70 / 1000 = 7%；60 天后的 999 和历史 500 不算
+        assertThat(u.unlock30dPct()).isEqualTo(7.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(u.nextUnlockPct()).isEqualTo(4.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(DefiLlamaClient.parseUnlock(mapper.readTree("{\"gecko_id\":null,\"circSupply\":5}"), this.now)).isNull();
+
+        research.saveIdentity(Venue.BINANCE, List.of(new CoinGeckoClient.ExchangeTicker("ABC", "USDT", "abc"),
+                new CoinGeckoClient.ExchangeTicker("XYZ", "USDT", "xyz")), this.now);
+        research.saveUnlocks(java.util.Map.of("abc", u), this.now);
+        ResearchRecord abc = research.research(Venue.BINANCE, "ABCUSDT", null, this.now);
+        assertThat(abc.labels()).contains("HEAVY_UNLOCK_30D", "UNLOCK_CLIFF_7D");
+        assertThat(abc.gaps()).doesNotContain("UNLOCK_SCHEDULE_NOT_COVERED");
+        // DefiLlama 没收录的币仍记缺口
+        assertThat(research.research(Venue.BINANCE, "XYZUSDT", null, this.now).gaps()).contains("UNLOCK_SCHEDULE_NOT_COVERED");
     }
 }
