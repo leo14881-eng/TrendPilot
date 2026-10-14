@@ -48,12 +48,15 @@ public class StreamHub {
     private final Map<Venue, VenueStream> streams = new EnumMap<>(Venue.class);
     private final Map<String, Quote> quotes = new ConcurrentHashMap<>();
     private ScheduledExecutorService scheduler;
+    private final RawFrameLog raw;
 
     public StreamHub(StreamProperties props, KlineStore store, Markets markets, ObjectMapper json) {
         this.props = props;
         this.store = store;
         this.markets = markets;
         this.json = json;
+        this.raw = new RawFrameLog(props.debugLog(), java.nio.file.Path.of("logs", "ws-raw.log"));
+        if (raw.enabled()) log.info("WebSocket 原始消息日志已开启：logs/ws-raw.log");
     }
 
     /** 设定某交易所需要采集 K 线的标的（Discovery 每轮按扫描范围调用）。 */
@@ -149,8 +152,14 @@ public class StreamHub {
             return new HashSet<>(symbols.stream().sorted().limit(Math.max(0, max)).toList());
         }
 
+        /** 交易所推来的每一条原始消息都从这里进来（排查时打开 trendpilot.stream.debug-log）。 */
         private void onMessage(String message) {
+            if (RawFrameLog.subscriptionError(message)) {
+                log.warn("{} WebSocket 订阅出错：{}", venue,
+                        message.length() > RawFrameLog.MAX_CHARS ? message.substring(0, RawFrameLog.MAX_CHARS) : message);
+            }
             StreamProtocol.Event e = protocol.parse(message);
+            raw.record(venue.name(), message, e instanceof StreamProtocol.BestQuote);
             if (e instanceof StreamProtocol.ClosedKline k) {
                 store.upsert(venue, k.symbol(), List.of(k.kline()));
             } else if (e instanceof StreamProtocol.BestQuote q) {

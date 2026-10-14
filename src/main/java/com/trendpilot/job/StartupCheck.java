@@ -40,7 +40,8 @@ public class StartupCheck {
                 .map(t -> "\n上次持仓检查在 " + Duration.between(t, now).toMinutes() + " 分钟前，期间系统中断，不补造中断期间的交易。")
                 .orElse("");
         runs.record(JOB, null, now, now, "SUCCESS", "N/A", "capital_authority=" + CapitalAuthority.CURRENT);
-        log.info("TrendPilot 已启动，capital_authority={}", CapitalAuthority.CURRENT);
-        notifier.send("startup:" + now, "TrendPilot 已启动（仅影子模拟）" + gap);
+        String instance = com.trendpilot.InstanceLock.instanceId();
+        log.info("TrendPilot 已启动，capital_authority={}，实例 {}", CapitalAuthority.CURRENT, instance);
+        notifier.send("startup:" + now, "TrendPilot 已启动（仅影子模拟）\n机器：" + instance + gap);
     }
 }

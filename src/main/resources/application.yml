@@ -168,6 +168,7 @@ trendpilot.stream:
   enabled: true
   binance-url: wss://stream.binance.com:9443/stream
   bybit-url: wss://stream.bybit.com/v5/public/spot
+  debug-log: false   # 改成 true（可写在 config/application-local.yml）并重启：原始消息写到 logs/ws-raw.log
 
 # 研究资料（CoinGecko、DefiLlama 公开接口；可在 config/application-local.yml 填 coingecko-api-key）
 trendpilot.research:

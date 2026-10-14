@@ -21,7 +21,7 @@ public class TrendPilotApplication {
         app.run(args);
     }
 
-    /** 首次运行时 data 目录还不存在，SQLite 无法建库，所以在数据源创建前先建目录。 */
+    /** 首次运行时 data 目录还不存在，SQLite 无法建库，所以在数据源创建前先建目录；随后加单实例锁（见 InstanceLock）。 */
     static ApplicationListener<ApplicationEnvironmentPreparedEvent> ensureDataDir() {
         return event -> {
             String dir = event.getEnvironment().getProperty("trendpilot.data-dir", "./data");
@@ -30,6 +30,7 @@ public class TrendPilotApplication {
             } catch (IOException e) {
                 throw new UncheckedIOException("无法创建数据目录 " + dir, e);
             }
+            InstanceLock.acquire(Path.of(dir));
         };
     }
 }
