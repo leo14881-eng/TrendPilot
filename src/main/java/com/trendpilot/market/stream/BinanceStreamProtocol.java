@@ -57,16 +57,27 @@ final class BinanceStreamProtocol implements StreamProtocol {
         List<String> streams = new ArrayList<>();
         klines.forEach(s -> streams.add(s.toLowerCase(Locale.ROOT) + "@kline_15m"));
         books.forEach(s -> streams.add(s.toLowerCase(Locale.ROOT) + "@bookTicker"));
+        // 中文名等非 ASCII 交易对（例如 币安人生USDT）单独一条消息：万一交易所拒绝这个流名，不连累同批的其他币
+        List<String> ascii = streams.stream().filter(BinanceStreamProtocol::isAscii).toList();
         List<String> out = new ArrayList<>();
-        for (int i = 0; i < streams.size(); i += BATCH) {
-            var node = json.createObjectNode();
-            node.put("method", method);
-            var params = node.putArray("params");
-            streams.subList(i, Math.min(streams.size(), i + BATCH)).forEach(params::add);
-            node.put("id", ids.incrementAndGet());
-            out.add(node.toString());
+        for (int i = 0; i < ascii.size(); i += BATCH) {
+            out.add(message(method, ascii.subList(i, Math.min(ascii.size(), i + BATCH))));
         }
+        streams.stream().filter(st -> !isAscii(st)).forEach(st -> out.add(message(method, List.of(st))));
         return out;
+    }
+
+    private String message(String method, List<String> streams) {
+        var node = json.createObjectNode();
+        node.put("method", method);
+        var params = node.putArray("params");
+        streams.forEach(params::add);
+        node.put("id", ids.incrementAndGet());
+        return node.toString();
+    }
+
+    static boolean isAscii(String s) {
+        return s.chars().allMatch(c -> c < 128);
     }
 
     @Override

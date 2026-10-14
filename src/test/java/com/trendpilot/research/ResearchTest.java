@@ -89,6 +89,35 @@ class ResearchTest {
     }
 
     @Test
+    void chineseNamesMultiplierAliasesAndSameCoinAcrossVenues() {
+        research.saveIdentity(Venue.BINANCE, List.of(
+                new CoinGeckoClient.ExchangeTicker("币安人生", "USDT", "binance-life"),
+                new CoinGeckoClient.ExchangeTicker("SATS", "USDT", "sats-ordinals"),
+                new CoinGeckoClient.ExchangeTicker("BEAMX", "USDT", "beam-2")), now);
+        research.saveIdentity(Venue.BYBIT, List.of(
+                new CoinGeckoClient.ExchangeTicker("BEAM", "USDT", "beam-2"),
+                new CoinGeckoClient.ExchangeTicker("XYZ", "USDT", "xyz-bybit")), now);
+
+        // 中文名：原样匹配
+        ResearchRecord life = research.research(Venue.BINANCE, "币安人生USDT", null, now);
+        assertThat(life.identity()).isEqualTo(Identity.VERIFIED);
+        assertThat(life.coinId()).isEqualTo("binance-life");
+        // 交易所叫 1000SATS，CoinGecko 记作 SATS：精确匹配不到时按去掉倍数前缀的别名匹配
+        ResearchRecord sats = research.research(Venue.BINANCE, "1000SATSUSDT", null, now);
+        assertThat(sats.identity()).isEqualTo(Identity.VERIFIED);
+        assertThat(sats.coinId()).isEqualTo("sats-ordinals");
+        assertThat(sats.labels()).contains("IDENTITY_ALIAS_SATSUSDT");
+        assertThat(ResearchService.aliases("1MBABYDOGEUSDT")).containsExactly("BABYDOGEUSDT");
+        assertThat(ResearchService.aliases("1INCHUSDT")).doesNotContain("INCHUSDT");
+        // 身份按交易所分开：Bybit 的 BEAM 与 Binance 的 BEAMX 是同一个币，算重复；XYZ 不是
+        assertThat(research.sameCoinOn(Venue.BYBIT, Venue.BINANCE, java.util.Set.of("BEAMXUSDT", "币安人生USDT")))
+                .containsExactly("BEAMUSDT");
+        // Binance 上 BEAMX 已经下架时不算重复
+        assertThat(research.sameCoinOn(Venue.BYBIT, Venue.BINANCE, java.util.Set.of("币安人生USDT"))).isEmpty();
+        research.saveIdentity(Venue.BYBIT, List.of(), now); // 不影响其他用例：Bybit 恢复成"没有身份资料"
+    }
+
+    @Test
     void categoryExclusionMapsToSymbols() {
         research.saveIdentity(Venue.BYBIT, List.of(new CoinGeckoClient.ExchangeTicker("LLYB", "USDT", "lly-token"),
                 new CoinGeckoClient.ExchangeTicker("OK", "USDT", "ok")), now);

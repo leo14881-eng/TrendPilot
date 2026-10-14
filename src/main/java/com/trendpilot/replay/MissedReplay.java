@@ -111,7 +111,8 @@ public class MissedReplay {
             List<Ticker24h> universe;
             try {
                 universe = universeFilter.select(m.directory().all(), m.tickers().tickers24h(),
-                        m.venue() == Venue.BINANCE ? Set.of() : binanceListed, research.excludedSymbols(m.venue()));
+                        m.venue() == Venue.BINANCE ? Set.of() : withSameCoin(m.venue(), binanceListed),
+                        research.excludedSymbols(m.venue()));
             } catch (RuntimeException e) {
                 log.warn("Missed Replay：{} 行情获取失败：{}", m.venue(), e.getMessage());
                 continue;
@@ -199,5 +200,11 @@ public class MissedReplay {
             buckets.forEach(b -> lines.add(b.line()));
         }
         return Messages.lines(lines);
+    }
+
+    private Set<String> withSameCoin(Venue venue, Set<String> binanceListed) {
+        Set<String> covered = new java.util.HashSet<>(binanceListed);
+        covered.addAll(research.sameCoinOn(venue, Venue.BINANCE, binanceListed));
+        return covered;
     }
 }

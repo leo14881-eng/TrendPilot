@@ -199,6 +199,8 @@ public class DiscoveryJob {
             try {
                 // Bybit 上的持仓即使 Binance 也有这个币，也用 Bybit 自己的信号和盘口审核加仓
                 Set<String> covered = new java.util.HashSet<>(binanceListed);
+                // 名字不同但其实是同一个币（例如 Binance BEAMX 与 Bybit BEAM）也算已覆盖，避免同一个币两边各买一次
+                covered.addAll(research.sameCoinOn(Venue.BYBIT, Venue.BINANCE, binanceListed));
                 book.positions().stream().filter(p -> p.venue() == Venue.BYBIT).forEach(p -> covered.remove(p.symbol()));
                 pools.add(loadPool(bybit, covered, now));
             } catch (RuntimeException e) {

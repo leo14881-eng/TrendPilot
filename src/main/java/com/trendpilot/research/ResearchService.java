@@ -141,7 +141,7 @@ public class ResearchService {
         for (var t : tickers) {
             if (!"USDT".equalsIgnoreCase(t.target()) || t.coinId() == null || t.coinId().isBlank()) continue;
             jdbc.sql("INSERT OR IGNORE INTO coin_identity(venue, symbol, coin_id, updated_at) VALUES (:v, :s, :c, :t)")
-                    .param("v", venue.name()).param("s", t.base().toUpperCase() + "USDT").param("c", t.coinId())
+                    .param("v", venue.name()).param("s", t.base().toUpperCase(java.util.Locale.ROOT) + "USDT").param("c", t.coinId())
                     .param("t", now.toString()).update();
         }
     }
@@ -217,13 +217,26 @@ public class ResearchService {
         if (stale("SELECT MAX(updated_at) FROM coin_identity WHERE venue = '" + venue + "'", IDENTITY_TTL.multipliedBy(3), now)) {
             return ResearchRecord.unavailable(venue, symbol);
         }
-        List<String> ids = jdbc.sql("SELECT coin_id FROM coin_identity WHERE venue = :v AND symbol = :s")
-                .param("v", venue.name()).param("s", symbol).query(String.class).list();
+        List<String> ids = coinIds(venue, symbol);
+        String alias = null;
+        // 交易所和 CoinGecko 对倍数前缀的写法可能不同（1000SATS / SATS、1MBABYDOGE / BABYDOGE）：精确匹配不到时才试别名，
+        // 别名也只认唯一结果，匹配到多个仍按身份歧义处理
+        if (ids.isEmpty()) {
+            for (String a : aliases(symbol)) {
+                List<String> found = coinIds(venue, a);
+                if (!found.isEmpty()) {
+                    ids = found;
+                    alias = a;
+                    break;
+                }
+            }
+        }
         Identity identity = ids.isEmpty() ? Identity.UNVERIFIED : ids.size() > 1 ? Identity.AMBIGUOUS : Identity.VERIFIED;
         String coinId = ids.size() == 1 ? ids.getFirst() : null;
 
         List<String> labels = new ArrayList<>();
         List<String> gaps = new ArrayList<>();
+        if (alias != null) labels.add("IDENTITY_ALIAS_" + alias);
         if (ticker != null) {
             double ch = ticker.priceChangePct();
             if (ch >= 20) labels.add("MOVE_24H_GE_20");
@@ -322,6 +335,46 @@ public class ResearchService {
                     .param("l", String.join(",", r.labels())).param("gaps", String.join(",", r.gaps()))
                     .param("verdict", r.verdict()).param("t", now.toString()).update();
         }
+        return out;
+    }
+
+    private List<String> coinIds(Venue venue, String symbol) {
+        return jdbc.sql("SELECT coin_id FROM coin_identity WHERE venue = :v AND symbol = :s")
+                .param("v", venue.name()).param("s", symbol).query(String.class).list();
+    }
+
+    /** 倍数前缀（交易所为了价格好看把 1000 个币打包成一个单位）。长的在前。 */
+    static final List<String> MULTIPLIER_PREFIXES = List.of("1000000", "10000", "1000", "100", "1M");
+
+    /** 同一个币的其他写法：去掉倍数前缀，或者加上常见倍数前缀。 */
+    static List<String> aliases(String symbol) {
+        if (!symbol.endsWith("USDT")) return List.of();
+        String base = symbol.substring(0, symbol.length() - 4);
+        List<String> out = new ArrayList<>();
+        for (String p : MULTIPLIER_PREFIXES) {
+            if (base.startsWith(p) && base.length() > p.length() && Character.isLetter(base.charAt(p.length()))) {
+                out.add(base.substring(p.length()) + "USDT");
+                return out;
+            }
+        }
+        for (String p : MULTIPLIER_PREFIXES) out.add(p + base + "USDT");
+        return out;
+    }
+
+    /**
+     * other 交易所上与 primary 交易所某个已上市交易对是同一个币（CoinGecko coin id 相同）的交易对，
+     * 例如 Binance 的 BEAMXUSDT 与 Bybit 的 BEAMUSDT。名字不同也算重复，避免同一个币在两个池里各买一次。
+     */
+    public Set<String> sameCoinOn(Venue other, Venue primary, Set<String> primaryListed) {
+        Set<String> out = new java.util.HashSet<>();
+        jdbc.sql("""
+                SELECT o.symbol, p.symbol FROM coin_identity o JOIN coin_identity p ON p.coin_id = o.coin_id
+                WHERE o.venue = :o AND p.venue = :p
+                """).param("o", other.name()).param("p", primary.name())
+                .query((rs, i) -> {
+                    if (primaryListed.contains(rs.getString(2))) out.add(rs.getString(1));
+                    return null;
+                }).list();
         return out;
     }
 

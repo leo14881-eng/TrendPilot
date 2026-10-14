@@ -42,6 +42,17 @@ class StreamProtocolTest {
     }
 
     @Test
+    void binanceNonAsciiSymbolsGetTheirOwnMessageAndParseBack() {
+        List<String> msgs = binance.subscribe(List.of("ABCUSDT", "币安人生USDT", "DEFUSDT"), List.of());
+        assertThat(msgs).hasSize(2);
+        assertThat(msgs.getFirst()).contains("abcusdt@kline_15m", "defusdt@kline_15m").doesNotContain("币安人生");
+        assertThat(msgs.getLast()).contains("币安人生usdt@kline_15m");
+        var k = (StreamProtocol.ClosedKline) binance.parse("""
+                {"stream":"币安人生usdt@kline_15m","data":{"s":"币安人生USDT","k":{"t":1,"T":900000,"o":"1","h":"2","l":"0.5","c":"1.5","q":"100","x":true}}}""");
+        assertThat(k.symbol()).isEqualTo("币安人生USDT");
+    }
+
+    @Test
     void bybitConfirmedKlinesAndTopOfBook() {
         String k = """
                 {"topic":"kline.15.ABCUSDT","data":[{"start":900000,"end":1799999,"interval":"15","open":"1","close":"1.5","high":"2","low":"0.5","volume":"10","turnover":"15","confirm":false}],"ts":1,"type":"snapshot"}""";
