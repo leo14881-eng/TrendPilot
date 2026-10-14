@@ -109,7 +109,9 @@ public final class BtcDailyRules {
         double slip = p.slippageBps() / 10_000;
         LocalDate day = plan.day();
 
+        book.lastRound = null;
         if (book.holding()) {
+            track(book, bar, p);
             double target = takeProfitPrice(plan, book, p);
             if (bar.high() >= target) {
                 double price = Math.max(target, bar.open()) * (1 - slip);
@@ -122,7 +124,16 @@ public final class BtcDailyRules {
                 book.realized += pnl;
                 book.rounds++;
                 if (pnl > 0) book.wins++;
+                book.lastRound = new Book.Round(p.version(), book.openedDay, book.openedAt, bar.closeTime(),
+                        (bar.closeTime() + 1 - book.openedAt) / 60_000, book.buys, book.cost, net, pnl,
+                        pnl / book.cost * 100, book.maePct, book.mfePct, reason, book.openFilters,
+                        new java.util.LinkedHashMap<>(book.stopHits));
                 book.qty = 0;
+                book.openedAt = 0;
+                book.maePct = 0;
+                book.mfePct = 0;
+                book.openFilters = "";
+                book.stopHits.clear();
                 book.cost = 0;
                 book.buys = 0;
                 book.lastBuyPrice = 0;
@@ -140,7 +151,11 @@ public final class BtcDailyRules {
                 double price = Math.min(l.price(), bar.open()) * (1 + slip);
                 double fee = l.usdt() * p.feeRate() / (1 + p.feeRate());
                 double qty = (l.usdt() - fee) / price;
-                if (!book.holding()) book.openedDay = day;
+                if (!book.holding()) {
+                    book.openedDay = day;
+                    book.openedAt = bar.openTime();
+                    book.openFilters = plan.reasons();
+                }
                 book.qty += qty;
                 book.cost += l.usdt();
                 book.buys++;
@@ -150,11 +165,29 @@ public final class BtcDailyRules {
             }
         }
         if (book.holding()) {
+            if (!fills.isEmpty()) track(book, bar, p);
             double floating = book.unrealized(bar.low(), p.feeRate());
             book.roundMaxFloatLoss = Math.min(book.roundMaxFloatLoss, floating);
             book.maxFloatLoss = Math.min(book.maxFloatLoss, floating);
         }
         return fills;
+    }
+
+    /** 持仓期间：相对当时均价的最大不利 / 有利幅度，以及各候选止损是否首次触发（假设止损，不实际卖出）。 */
+    static void track(Book book, Kline bar, BtcDailyProperties p) {
+        double avg = book.avgCost();
+        book.maePct = Math.min(book.maePct, (bar.low() / avg - 1) * 100);
+        book.mfePct = Math.max(book.mfePct, (bar.high() / avg - 1) * 100);
+        for (double c : p.stopCandidatesPct()) {
+            String key = String.valueOf(c);
+            if (book.stopHits.containsKey(key)) continue;
+            double stop = avg * (1 - c / 100);
+            if (bar.low() <= stop) {
+                double price = Math.min(stop, bar.open()) * (1 - p.slippageBps() / 10_000);
+                double pnl = book.qty * price * (1 - p.feeRate()) - book.cost;
+                book.stopHits.put(key, new Book.StopHit(bar.openTime(), round2(price), round2(pnl)));
+            }
+        }
     }
 
     /** 简单平均真实波幅（最近 n 根）。 */

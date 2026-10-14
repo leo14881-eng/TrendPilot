@@ -20,12 +20,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param slippageBps   模拟成交的滑点
  * @param backtestDays  上线回测覆盖的天数
  * @param filters       市场与宏观过滤（只影响是否开新一轮、开多大，不改变不止损）
+ * @param stopCandidatesPct 候选止损（相对均价 %）：实盘不止损，只记录"如果止损会怎样"供分析
  */
 @ConfigurationProperties(prefix = "trendpilot.btc-daily")
 public record BtcDailyProperties(boolean enabled, String version, String symbol, double capUsdt, String capUntil,
                                  List<Double> tranches, double kStrong, double kWeak, double stepAtr,
                                  double tpAtrMult, double tpMinPct, double carryTpPct, double feeRate,
-                                 double slippageBps, int atrDays, int emaDays, int backtestDays, Filters filters) {
+                                 double slippageBps, int atrDays, int emaDays, int backtestDays, Filters filters,
+                                 List<Double> stopCandidatesPct) {
 
     /**
      * 市场与宏观过滤。每条"减半"把新一轮的档位金额乘 0.5，可叠加，最低 minMultiplier；"不开新一轮"直接跳过。
@@ -71,6 +73,7 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
         if (symbol == null || symbol.isBlank()) symbol = "BTCUSDT";
         if (tranches == null || tranches.isEmpty()) tranches = List.of(3000.0, 3000.0, 4000.0);
         if (filters == null) filters = Filters.defaults();
+        if (stopCandidatesPct == null) stopCandidatesPct = List.of(3.0, 5.0, 8.0, 12.0);
         double sum = tranches.stream().mapToDouble(Double::doubleValue).sum();
         if (sum > capUsdt + 1e-6) {
             throw new IllegalArgumentException("BTC 每日短线：档位合计 " + sum + " 超过上限 " + capUsdt);
@@ -81,6 +84,6 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
     public static BtcDailyProperties defaults() {
         return new BtcDailyProperties(true, "btc-v2-2026-10-14", "BTCUSDT", 10_000, "2026-11-14",
                 List.of(3000.0, 3000.0, 4000.0), 0.25, 0.6, 0.5, 0.5, 0.8, 0.3, 0.001, 2, 14, 20, 365,
-                Filters.defaults());
+                Filters.defaults(), List.of(3.0, 5.0, 8.0, 12.0));
     }
 }
