@@ -5,6 +5,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -57,6 +58,42 @@ public abstract class Ledger {
                 .query(String.class).list().stream().mapToDouble(Double::parseDouble).sum();
     }
 
+    /** 当前持仓按最近一次全数量模拟卖出的浮动盈亏合计。 */
+    public double unrealizedPnl() {
+        return jdbc.sql("SELECT mark_net FROM " + table).query(String.class).list().stream()
+                .mapToDouble(Double::parseDouble).sum();
+    }
+
+    /** 浮亏超过成本 pct% 的持仓个数。 */
+    public int underwaterCount(double pct) {
+        return (int) positions().stream().filter(p -> markNet(p.symbol()) <= -p.costBasis().doubleValue() * pct / 100)
+                .count();
+    }
+
+    public double markNet(String symbol) {
+        return jdbc.sql("SELECT mark_net FROM " + table + " WHERE symbol = :s").param("s", symbol)
+                .query(String.class).optional().map(Double::parseDouble).orElse(0.0);
+    }
+
+    /** 本持仓上一次计入论点观察的小时 K 线 openTime；只有出现新的小时 K 线才算新的有效观察。 */
+    public boolean isNewObservation(String symbol, long hourOpenTime) {
+        Long last = jdbc.sql("SELECT last_obs_hour FROM " + table + " WHERE symbol = :s").param("s", symbol)
+                .query((rs, i) -> rs.getObject(1) == null ? null : rs.getLong(1)).optional().orElse(null);
+        return last == null || hourOpenTime > last;
+    }
+
+    public void markObserved(String symbol, long hourOpenTime) {
+        jdbc.sql("UPDATE " + table + " SET last_obs_hour = :h WHERE symbol = :s").param("h", hourOpenTime)
+                .param("s", symbol).update();
+    }
+
+    /** 记录一次权益（已实现 + 浮动），最大回撤按这条曲线算。 */
+    public void recordEquity(Instant now) {
+        jdbc.sql("INSERT INTO equity_curve(book, at, realized, unrealized) VALUES (:b, :t, :r, :u)")
+                .param("b", book).param("t", now.toString()).param("r", realizedPnl()).param("u", unrealizedPnl())
+                .update();
+    }
+
     public int lossExitsSince(Instant since) {
         return (int) jdbc.sql("SELECT pnl_usdt FROM shadow_event WHERE book = :b AND type = 'SELL' AND created_at >= :t")
                 .param("b", book)
@@ -86,10 +123,13 @@ public abstract class Ledger {
                 cur.entryNotional().add(fill.notional()), cur.tranches() + 1, fill.avgPrice(), now, generation,
                 cur.openedAt(), false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false);
         Excursion ex = excursion(cur.symbol());
+        Long lastObs = jdbc.sql("SELECT last_obs_hour FROM " + table + " WHERE symbol = :s").param("s", cur.symbol())
+                .query((rs, i) -> rs.getObject(1) == null ? null : rs.getLong(1)).optional().orElse(null);
         jdbc.sql("DELETE FROM " + table + " WHERE symbol = :s").param("s", cur.symbol()).update();
         insertPosition(p, now);
-        jdbc.sql("UPDATE " + table + " SET max_net = :max, min_net = :min, first_profit_at = :fp WHERE symbol = :s")
-                .param("max", ex.maxNet()).param("min", ex.minNet()).param("fp", ex.firstProfitAt())
+        jdbc.sql("UPDATE " + table + " SET max_net = :max, min_net = :min, first_profit_at = :fp, last_obs_hour = :h"
+                        + " WHERE symbol = :s")
+                .param("max", ex.maxNet()).param("min", ex.minNet()).param("fp", ex.firstProfitAt()).param("h", lastObs)
                 .param("s", cur.symbol()).update();
         event(cur.venue(), cur.symbol(), "ADD", fill, null, book + "_ADD", generation, now);
         return p;
@@ -182,8 +222,16 @@ public abstract class Ledger {
             }
         }
         List<Position> open = positions();
-        double unrealized = jdbc.sql("SELECT mark_net FROM " + table).query(String.class).list().stream()
-                .mapToDouble(Double::parseDouble).sum();
+        double unrealized = unrealizedPnl();
+        // 最大回撤按含浮亏的权益曲线（每次 Monitor 记录一点）；当前时刻也算一点
+        List<Double> equity = new ArrayList<>(jdbc.sql("SELECT realized + unrealized FROM equity_curve WHERE book = :b ORDER BY id")
+                .param("b", book).query(Double.class).list());
+        equity.add(realized + unrealized);
+        double equityPeak = 0;
+        for (double v : equity) {
+            equityPeak = Math.max(equityPeak, v);
+            maxDrawdown = Math.max(maxDrawdown, equityPeak - v);
+        }
         int entries = jdbc.sql("SELECT COUNT(*) FROM shadow_event WHERE book = :b AND type IN ('BUY', 'ADD')")
                 .param("b", book).query(Integer.class).single();
         return new BookStats(book, entries, sells.size(), wins, realized, unrealized,

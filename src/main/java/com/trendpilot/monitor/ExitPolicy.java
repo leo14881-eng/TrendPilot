@@ -20,7 +20,8 @@ import com.trendpilot.signal.EarlySignal;
  * <ol>
  * <li>硬失效（下架/停止交易/黑名单/严重流动性异常）：允许亏损退出</li>
  * <li>持久利润保护：可退出净利跌破底线但仍 &gt; 0 时卖出；跳空后净利 ≤ 0 只记录，不亏损卖出</li>
- * <li>普通论点失效：至少两项弱条件且连续三个观察；有净利退出，亏损进入 LOSS_RECOVERY 观察</li>
+ * <li>普通论点失效：至少两项弱条件且连续三个有效观察代次（每出现一根新的小时 K 线才算一次，
+ *     5 分钟轮次里同一份 K 线不重复计数）；有净利退出，亏损进入 LOSS_RECOVERY 观察</li>
  * <li>原始收益 ≥ 8% 复核：相对强度和加速度仍好就持有，否则退出</li>
  * <li>其他情况继续持有</li>
  * </ol>
@@ -38,6 +39,12 @@ public class ExitPolicy {
     }
 
     public ExitDecision evaluate(Position pos, SymbolInfo info, OrderBook book, EarlySignal signal) {
+        return evaluate(pos, info, book, signal, true);
+    }
+
+    /** @param newObservation 本轮信号是否基于一根新的小时 K 线；否则走弱计数保持不变 */
+    public ExitDecision evaluate(Position pos, SymbolInfo info, OrderBook book, EarlySignal signal,
+                                 boolean newObservation) {
         StrategyParams.Exit e = params.exit();
         Fill fill = ExecutionSimulator.sell(book, pos.qty(), params.feeRate());
         BigDecimal net = fill.netProceeds().subtract(pos.costBasis());
@@ -86,7 +93,7 @@ public class ExitPolicy {
             if (signal.accel() < 0) weak++;
             if (signal.ret15m() < 0) weak++;
         }
-        boolean validObservation = signal != null;
+        boolean validObservation = signal != null && newObservation;
         int streak = !validObservation ? p.weakStreak() : (weak >= e.decayMinWeak() ? p.weakStreak() + 1 : 0);
         // 信号恢复且不再亏损时解除 LOSS_RECOVERY
         boolean recovery = p.lossRecovery() && !(streak == 0 && net.signum() >= 0);

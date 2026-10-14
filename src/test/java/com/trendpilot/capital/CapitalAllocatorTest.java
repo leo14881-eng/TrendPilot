@@ -32,6 +32,9 @@ class CapitalAllocatorTest {
     void realizedLossShrinksPoolButProfitDoesNotExpandIt() {
         assertThat(allocator.available(risk(Regime.NEUTRAL, 1), 0, -500)).isEqualTo(14500);
         assertThat(allocator.available(risk(Regime.NEUTRAL, 1), 0, 800)).isEqualTo(15000);
+        // 浮亏同样缩小额度，浮盈不扩大，已实现盈利不抵消浮亏
+        assertThat(allocator.available(risk(Regime.NEUTRAL, 1), 0, 800, -300)).isEqualTo(14700);
+        assertThat(allocator.available(risk(Regime.NEUTRAL, 1), 0, 0, 400)).isEqualTo(15000);
         assertThat(allocator.available(risk(Regime.NEUTRAL, 0.5), 2000, 0)).isEqualTo(5500);
     }
 

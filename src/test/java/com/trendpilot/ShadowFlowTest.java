@@ -209,18 +209,36 @@ class ShadowFlowTest {
     }
 
     @Test
-    void monitorStopsWhenRequiredBookMissing() {
+    void monitorSkipsOnlyThePositionWithMissingBook() {
         Instant t0 = Instant.parse("2026-10-15T10:17:00Z");
         market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
         market.put("XYZUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("XYZUSDT", 104, 2, 100, t0));
+        market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
         discovery.runOnce(t0);
         assertThat(book.position("XYZUSDT")).isPresent();
+        assertThat(book.position("ABCUSDT")).isPresent();
 
+        // XYZ 拿不到盘口：只跳过 XYZ，ABC 照常管理（涨 3% 启动利润保护）
         market.books.remove("XYZUSDT");
+        market.books.put("ABCUSDT", TestData.book("ABCUSDT", 107.2, 2, 100, t0.plusSeconds(300)));
         markets.invalidate();
         MonitorJob.Report m = monitor.runOnce(t0.plusSeconds(300));
-        assertThat(m.dataStatus()).startsWith("STOPPED_MISSING");
+        assertThat(m.dataStatus()).contains("SKIPPED=[XYZUSDT]");
         assertThat(book.position("XYZUSDT")).isPresent();
+        assertThat(book.position("ABCUSDT").orElseThrow().protectArmed()).isTrue();
+
+        // 下架且无盘口：不卖出、冻结在账上，只记一次 DELISTED_UNPRICED
+        var info = market.symbols.get("XYZUSDT");
+        market.symbols.put("XYZUSDT", new com.trendpilot.market.SymbolInfo(info.symbol(), info.baseAsset(),
+                info.quoteAsset(), false, info.tags()));
+        markets.invalidate();
+        MonitorJob.Report d1 = monitor.runOnce(t0.plusSeconds(600));
+        monitor.runOnce(t0.plusSeconds(900));
+        assertThat(d1.dataStatus()).contains("DELISTED_UNPRICED=[XYZUSDT]");
+        assertThat(book.position("XYZUSDT")).isPresent();
+        Integer notes = jdbc.sql("SELECT COUNT(*) FROM shadow_event WHERE type = 'DELISTED_UNPRICED'")
+                .query(Integer.class).single();
+        assertThat(notes).isEqualTo(1);
     }
 
     @Test

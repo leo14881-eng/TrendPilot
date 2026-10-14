@@ -87,6 +87,8 @@ public class MonitorJob {
             // V1 观察账本与 V2 分开：V2 本轮因缺数据停止时，V1 仍用自己的参考价判断
             List<String> v1Exits = new ArrayList<>();
             lock.run(() -> v1Exits.addAll(v1.manage(gen, now)));
+            book.recordEquity(now);
+            v1.recordEquity(now);
             runs.record(JOB, gen, now, Instant.now(), "SUCCESS", r.dataStatus(),
                     "positions=" + r.positions() + " exits=" + r.exits() + " v1Exits=" + v1Exits);
             return r;
@@ -105,33 +107,51 @@ public class MonitorJob {
             return new Report(gen, 0, List.of(), "N/A");
         }
 
-        // 必需数据：交易状态（缓存的整表）+ 全数量盘口，都取持仓所在交易所的；缺任何一个就停止本轮
+        // 必需数据：交易状态（缓存的整表）+ 全数量盘口，都取持仓所在交易所的。
+        // 按持仓隔离：某个持仓缺数据只跳过它本身，其他持仓照常管理。
         Map<String, Observed> observed = new LinkedHashMap<>();
         List<String> missing = new ArrayList<>();
+        List<String> delisted = new ArrayList<>();
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
-            Map<String, Future<Observed>> fs = new LinkedHashMap<>();
+            Map<Position, Future<SymbolInfo>> infos = new LinkedHashMap<>();
+            Map<Position, Future<OrderBook>> books = new LinkedHashMap<>();
             for (Position p : snapshot) {
                 VenueMarket m = markets.get(p.venue());
                 if (m == null) {
                     missing.add(p.symbol());
                     continue;
                 }
-                fs.put(p.symbol(), pool.submit(() -> new Observed(m.directory().get(p.symbol()),
-                        m.depth().get(p.symbol(), DiscoveryJob.DEPTH_LIMIT))));
+                infos.put(p, pool.submit(() -> m.directory().get(p.symbol())));
+                books.put(p, pool.submit(() -> m.depth().get(p.symbol(), DiscoveryJob.DEPTH_LIMIT)));
             }
-            for (var e : fs.entrySet()) {
+            for (Position p : infos.keySet()) {
+                SymbolInfo info;
                 try {
-                    Observed o = e.getValue().get();
-                    if (o.book() == null || !o.book().usable()) missing.add(e.getKey());
-                    else observed.put(e.getKey(), o);
+                    info = infos.get(p).get();
                 } catch (Exception ex) {
-                    missing.add(e.getKey());
+                    missing.add(p.symbol()); // 交易状态未知：不能判断是否下架，本持仓跳过
+                    continue;
+                }
+                OrderBook ob;
+                try {
+                    ob = books.get(p).get();
+                } catch (Exception ex) {
+                    ob = null;
+                }
+                if (ob != null && ob.usable()) {
+                    observed.put(p.symbol(), new Observed(info, ob)); // 下架但还有盘口：硬失效按盘口卖出
+                } else if (info == null || !info.trading()) {
+                    delisted.add(p.symbol());
+                    markDelistedUnpriced(gen, now, p);
+                } else {
+                    missing.add(p.symbol());
                 }
             }
         }
         if (!missing.isEmpty()) {
-            log.warn("Monitor 本轮停止，必需数据缺失：{}", missing);
-            return new Report(gen, snapshot.size(), List.of(), "STOPPED_MISSING:" + missing);
+            log.warn("Monitor 本轮跳过缺数据的持仓：{}", missing);
+            notifier.send("monitor-skip:" + String.join(",", missing) + ":" + now.truncatedTo(ChronoUnit.HOURS),
+                    "⚠️ Monitor 本轮跳过 " + String.join("、", missing) + "：盘口或交易状态拿不到，其他持仓照常管理");
         }
 
         // 信号指标（可选）：K 线走本地缓存，只有新收盘的 15m K 线才请求；每个交易所用自己的 BTC 基准；
@@ -154,12 +174,31 @@ public class MonitorJob {
                 SymbolBars b = bars == null ? null : bars.bars().get(pos.symbol());
                 SymbolBars btc = bars == null ? null : bars.bars().get(UniverseFilter.BTC);
                 EarlySignal sig = (b == null || btc == null) ? null : signals.compute(b, btc);
-                ExitDecision d = exitPolicy.evaluate(pos, o.info(), o.book(), sig);
+                long hour = sig == null ? -1 : b.hourly().getLast().openTime();
+                boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
+                ExitDecision d = exitPolicy.evaluate(pos, o.info(), o.book(), sig, fresh);
                 apply(gen, now, pos, d, exits);
+                if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);
             }
         });
         boolean complete = barsBy.values().stream().allMatch(BarsLoader.Result::complete);
-        return new Report(gen, snapshot.size(), exits, complete ? "COMPLETE" : "PARTIAL_DATA");
+        String status = complete && missing.isEmpty() && delisted.isEmpty() ? "COMPLETE" : "PARTIAL_DATA";
+        if (!missing.isEmpty()) status += ":SKIPPED=" + missing;
+        if (!delisted.isEmpty()) status += ":DELISTED_UNPRICED=" + delisted;
+        return new Report(gen, snapshot.size(), exits, status);
+    }
+
+    /**
+     * 已下架且拿不到盘口：没有可信的卖出价格，不凭空构造成交。持仓冻结在账上，浮亏按最后一次可信标记保留，
+     * 每个持仓只记录一次 DELISTED_UNPRICED 事件并提醒。
+     */
+    private void markDelistedUnpriced(String gen, Instant now, Position pos) {
+        String flag = "delisted:" + pos.symbol() + ":" + pos.openedAt();
+        if (state.get(flag).isPresent()) return;
+        state.put(flag, now.toString());
+        lock.run(() -> book.note(pos, "DELISTED_UNPRICED", gen, now));
+        notifier.send("note:DELISTED_UNPRICED:" + flag, "⚠️ V2 " + pos.symbol() + Messages.venueTag(pos.venue())
+                + " 已停止交易且拿不到盘口：无法模拟卖出，持仓冻结在账上，浮亏按最后一次标记计入");
     }
 
     private void apply(String gen, Instant now, Position pos, ExitDecision d, List<String> exits) {

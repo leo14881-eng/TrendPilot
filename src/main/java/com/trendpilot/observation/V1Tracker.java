@@ -105,6 +105,10 @@ public class V1Tracker {
         return entered;
     }
 
+    public void recordEquity(Instant now) {
+        book.recordEquity(now);
+    }
+
     /** Monitor 每 5 分钟调用：按退出顺序管理全部 V1 观察。@return 本轮退出的标的 */
     public List<String> manage(String gen, Instant now) {
         List<Position> positions = book.positions();
@@ -133,8 +137,11 @@ public class V1Tracker {
                 if (t == null || t.lastPrice() <= 0) continue; // 价格缺失：本轮不判断
                 SymbolBars b = bars.bars().get(pos.symbol());
                 EarlySignal sig = (b == null || btc == null) ? null : signals.compute(b, btc);
+                long hour = sig == null ? -1 : b.hourly().getLast().openTime();
+                boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
                 ExitDecision d = exitPolicy.evaluate(pos, m.directory().get(pos.symbol()),
-                        OrderBook.reference(pos.symbol(), t.lastPrice(), now), sig);
+                        OrderBook.reference(pos.symbol(), t.lastPrice(), now), sig, fresh);
+                if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);
                 for (String note : d.notes()) {
                     if (!note.equals("PROTECTION_GAPPED")) book.note(pos, note, gen, now);
                 }

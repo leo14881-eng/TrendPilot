@@ -87,6 +87,16 @@ class ExitPolicyTest {
     }
 
     @Test
+    void sameHourlyBarsCountOnlyOnce() {
+        // 5 分钟轮次里同一份小时 K 线：只有第一次算有效观察
+        ExitDecision d1 = policy.evaluate(bought(), trading, book(101), weak, true);
+        ExitDecision d2 = policy.evaluate(d1.updated(), trading, book(101), weak, false);
+        ExitDecision d3 = policy.evaluate(d2.updated(), trading, book(101), weak, false);
+        assertThat(d3.sell()).isFalse();
+        assertThat(d3.updated().weakStreak()).isEqualTo(1);
+    }
+
+    @Test
     void weakAndLosingEntersLossRecoveryInsteadOfSelling() {
         Position p = bought();
         ExitDecision d = null;

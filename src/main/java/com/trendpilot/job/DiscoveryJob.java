@@ -190,7 +190,9 @@ public class DiscoveryJob {
 
         // 3. 系统风险（以 Binance 主池的 BTC 和市场广度为准）
         Ticker24h btcTicker = main.tickers().stream().filter(t -> t.symbol().equals(UniverseFilter.BTC)).findFirst().orElse(null);
-        int lossExits = book.lossExitsSince(now.minus(Duration.ofHours(params.risk().lossWindowHours())));
+        // 亏损冻结：窗口内亏损退出 + 深度浮亏的持仓（亏损仓不卖出，不能让它们在风控里隐身）
+        int lossExits = book.lossExitsSince(now.minus(Duration.ofHours(params.risk().lossWindowHours())))
+                + book.underwaterCount(params.risk().underwaterLossPct());
         RiskState raw = riskAssessor.assess(main.btc(), btcTicker, main.universe(), lossExits,
                 evidence(binance, main, now));
         if (main.btc() != null) recovery.recordShockIfAny(raw, now);
@@ -251,7 +253,8 @@ public class DiscoveryJob {
                     .forEach(c -> book.touchEarlySeen(c.signal().symbol(), c.signal().price(), now));
 
             List<ReviewResult> approved = results.stream().filter(ReviewResult::approved).toList();
-            CapitalAllocator.Allocation alloc = allocator.allocate(approved, risk, book.deployedCost(), book.realizedPnl());
+            CapitalAllocator.Allocation alloc = allocator.allocate(approved, risk, book.deployedCost(), book.realizedPnl(),
+                    book.unrealizedPnl());
             for (ReviewResult r : alloc.funded()) {
                 if (r.action() == Action.BUY) {
                     book.open(venueOf.get(r.symbol()), r.symbol(), r.fill(), gen, now);

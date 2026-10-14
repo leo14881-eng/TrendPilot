@@ -11,7 +11,7 @@ import java.util.Locale;
  * @param unrealizedPnl  当前持仓按最近一次 Monitor 全数量模拟卖出的净盈亏合计
  * @param avgReturnPct   每笔平仓净收益率（相对含费成本）的平均值
  * @param avgHoldHours   平均持有小时数
- * @param maxDrawdown    已实现盈亏累计曲线的最大回撤
+ * @param maxDrawdown    权益曲线（已实现 + 浮动盈亏）的最大回撤
  * @param avgMaxNetPct   已平仓每笔持有期间最大可退出净利（相对成本）的平均值，即平均最大浮盈
  * @param avgMinNetPct   同上的最小值的平均，即平均最大浮亏（负数）
  * @param avgHoursToProfit 曾经转为盈利的平仓，从买入到第一次可退出净利 > 0 的平均小时数

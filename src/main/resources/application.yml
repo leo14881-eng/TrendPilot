@@ -112,6 +112,7 @@ trendpilot.strategy:
     stable-depeg-pct: 0.5             # USDC 等稳定币偏离 1 美元超过 0.5% 视为稳定币异常
     recovery-observations: 2          # 风险解除后，连续 2 轮正常观察才恢复新增
     recovery-half-budget-observations: 2  # 恢复后再 2 轮只用一半额度
+    underwater-loss-pct: 5            # 浮亏超过成本 5% 的持仓，在亏损冻结里按一次亏损计
 
 trendpilot.binance:
   enabled: true

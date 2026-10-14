@@ -63,6 +63,7 @@ public record StrategyParams(
                        double riskOffBreadth, double constructiveBreadth, double strongBreadth,
                        double strongBtc24hPct, int lossExitsFreeze, int lossExitsHalfBudget,
                        int lossWindowHours, double liquidityStressSpreadBps, double stableDepegPct,
-                       int recoveryObservations, int recoveryHalfBudgetObservations) {
+                       int recoveryObservations, int recoveryHalfBudgetObservations,
+                       double underwaterLossPct) {
     }
 }

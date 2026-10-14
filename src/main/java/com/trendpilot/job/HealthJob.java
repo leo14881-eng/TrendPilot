@@ -105,7 +105,20 @@ public class HealthJob {
         lines.add("📈 V1 / V2 对比（累计）");
         lines.add(book.stats().line());
         lines.add(v1.stats().line());
-        lines.add("注：V2 按全数量盘口模拟成交，V1 按参考价 + 手续费记账，V1 收益不能当作可执行收益。");
+        lines.add("注：V2 按全数量盘口模拟成交，V1 按参考价 + 手续费记账，V1 收益不能当作可执行收益；最大回撤含浮亏。");
+        List<String> under = new ArrayList<>();
+        for (var ledger : List.of(book, v1)) {
+            for (Position p : ledger.positions()) {
+                double net = ledger.markNet(p.symbol());
+                if (net >= 0) continue;
+                under.add(String.format(Locale.ROOT, "· %s %s%s 浮亏 %.2f U（%.1f%%），已持有 %.1f 天", ledger.book(),
+                        p.symbol(), Messages.venueTag(p.venue()), net, net / p.costBasis().doubleValue() * 100,
+                        Duration.between(p.openedAt(), now).toHours() / 24.0));
+            }
+        }
+        lines.add("");
+        lines.add(under.isEmpty() ? "被套持仓：无" : "被套持仓（浮亏中，" + under.size() + " 个）");
+        lines.addAll(under);
         List<String> problems = problems(now).stream().map(Problem::text).toList();
         lines.add(problems.isEmpty() ? "任务运行正常" : "异常：" + String.join("；", problems));
         notifier.send("daily:" + now.atZone(zone).toLocalDate(), Messages.lines(lines));

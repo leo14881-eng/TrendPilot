@@ -11,8 +11,8 @@ import com.trendpilot.risk.RiskState;
 
 /**
  * 资金分配：BUY 与 ADD 一起按评分排序争取预算。
- * 可用额度 = min(普通资金池, 硬顶 × 市场状态比例) × 亏损恢复系数 − 已占用成本 + min(0, 已实现盈亏)。
- * 浮盈不扩大资金池，已实现亏损会缩小资金池；资金不足就等待，不为腾资金卖仓。
+ * 可用额度 = min(普通资金池, 硬顶 × 市场状态比例) × 亏损恢复系数 − 已占用成本 + min(0, 已实现盈亏) + min(0, 浮动盈亏)。
+ * 浮盈不扩大资金池，已实现亏损和浮亏都会缩小资金池；资金不足就等待，不为腾资金卖仓。
  */
 @Component
 public class CapitalAllocator {
@@ -27,12 +27,21 @@ public class CapitalAllocator {
     }
 
     public double available(RiskState risk, double deployedCost, double realizedPnl) {
+        return available(risk, deployedCost, realizedPnl, 0);
+    }
+
+    public double available(RiskState risk, double deployedCost, double realizedPnl, double unrealizedPnl) {
         double limit = Math.min(p.normalPool(), p.hardCap() * p.deployPct(risk.regime().name())) * risk.budgetFactor();
-        return limit - deployedCost + Math.min(0, realizedPnl);
+        return limit - deployedCost + Math.min(0, realizedPnl) + Math.min(0, unrealizedPnl);
     }
 
     public Allocation allocate(List<ReviewResult> approved, RiskState risk, double deployedCost, double realizedPnl) {
-        double available = available(risk, deployedCost, realizedPnl);
+        return allocate(approved, risk, deployedCost, realizedPnl, 0);
+    }
+
+    public Allocation allocate(List<ReviewResult> approved, RiskState risk, double deployedCost, double realizedPnl,
+                               double unrealizedPnl) {
+        double available = available(risk, deployedCost, realizedPnl, unrealizedPnl);
         List<ReviewResult> funded = new ArrayList<>();
         List<ReviewResult> unfunded = new ArrayList<>();
         List<ReviewResult> ranked = approved.stream()
