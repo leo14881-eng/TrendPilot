@@ -32,3 +32,14 @@
 
 - `data\trendpilot.db`：SQLite 数据库（账本、运行记录、通知）
 - `logs\`：日志，按天滚动保留 30 天
+
+## 自动更新（一次安装，以后不用手动部署）
+
+在 `D:\SOFT\java\TrendPilot` 运行一次 `scripts\install-autoupdate.cmd`（普通用户权限即可），会注册两个计划任务：
+
+- `TrendPilot-Service`：用普通用户权限运行服务（`scripts\run-service.cmd`），登录时自动启动。
+- `TrendPilot-AutoUpdate`：每 10 分钟运行 `scripts\auto-update.ps1`，做两件事：
+  - **守护**：服务没在跑就启动；连续约 30 分钟没有响应就重启。
+  - **更新**：GitHub `main` 有新提交时，在 `D:\SOFT\tools\trendpilot-src` 拉取并构建（含全部测试），然后平滑停机、换新版、启动并做健康检查；新版起不来就自动回滚到上一版。结果通过 Telegram 通知。
+
+更新过程不会改动 `config\application-local.yml`、`data`、`logs`。日志在 `logs\auto-update.log`，当前版本记录在 `app\version.txt`。
