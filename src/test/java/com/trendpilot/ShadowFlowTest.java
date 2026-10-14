@@ -20,7 +20,11 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import com.trendpilot.job.DiscoveryJob;
 import com.trendpilot.job.MonitorJob;
+import com.trendpilot.market.Kline;
+import com.trendpilot.market.KlineStore;
 import com.trendpilot.market.Markets;
+import com.trendpilot.replay.BlindReplay;
+import com.trendpilot.replay.MissedReplay;
 import com.trendpilot.research.CoinGeckoClient;
 import com.trendpilot.research.ResearchService;
 import com.trendpilot.market.Ticker24h;
@@ -68,6 +72,9 @@ class ShadowFlowTest {
     @Autowired JdbcClient jdbc;
     @Autowired Markets markets;
     @Autowired ResearchService research;
+    @Autowired KlineStore klines;
+    @Autowired BlindReplay blind;
+    @Autowired MissedReplay missed;
 
     @org.junit.jupiter.api.BeforeEach
     void reset() {
@@ -75,7 +82,7 @@ class ShadowFlowTest {
         bybit.reset();
         markets.invalidate();
         for (String t : new String[]{"position", "shadow_event", "early_seen", "notification_outbox", "app_state",
-                "kline_15m", "v1_position"}) {
+                "kline_15m", "v1_position", "replay_outcome", "missed_replay", "signal_log", "decision_log"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
         // 身份资料：测试标的在 CoinGecko 上唯一对应一个项目（资料时间放在测试截面之后，不算过期）
@@ -84,6 +91,43 @@ class ShadowFlowTest {
                 .map(b -> new CoinGeckoClient.ExchangeTicker(b, "USDT", b.toLowerCase() + "-coin")).toList();
         research.saveIdentity(Venue.BINANCE, listed, fresh);
         research.saveIdentity(Venue.BYBIT, listed, fresh);
+    }
+
+    @Test
+    void blindAndMissedReplay() {
+        Instant t0 = Instant.parse("2026-10-14T10:17:00Z");
+        market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
+        for (String s : new String[]{"AAAUSDT", "BBBUSDT", "CCCUSDT"}) {
+            market.put(s, 2.0, TestData.flatQuarters(t0, 10), null);
+        }
+        assertThat(discovery.runOnce(t0).entries()).containsExactly("BUY:ABCUSDT");
+        double price = jdbc.sql("SELECT price FROM signal_log WHERE symbol = 'ABCUSDT'").query(Double.class).single();
+
+        // 信号之后 1 小时的 15m K 线（WebSocket 写入缓存的那种）
+        long q = TestData.Q;
+        long start = Instant.parse("2026-10-14T10:15:00Z").toEpochMilli();
+        List<Kline> after = java.util.stream.IntStream.range(0, 4)
+                .mapToObj(i -> new Kline(start + i * q, price, price * 1.06, price, price * 1.05, 1e5, start + (i + 1) * q - 1))
+                .toList();
+        klines.upsert(Venue.BINANCE, "ABCUSDT", after);
+
+        Instant t1 = t0.plusSeconds(3600);
+        assertThat(blind.run(t1)).isEqualTo(1);       // 只有 1h 到期，4h / 24h 还没到
+        assertThat(blind.run(t1)).isZero();           // 不重复写
+        List<BlindReplay.Bucket> buckets = blind.summary(t1, 7);
+        assertThat(buckets).hasSize(1);
+        assertThat(buckets.getFirst().avgReturnPct()).isCloseTo(5.0, org.assertj.core.data.Offset.offset(0.01));
+        assertThat(blind.run(t0.plusSeconds(4 * 3600 + 60))).isZero(); // 4h 缺 K 线：跳过，不补造
+
+        List<MissedReplay.Missed> rows = missed.run(t1);
+        assertThat(rows).extracting(MissedReplay.Missed::symbol).startsWith("ABCUSDT");
+        assertThat(rows.getFirst().outcome()).isEqualTo("V2_BOUGHT");
+        assertThat(rows).filteredOn(r -> r.symbol().equals("AAAUSDT")).extracting(MissedReplay.Missed::outcome)
+                .containsExactly("NEVER_EARLY");
+        String text = jdbc.sql("SELECT text FROM notification_outbox WHERE event_key LIKE 'missed:%'")
+                .query(String.class).single();
+        assertThat(text).contains("Missed Replay", "ABCUSDT", "V2 已买入", "Blind Replay");
     }
 
     @Test
