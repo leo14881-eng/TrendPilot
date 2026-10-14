@@ -149,9 +149,28 @@ function Report-StopDenied($what) {
     Set-Content $Denied (Get-Date)
 }
 
+# git 输出按 UTF-8 读取。直接用 & git.exe 捕获时，Windows PowerShell 会按系统代码页（中文系统是 GBK）解码，
+# 提交说明里的中文会变成乱码。
+$GitExe = if ($env:TRENDPILOT_GIT) { $env:TRENDPILOT_GIT } else { 'git.exe' }
 function Invoke-Git([string[]]$GitArgs) {
-    $output = & git.exe -C $SrcDir @GitArgs 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { throw "git $($GitArgs -join ' ') 失败：$output" }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $GitExe
+    $quoted = @('-C', $SrcDir, '-c', 'i18n.logOutputEncoding=UTF-8', '-c', 'core.quotePath=false') + $GitArgs | ForEach-Object {
+        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+    }
+    $psi.Arguments = $quoted -join ' '
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $psi.StandardErrorEncoding = New-Object System.Text.UTF8Encoding($false)
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $errTask = $p.StandardError.ReadToEndAsync()
+    $output = $p.StandardOutput.ReadToEnd()
+    $p.WaitForExit()
+    if ($p.ExitCode -ne 0) { throw "git $($GitArgs -join ' ') 失败：$output $($errTask.Result)" }
+    if ($output.Contains([char]0xFFFD)) { Write-Log "git 输出含无法解码的字符：git $($GitArgs -join ' ')" }
     return $output.Trim()
 }
 
