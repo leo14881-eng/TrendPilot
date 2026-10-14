@@ -137,8 +137,8 @@ public class BtcDailyStore {
                        COALESCE(ROUND(MIN(mae_pct), 2), 0) AS worst_mae_pct,
                        COALESCE(ROUND(AVG(mae_pct), 2), 0) AS avg_mae_pct,
                        COALESCE(ROUND(AVG(mfe_pct), 2), 0) AS avg_mfe_pct
-                FROM btc_daily_round""").query().singleRow());
-        List<Map<String, String>> rows = jdbc.sql("SELECT pnl, stop_hits FROM btc_daily_round")
+                FROM btc_daily_round WHERE voided = 0""").query().singleRow());
+        List<Map<String, String>> rows = jdbc.sql("SELECT pnl, stop_hits FROM btc_daily_round WHERE voided = 0")
                 .query((rs, i) -> Map.of("pnl", rs.getString(1), "hits", rs.getString(2))).list();
         double openPnl = open.holding() && lastPrice != null ? open.unrealized(lastPrice, feeRate) : 0;
         List<Map<String, Object>> alts = new ArrayList<>();
@@ -195,7 +195,7 @@ public class BtcDailyStore {
                 SELECT COUNT(*) AS trades, COALESCE(SUM(CASE WHEN side = 'BUY' THEN 1 ELSE 0 END), 0) AS buys,
                        COALESCE(SUM(CASE WHEN side = 'SELL' THEN 1 ELSE 0 END), 0) AS sells,
                        COALESCE(ROUND(SUM(pnl), 2), 0) AS pnl
-                FROM btc_daily_trade WHERE day = :d""").param("d", day.toString()).query().singleRow();
+                FROM btc_daily_trade WHERE day = :d AND voided = 0""").param("d", day.toString()).query().singleRow();
     }
 
     public Optional<String> backtest(String version) {

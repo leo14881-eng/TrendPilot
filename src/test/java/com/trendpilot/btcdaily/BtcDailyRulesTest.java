@@ -203,4 +203,36 @@ class BtcDailyRulesTest {
                 java.util.Map.entry(LocalDate.parse("2024-01-11"), 655.3),
                 java.util.Map.entry(LocalDate.parse("2024-01-12"), -1234.5));
     }
+
+    @Test
+    void gapBelowFirstLevelKeepsHalfAtrBetweenActualFills() {
+        // 复现 2026-10-14：开盘已跌到第 1 档下方、离第 2 档只差约 200，同一根 K 线又碰到第 2 档计划价
+        Book book = new Book();
+        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, P);
+        double l2 = plan.levels().get(1).price(); // 57,800（第 1 档 58,800）
+        List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 10, l2 + 200, l2 + 250, l2 - 10, l2 + 100), P);
+        assertThat(f).singleElement().satisfies(x -> {
+            assertThat(x.level()).isZero();
+            assertThat(x.reason()).contains("按开盘价成交");
+            assertThat(x.posCost()).isEqualTo(3000.0);
+        });
+        // 第 2 档要比实际成交价再低 0.5 × ATR（1,000）
+        double next = book.lastBuyPrice() - 1000;
+        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 11, l2, l2, next + 5, next + 50), P)).isEmpty();
+        f = BtcDailyRules.onBar(plan, book, bar(DAY, 12, next + 50, next + 60, next - 5, next), P);
+        assertThat(f).singleElement().satisfies(x -> {
+            assertThat(x.level()).isEqualTo(1);
+            assertThat(x.posCost()).isEqualTo(6000.0);
+        });
+    }
+
+    @Test
+    void fillMessageShowsPositionAfterThatFill() {
+        Book book = new Book();
+        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, P);
+        List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 57_700, 57_900), P);
+        assertThat(f).hasSize(2);
+        assertThat(BtcDailyMessages.fill(f.get(0), book, plan, null, P)).contains("成本 3,000.00");
+        assertThat(BtcDailyMessages.fill(f.get(1), book, plan, null, P)).contains("成本 6,000.00");
+    }
 }

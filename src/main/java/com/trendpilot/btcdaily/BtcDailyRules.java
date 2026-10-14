@@ -120,7 +120,7 @@ public final class BtcDailyRules {
                 double net = gross - fee;
                 double pnl = net - book.cost;
                 String reason = book.openedDay.isBefore(day) ? "跨天回本止盈" : "当日止盈";
-                fills.add(new Fill(day, bar.openTime(), Fill.Side.SELL, book.buys, price, book.qty, net, fee, pnl, reason));
+                fills.add(new Fill(day, bar.openTime(), Fill.Side.SELL, book.buys, price, book.qty, net, fee, pnl, reason, 0, 0));
                 book.realized += pnl;
                 book.rounds++;
                 if (pnl > 0) book.wins++;
@@ -146,9 +146,16 @@ public final class BtcDailyRules {
         boolean newRoundBlocked = !book.holding() && day.equals(book.lastExitDay);
         if (!newRoundBlocked) {
             for (DailyPlan.Level l : plan.levels()) {
-                if (l.index() != book.buys || bar.low() > l.price()) continue;
+                if (l.index() != book.buys) continue;
+                double trigger = l.price();
+                if (book.holding()) {
+                    // 加仓至少比上一笔实际成交低 stepAtr × ATR：开盘已跳到档位下方时，上一笔会按开盘价成交，
+                    // 若仍用计划价，下一档可能只差几百美元就连续加仓
+                    trigger = Math.min(trigger, round2(book.lastBuyPrice - p.stepAtr() * plan.atr()));
+                }
+                if (bar.low() > trigger) continue;
                 if (book.cost + l.usdt() > p.capUsdt() + 1e-6) break;
-                double price = Math.min(l.price(), bar.open()) * (1 + slip);
+                double price = Math.min(trigger, bar.open()) * (1 + slip);
                 double fee = l.usdt() * p.feeRate() / (1 + p.feeRate());
                 double qty = (l.usdt() - fee) / price;
                 if (!book.holding()) {
@@ -160,8 +167,10 @@ public final class BtcDailyRules {
                 book.cost += l.usdt();
                 book.buys++;
                 book.lastBuyPrice = price;
+                String reason = l.index() == 0 ? "第 1 档买入" : "第 " + (l.index() + 1) + " 档加仓";
+                if (bar.open() < trigger) reason += "（开盘已低于档位，按开盘价成交）";
                 fills.add(new Fill(day, bar.openTime(), Fill.Side.BUY, l.index(), price, qty, l.usdt(), fee, 0,
-                        l.index() == 0 ? "第 1 档买入" : "第 " + (l.index() + 1) + " 档加仓"));
+                        reason, book.qty, book.cost));
             }
         }
         if (book.holding()) {

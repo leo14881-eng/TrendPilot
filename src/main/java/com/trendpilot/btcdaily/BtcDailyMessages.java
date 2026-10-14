@@ -56,8 +56,11 @@ final class BtcDailyMessages {
             sb.append(f.reason()).append('\n');
             sb.append("价格 ").append(money(f.price())).append("｜数量 ").append(qty(f.qty())).append(" BTC｜花费 ")
                     .append(money(f.usdt())).append(" USDT（含手续费 ").append(money(f.fee())).append("）\n");
-            sb.append("持仓：成本 ").append(money(b.cost())).append("，均价 ").append(money(b.avgCost()))
-                    .append("，止盈价 ").append(money(BtcDailyRules.takeProfitPrice(p, b, props)));
+            // 用这笔成交之后的持仓，而不是整批成交处理完之后的账本
+            boolean carried = b.openedDay() != null && b.openedDay().isBefore(p.day());
+            double tpPct = carried ? props.carryTpPct() : p.tpPct();
+            sb.append("持仓：成本 ").append(money(f.posCost())).append("，均价 ").append(money(f.posAvg()))
+                    .append("，止盈价 ").append(money(f.posAvg() * (1 + tpPct / 100)));
         } else {
             double cost = f.usdt() - f.pnl();
             sb.append("卖出（").append(f.reason()).append("）\n");
