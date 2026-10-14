@@ -107,6 +107,10 @@ trendpilot.strategy:
     loss-exits-freeze: 3          # 窗口内亏损退出 ≥3 次：冻结新增
     loss-exits-half-budget: 2     # =2 次：额度减半
     loss-window-hours: 24
+    liquidity-stress-spread-bps: 25   # 成交额前 50 的标的中位价差超过 25 bps 视为流动性紧张
+    stable-depeg-pct: 0.5             # USDC 等稳定币偏离 1 美元超过 0.5% 视为稳定币异常
+    recovery-observations: 2          # 风险解除后，连续 2 轮正常观察才恢复新增
+    recovery-half-budget-observations: 2  # 恢复后再 2 轮只用一半额度
 
 trendpilot.binance:
   enabled: true

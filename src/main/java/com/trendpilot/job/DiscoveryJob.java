@@ -28,6 +28,7 @@ import com.trendpilot.capital.ReviewInput;
 import com.trendpilot.capital.ReviewResult;
 import com.trendpilot.config.StrategyParams;
 import com.trendpilot.market.BarsLoader;
+import com.trendpilot.market.BookTicker;
 import com.trendpilot.market.Markets;
 import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.SymbolBars;
@@ -43,6 +44,8 @@ import com.trendpilot.research.ResearchRecord;
 import com.trendpilot.research.ResearchService;
 import com.trendpilot.portfolio.Position;
 import com.trendpilot.portfolio.ShadowBook;
+import com.trendpilot.risk.MarketEvidence;
+import com.trendpilot.risk.RiskRecovery;
 import com.trendpilot.risk.RiskState;
 import com.trendpilot.risk.SystemRiskAssessor;
 import com.trendpilot.signal.EarlySignal;
@@ -58,6 +61,8 @@ public class DiscoveryJob {
 
     public static final String JOB = "DISCOVERY";
     static final int DEPTH_LIMIT = 500;
+    /** 稳定币证据：这些交易对相对 1 美元的偏离。 */
+    static final Set<String> STABLE_REFERENCES = Set.of("USDCUSDT", "FDUSDUSDT");
 
     private static final Logger log = LoggerFactory.getLogger(DiscoveryJob.class);
 
@@ -68,6 +73,7 @@ public class DiscoveryJob {
     private final UniverseFilter universeFilter;
     private final EarlySignalCalculator signals;
     private final SystemRiskAssessor riskAssessor;
+    private final RiskRecovery recovery;
     private final CapitalReviewer reviewer;
     private final CapitalAllocator allocator;
     private final ShadowBook book;
@@ -78,7 +84,7 @@ public class DiscoveryJob {
     private final JdbcClient jdbc;
     private final StrategyParams params;
 
-    public DiscoveryJob(Markets markets, ResearchService research, StreamHub streams, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, CapitalReviewer reviewer,
+    public DiscoveryJob(Markets markets, ResearchService research, StreamHub streams, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, RiskRecovery recovery, CapitalReviewer reviewer,
                         CapitalAllocator allocator, ShadowBook book, PortfolioLock lock, Notifier notifier,
                         JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params) {
         this.markets = markets;
@@ -88,6 +94,7 @@ public class DiscoveryJob {
         this.universeFilter = universeFilter;
         this.signals = signals;
         this.riskAssessor = riskAssessor;
+        this.recovery = recovery;
         this.reviewer = reviewer;
         this.allocator = allocator;
         this.book = book;
@@ -184,7 +191,10 @@ public class DiscoveryJob {
         // 3. 系统风险（以 Binance 主池的 BTC 和市场广度为准）
         Ticker24h btcTicker = main.tickers().stream().filter(t -> t.symbol().equals(UniverseFilter.BTC)).findFirst().orElse(null);
         int lossExits = book.lossExitsSince(now.minus(Duration.ofHours(params.risk().lossWindowHours())));
-        RiskState risk = riskAssessor.assess(main.btc(), btcTicker, main.universe(), lossExits);
+        RiskState raw = riskAssessor.assess(main.btc(), btcTicker, main.universe(), lossExits,
+                evidence(binance, main, now));
+        if (main.btc() != null) recovery.recordShockIfAny(raw, now);
+        RiskState risk = recovery.apply(raw, gen);
         String prevRegime = state.get("regime").orElse(null);
         if (prevRegime != null && !prevRegime.equals(risk.regime().name())) {
             notifier.send("regime:" + gen, Messages.regime(prevRegime, risk));
@@ -267,6 +277,29 @@ public class DiscoveryJob {
                 .collect(Collectors.joining(" "));
         return new Report(gen, universe, missing, early.size(), candidates.size(), entries, main.complete(), requests,
                 poolNote, v1Entries);
+    }
+
+    /** 流动性（全市场最优价一次请求）与稳定币证据；拿不到时为 NaN，由风险评估保守处理。 */
+    private MarketEvidence evidence(VenueMarket binance, Pool main, Instant now) {
+        double medianSpread = Double.NaN;
+        try {
+            Map<String, BookTicker> quotes = binance.source().bookTickers().stream()
+                    .collect(Collectors.toMap(BookTicker::symbol, q -> q, (a, b) -> a));
+            List<Ticker24h> top = main.universe().stream()
+                    .sorted(Comparator.comparingDouble((Ticker24h t) -> -t.quoteVolume())).limit(50).toList();
+            List<Double> spreads = top.stream()
+                    .map(t -> quotes.get(t.symbol())).filter(q -> q != null && q.bid() > 0 && q.ask() > 0)
+                    .map(BookTicker::spreadBps).sorted().toList();
+            // 至少要覆盖前列标的中的 10 个（池子更小时要求全部覆盖）
+            if (!spreads.isEmpty() && spreads.size() >= Math.min(10, top.size())) {
+                medianSpread = spreads.get(spreads.size() / 2);
+            }
+        } catch (RuntimeException e) {
+            log.warn("流动性证据获取失败：{}", e.getMessage());
+        }
+        double stable = main.tickers().stream().filter(t -> STABLE_REFERENCES.contains(t.symbol()) && t.lastPrice() > 0)
+                .mapToDouble(t -> Math.abs(t.lastPrice() - 1) * 100).max().orElse(Double.NaN);
+        return new MarketEvidence(medianSpread, stable, recovery.confirmedShocks(now));
     }
 
     private Pool loadPool(VenueMarket m, Set<String> alreadyCovered, Instant now) {

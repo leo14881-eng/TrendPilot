@@ -11,8 +11,10 @@ import com.trendpilot.market.SymbolBars;
 import com.trendpilot.market.Ticker24h;
 
 /**
- * 系统风险：BTC 走势 + 市场广度（24h 上涨标的占比）+ 近期亏损退出次数。
- * BTC 数据缺失时保守处理：不允许新增风险，但不凭空制造市场冲击。
+ * 系统风险：BTC 走势 + 市场广度（24h 上涨标的占比）+ 流动性 + 稳定币证据 + 亏损冻结。
+ * 亏损冻结同时计入已发生的亏损退出和已确认的市场冲击。
+ * 关键数据缺失时保守处理：不允许新增风险，但不凭空制造市场冲击。
+ * 风险解除后的分阶段恢复见 {@link RiskRecovery}。
  */
 @Component
 public class SystemRiskAssessor {
@@ -24,6 +26,11 @@ public class SystemRiskAssessor {
     }
 
     public RiskState assess(SymbolBars btc, Ticker24h btcTicker, List<Ticker24h> universe, int recentLossExits) {
+        return assess(btc, btcTicker, universe, recentLossExits, new MarketEvidence(0, 0, 0));
+    }
+
+    public RiskState assess(SymbolBars btc, Ticker24h btcTicker, List<Ticker24h> universe, int recentLossExits,
+                            MarketEvidence evidence) {
         List<String> reasons = new ArrayList<>();
         if (btc == null || btcTicker == null || universe.isEmpty() || btc.hourly().size() < 4 || btc.quarter().size() < 4) {
             reasons.add("BTC_OR_BREADTH_MISSING");
@@ -54,10 +61,25 @@ public class SystemRiskAssessor {
             allowed = false;
             reasons.add("BTC_SHOCK_1H");
         }
-        if (recentLossExits >= p.lossExitsFreeze()) {
+        if (Double.isNaN(evidence.medianSpreadBps())) {
+            allowed = false;
+            reasons.add("LIQUIDITY_EVIDENCE_MISSING");
+        } else if (evidence.medianSpreadBps() > p.liquidityStressSpreadBps()) {
+            allowed = false;
+            reasons.add("LIQUIDITY_STRESS");
+        }
+        if (Double.isNaN(evidence.stableDeviationPct())) {
+            allowed = false;
+            reasons.add("STABLECOIN_EVIDENCE_MISSING");
+        } else if (evidence.stableDeviationPct() > p.stableDepegPct()) {
+            allowed = false;
+            reasons.add("STABLECOIN_DEPEG");
+        }
+        int losses = recentLossExits + evidence.confirmedShocks();
+        if (losses >= p.lossExitsFreeze()) {
             allowed = false;
             reasons.add("LOSS_FREEZE");
-        } else if (recentLossExits >= p.lossExitsHalfBudget()) {
+        } else if (losses >= p.lossExitsHalfBudget()) {
             budgetFactor = 0.5;
             reasons.add("LOSS_HALF_BUDGET");
         }

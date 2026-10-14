@@ -23,4 +23,9 @@ public interface MarketDataSource {
     List<Kline> klines(String symbol, String interval, Long startTime, int limit);
 
     OrderBook depth(String symbol, int limit);
+
+    /** 全市场最优买卖价（一次请求），用于系统风险的流动性证据。不支持时返回空。 */
+    default List<BookTicker> bookTickers() {
+        return List.of();
+    }
 }

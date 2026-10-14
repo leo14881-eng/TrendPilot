@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.trendpilot.market.BookTicker;
 import com.trendpilot.market.Kline;
 import com.trendpilot.market.MarketDataException;
 import com.trendpilot.market.MarketDataSource;
@@ -33,6 +34,14 @@ public class FakeMarket implements MarketDataSource {
 
     public FakeMarket(Venue venue) {
         this.venue = venue;
+        seedStable();
+    }
+
+    /** Binance 默认带一个 USDCUSDT 行情，作为稳定币证据；它不在交易池内。 */
+    private void seedStable() {
+        if (venue != Venue.BINANCE) return;
+        symbols.put("USDCUSDT", new SymbolInfo("USDCUSDT", "USDC", "USDT", true, ""));
+        tickers.put("USDCUSDT", new Ticker24h("USDCUSDT", 1.0, 0, 500_000_000));
     }
 
     @Override
@@ -55,6 +64,7 @@ public class FakeMarket implements MarketDataSource {
         symbolRequests.set(0);
         klineRequests.set(0);
         depthRequests.set(0);
+        seedStable();
     }
 
     @Override
@@ -66,6 +76,13 @@ public class FakeMarket implements MarketDataSource {
     @Override
     public List<Ticker24h> tickers24h() {
         return new ArrayList<>(tickers.values());
+    }
+
+    /** 价差约 5 bps 的最优买卖价。 */
+    @Override
+    public List<BookTicker> bookTickers() {
+        return tickers.values().stream()
+                .map(t -> new BookTicker(t.symbol(), t.lastPrice() * 0.99975, t.lastPrice() * 1.00025)).toList();
     }
 
     @Override

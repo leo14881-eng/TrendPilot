@@ -70,6 +70,16 @@ public class BinanceClient implements MarketDataSource {
     }
 
     @Override
+    public List<BookTicker> bookTickers() {
+        JsonNode root = get(() -> http.get().uri("/api/v3/ticker/bookTicker"), "bookTicker");
+        List<BookTicker> out = new ArrayList<>();
+        for (JsonNode t : root) {
+            out.add(new BookTicker(t.path("symbol").asText(), t.path("bidPrice").asDouble(), t.path("askPrice").asDouble()));
+        }
+        return out;
+    }
+
+    @Override
     public OrderBook depth(String symbol, int limit) {
         JsonNode root = get(() -> http.get().uri("/api/v3/depth?symbol={s}&limit={l}", symbol, limit), "depth " + symbol);
         return new OrderBook(symbol, levels(root.path("bids")), levels(root.path("asks")), Instant.now());
