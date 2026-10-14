@@ -112,21 +112,21 @@ public final class BtcDailyRules {
         book.lastRound = null;
         if (book.holding()) {
             track(book, bar, p);
-            double target = takeProfitPrice(plan, book, p);
-            if (bar.high() >= target) {
-                double price = Math.max(target, bar.open()) * (1 - slip);
+            Exit e = exitSignal(plan, book, bar, p);
+            if (e != null) {
+                double price = e.price() * (1 - slip);
                 double gross = book.qty * price;
                 double fee = gross * p.feeRate();
                 double net = gross - fee;
                 double pnl = net - book.cost;
-                String reason = book.openedDay.isBefore(day) ? "跨天回本止盈" : "当日止盈";
-                fills.add(new Fill(day, bar.openTime(), Fill.Side.SELL, book.buys, price, book.qty, net, fee, pnl, reason, 0, 0));
+                fills.add(new Fill(day, bar.openTime(), Fill.Side.SELL, book.buys, price, book.qty, net, fee, pnl,
+                        e.reason(), 0, 0));
                 book.realized += pnl;
                 book.rounds++;
                 if (pnl > 0) book.wins++;
                 book.lastRound = new Book.Round(p.version(), book.openedDay, book.openedAt, bar.closeTime(),
                         (bar.closeTime() + 1 - book.openedAt) / 60_000, book.buys, book.cost, net, pnl,
-                        pnl / book.cost * 100, book.maePct, book.mfePct, reason, book.openFilters,
+                        pnl / book.cost * 100, book.maePct, book.mfePct, e.reason(), book.openFilters,
                         new java.util.LinkedHashMap<>(book.stopHits));
                 book.qty = 0;
                 book.openedAt = 0;
@@ -137,6 +137,7 @@ public final class BtcDailyRules {
                 book.cost = 0;
                 book.buys = 0;
                 book.lastBuyPrice = 0;
+                book.trailPeak = 0;
                 book.openedDay = null;
                 book.roundMaxFloatLoss = 0;
                 book.lastExitDay = day;
@@ -180,6 +181,42 @@ public final class BtcDailyRules {
             book.maxFloatLoss = Math.min(book.maxFloatLoss, floating);
         }
         return fills;
+    }
+
+    private record Exit(double price, String reason) {
+    }
+
+    /** 按卖出方式判断这根 K 线是否全部卖出（价格未扣滑点）。 */
+    static Exit exitSignal(DailyPlan plan, Book book, Kline bar, BtcDailyProperties p) {
+        BtcDailyProperties.Exit x = p.exit();
+        boolean carried = book.openedDay != null && book.openedDay.isBefore(plan.day());
+        double avg = book.avgCost();
+        switch (x.mode()) {
+            case "STOP" -> {
+                double stop = avg * (1 - x.hardStopPct() / 100);
+                if (bar.low() <= stop) return new Exit(Math.min(stop, bar.open()), "止损 " + fmt(x.hardStopPct()) + "%");
+            }
+            case "TRAIL" -> {
+                if (book.trailPeak > 0) {
+                    double stop = Math.max(book.trailPeak - x.trailAtr() * plan.atr(), avg * (1 + x.trailFloorPct() / 100));
+                    if (bar.low() <= stop) return new Exit(Math.min(stop, bar.open()), "移动止盈");
+                    book.trailPeak = Math.max(book.trailPeak, bar.high());
+                } else {
+                    double arm = avg * (1 + (carried ? x.trailArmPct() : plan.tpPct()) / 100);
+                    if (bar.high() >= arm) book.trailPeak = bar.high(); // 启动跟踪，下一根 K 线起判断回落
+                }
+                return null;
+            }
+            default -> {
+            }
+        }
+        double target = takeProfitPrice(plan, book, p);
+        if (bar.high() >= target) return new Exit(Math.max(target, bar.open()), carried ? "跨天回本止盈" : "当日止盈");
+        return null;
+    }
+
+    private static String fmt(double v) {
+        return v == Math.rint(v) ? String.valueOf((long) v) : String.valueOf(v);
     }
 
     /** 持仓期间：相对当时均价的最大不利 / 有利幅度，以及各候选止损是否首次触发（假设止损，不实际卖出）。 */

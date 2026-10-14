@@ -21,13 +21,45 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param backtestDays  上线回测覆盖的天数
  * @param filters       市场与宏观过滤（只影响是否开新一轮、开多大，不改变不止损）
  * @param stopCandidatesPct 候选止损（相对均价 %）：实盘不止损，只记录"如果止损会怎样"供分析
+ * @param exit          卖出方式（实盘默认 FIXED；回测同时比较 FIXED / TRAIL / STOP）
  */
 @ConfigurationProperties(prefix = "trendpilot.btc-daily")
 public record BtcDailyProperties(boolean enabled, String version, String symbol, double capUsdt, String capUntil,
                                  List<Double> tranches, double kStrong, double kWeak, double stepAtr,
                                  double tpAtrMult, double tpMinPct, double carryTpPct, double feeRate,
                                  double slippageBps, int atrDays, int emaDays, int backtestDays, Filters filters,
-                                 List<Double> stopCandidatesPct) {
+                                 List<Double> stopCandidatesPct, Exit exit) {
+
+    /**
+     * 卖出方式。
+     * <ul>
+     * <li>FIXED：当日仓位涨到均价 + 止盈幅度全卖；跨天仓位涨到均价 + carryTpPct 全卖（现行规则）。</li>
+     * <li>TRAIL：涨到止盈线（跨天仓位用 trailArmPct）后不立即卖，跟踪最高价，回落到
+     *     max(最高价 − trailAtr × ATR, 均价 × (1 + trailFloorPct%)) 时全卖，让盈利多跑。</li>
+     * <li>STOP：现行规则 + 跌到均价 × (1 − hardStopPct%) 全部止损。</li>
+     * </ul>
+     */
+    public record Exit(String mode, double trailArmPct, double trailAtr, double trailFloorPct, double hardStopPct) {
+
+        public Exit {
+            if (mode == null || mode.isBlank()) mode = "FIXED";
+        }
+
+        public static Exit defaults() {
+            return new Exit("FIXED", 0.8, 0.5, 0.3, 8);
+        }
+
+        public Exit withMode(String m) {
+            return new Exit(m, trailArmPct, trailAtr, trailFloorPct, hardStopPct);
+        }
+    }
+
+    /** 同一套参数，换一种卖出方式（回测对比用）。 */
+    public BtcDailyProperties withExitMode(String mode) {
+        return new BtcDailyProperties(enabled, version, symbol, capUsdt, capUntil, tranches, kStrong, kWeak, stepAtr,
+                tpAtrMult, tpMinPct, carryTpPct, feeRate, slippageBps, atrDays, emaDays, backtestDays, filters,
+                stopCandidatesPct, exit.withMode(mode));
+    }
 
     /**
      * 市场与宏观过滤。每条"减半"把新一轮的档位金额乘 0.5，可叠加，最低 minMultiplier；"不开新一轮"直接跳过。
@@ -74,6 +106,7 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
         if (tranches == null || tranches.isEmpty()) tranches = List.of(3000.0, 3000.0, 4000.0);
         if (filters == null) filters = Filters.defaults();
         if (stopCandidatesPct == null) stopCandidatesPct = List.of(3.0, 5.0, 8.0, 12.0);
+        if (exit == null) exit = Exit.defaults();
         double sum = tranches.stream().mapToDouble(Double::doubleValue).sum();
         if (sum > capUsdt + 1e-6) {
             throw new IllegalArgumentException("BTC 每日短线：档位合计 " + sum + " 超过上限 " + capUsdt);
@@ -82,8 +115,8 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
 
     /** 测试和回测用的默认参数（与 application.yml 一致）。 */
     public static BtcDailyProperties defaults() {
-        return new BtcDailyProperties(true, "btc-v2-2026-10-14", "BTCUSDT", 10_000, "2026-11-14",
+        return new BtcDailyProperties(true, "btc-v2.1-2026-10-15", "BTCUSDT", 10_000, "2026-11-14",
                 List.of(3000.0, 3000.0, 4000.0), 0.25, 0.6, 0.5, 0.5, 0.8, 0.3, 0.001, 2, 14, 20, 365,
-                Filters.defaults(), List.of(3.0, 5.0, 8.0, 12.0));
+                Filters.defaults(), List.of(3.0, 5.0, 8.0, 12.0), Exit.defaults());
     }
 }

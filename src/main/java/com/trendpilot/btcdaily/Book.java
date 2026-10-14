@@ -31,6 +31,8 @@ public final class Book {
     String openFilters = "";
     /** 候选止损（% → 首次触发）：实盘不止损，只记录"如果止损会怎样"。 */
     final Map<String, StopHit> stopHits = new LinkedHashMap<>();
+    /** 移动止盈（TRAIL）启动后的最高价；0 表示未启动。 */
+    double trailPeak;
     /** 最近一次卖出完成的一轮（由调用方取走落库）。 */
     Round lastRound;
 

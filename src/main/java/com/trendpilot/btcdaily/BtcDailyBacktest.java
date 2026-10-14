@@ -32,7 +32,9 @@ public final class BtcDailyBacktest {
     public record Result(String version, LocalDate from, LocalDate to, int days, int rounds, double realized,
                          double maxFloatLoss, double maxFloatLossPct, long maxHoldDays, double avgHoldDays,
                          double endUnrealized, double endCost, int tradeDays, double buyHoldPct, int skippedDays,
-                         int reducedDays, List<StopAlt> stopAlts) {
+                         int reducedDays, List<StopAlt> stopAlts, String exitMode, double totalPnl,
+                         double annualPct, double maxDrawdown, double maxDrawdownPct, double winRate, double avgWin,
+                         double avgLoss, double winLossRatio, int losses) {
     }
 
     /** 候选止损对比：触发的轮按假设止损结算，其余按实际结果（期末持仓按浮动盈亏）。 */
@@ -55,6 +57,7 @@ public final class BtcDailyBacktest {
         int days = 0, tradeDays = 0;
         long maxHold = 0, holdSum = 0;
         double firstOpen = 0, lastClose = 0;
+        double equityPeak = 0, maxDd = 0;
         for (Kline bar : bars) {
             LocalDate day = BtcDailyRules.dayOf(bar.openTime());
             if (plan == null || !plan.day().equals(day)) {
@@ -91,6 +94,9 @@ public final class BtcDailyBacktest {
             }
             last = day;
             lastClose = bar.close();
+            // 权益 = 已实现 + 浮动（低点算回撤，收盘算新高）
+            maxDd = Math.max(maxDd, equityPeak - (book.realized() + book.unrealized(bar.low(), p.feeRate())));
+            equityPeak = Math.max(equityPeak, book.realized() + book.unrealized(bar.close(), p.feeRate()));
         }
         double avgHold = book.rounds() == 0 ? 0 : (double) holdSum / book.rounds();
         double endUnrealized = book.unrealized(lastClose, p.feeRate());
@@ -109,10 +115,19 @@ public final class BtcDailyBacktest {
             total += h != null ? h.pnl() : endUnrealized;
             alts.add(new StopAlt(c, hits, round2(total)));
         }
+        double total = book.realized() + endUnrealized;
+        double years = Math.max(days, 1) / 365.0;
+        double[] wins = rounds.stream().mapToDouble(Book.Round::pnl).filter(x -> x > 0).toArray();
+        double[] losses = rounds.stream().mapToDouble(Book.Round::pnl).filter(x -> x <= 0).toArray();
+        double avgWin = java.util.Arrays.stream(wins).average().orElse(0);
+        double avgLoss = java.util.Arrays.stream(losses).average().orElse(0);
         return new Result(p.version(), from, last, days, book.rounds(), round2(book.realized()),
                 round2(book.maxFloatLoss()), round2(book.maxFloatLoss() / p.capUsdt() * 100), maxHold,
                 round2(avgHold), round2(endUnrealized), round2(book.cost()), tradeDays,
-                firstOpen > 0 ? round2((lastClose / firstOpen - 1) * 100) : 0, skipped, reduced, List.copyOf(alts));
+                firstOpen > 0 ? round2((lastClose / firstOpen - 1) * 100) : 0, skipped, reduced, List.copyOf(alts),
+                p.exit().mode(), round2(total), round2(total / p.capUsdt() * 100 / years), round2(maxDd),
+                round2(maxDd / p.capUsdt() * 100), rounds.isEmpty() ? 0 : round2(100.0 * wins.length / rounds.size()),
+                round2(avgWin), round2(avgLoss), avgLoss < 0 ? round2(avgWin / -avgLoss) : 0, losses.length);
     }
 
     private static double round2(double v) {
