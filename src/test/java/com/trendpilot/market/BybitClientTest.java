@@ -52,6 +52,23 @@ class BybitClientTest {
         Ticker24h t = client.tickers24h().getFirst();
         assertThat(t.priceChangePct()).isEqualTo(5.23, org.assertj.core.data.Offset.offset(1e-9));
         assertThat(t.quoteVolume()).isEqualTo(123456.7);
+        // 最优买卖价复用同一次响应，不再请求（MockRestServiceServer 只准备了一次响应）
+        assertThat(client.bookTickers()).hasSize(1);
+        server.verify();
+    }
+
+    @Test
+    void rateLimitPausesAllRequestsAndFailsFastWhenPauseIsLong() {
+        org.springframework.http.HttpHeaders h = new org.springframework.http.HttpHeaders();
+        h.add("Retry-After", "60");
+        server.expect(requestTo(org.hamcrest.Matchers.startsWith("https://api.bybit.com/v5/market/orderbook")))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS).headers(h));
+        long start = System.currentTimeMillis();
+        assertThatThrownBy(() -> client.depth("ABCUSDT", 50)).isInstanceOf(MarketDataException.class)
+                .hasMessageContaining("限流暂停");
+        assertThatThrownBy(() -> client.depth("XYZUSDT", 50)).hasMessageContaining("限流暂停");
+        assertThat(System.currentTimeMillis() - start).isLessThan(10_000);
+        server.verify(); // 暂停期间没有再发请求
     }
 
     @Test

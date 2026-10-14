@@ -328,9 +328,11 @@ class ShadowFlowTest {
         // 参考价涨 3% 后回落到保护底线以下：V1 按参考价保护卖出
         Ticker24h up = market.tickers.get("ABCUSDT");
         market.tickers.put("ABCUSDT", new Ticker24h("ABCUSDT", up.lastPrice() * 1.03, 5, 1e7));
+        markets.invalidate(); // 模拟行情缓存已过期
         monitor.runOnce(t0.plusSeconds(300));
         assertThat(v1Book.position("ABCUSDT").orElseThrow().protectArmed()).isTrue();
         market.tickers.put("ABCUSDT", new Ticker24h("ABCUSDT", up.lastPrice() * 1.007, 5, 1e7));
+        markets.invalidate();
         monitor.runOnce(t0.plusSeconds(600));
         assertThat(v1Book.position("ABCUSDT")).isEmpty();
         assertThat(v1Book.realizedPnl()).isPositive();

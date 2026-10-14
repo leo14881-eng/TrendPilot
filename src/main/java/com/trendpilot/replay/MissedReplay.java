@@ -110,7 +110,7 @@ public class MissedReplay {
         for (VenueMarket m : markets.all()) {
             List<Ticker24h> universe;
             try {
-                universe = universeFilter.select(m.directory().all(), m.source().tickers24h(),
+                universe = universeFilter.select(m.directory().all(), m.tickers().tickers24h(),
                         m.venue() == Venue.BINANCE ? Set.of() : binanceListed, research.excludedSymbols(m.venue()));
             } catch (RuntimeException e) {
                 log.warn("Missed Replay：{} 行情获取失败：{}", m.venue(), e.getMessage());

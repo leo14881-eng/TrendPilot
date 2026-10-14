@@ -109,6 +109,11 @@ public class V1Tracker {
         book.recordEquity(now);
     }
 
+    /** 当前全部 V1 观察仓位。 */
+    public List<Position> positions() {
+        return book.positions();
+    }
+
     /** Monitor 每 5 分钟调用：按退出顺序管理全部 V1 观察。@return 本轮退出的标的 */
     public List<String> manage(String gen, Instant now) {
         List<Position> positions = book.positions();
@@ -122,7 +127,7 @@ public class V1Tracker {
             if (m == null) continue;
             Map<String, Ticker24h> prices;
             try {
-                prices = m.source().tickers24h().stream()
+                prices = m.tickers().tickers24h().stream()
                         .collect(Collectors.toMap(Ticker24h::symbol, Function.identity(), (a, b) -> a));
             } catch (RuntimeException ex) {
                 log.warn("V1 本轮跳过 {}：行情获取失败 {}", e.getKey(), ex.getMessage()); // 不用旧价格做决定

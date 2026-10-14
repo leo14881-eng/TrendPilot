@@ -45,7 +45,6 @@ public class ResearchService {
     private final JdbcClient jdbc;
     private final ResearchProperties props;
     private int rotationCursor;
-    private final Map<String, Backoff> backoff = new java.util.concurrent.ConcurrentHashMap<>();
 
     public ResearchService(CoinGeckoClient coinGecko, DefiLlamaClient defiLlama, JdbcClient jdbc,
                            ResearchProperties props) {
@@ -90,18 +89,20 @@ public class ResearchService {
 
     private void attempt(String item, boolean coinGeckoItem, boolean[] limited, Instant now, List<String> done,
                          Runnable work) {
-        Backoff b = backoff.get(item);
+        Backoff b = jdbc.sql("SELECT failures, retry_at FROM research_backoff WHERE item = :i").param("i", item)
+                .query((rs, n) -> new Backoff(rs.getInt(1), Instant.parse(rs.getString(2)))).optional().orElse(null);
         if (b != null && now.isBefore(b.retryAt())) return;
         if (coinGeckoItem && limited[0]) return;
         try {
             work.run();
-            backoff.remove(item);
+            jdbc.sql("DELETE FROM research_backoff WHERE item = :i").param("i", item).update();
             done.add(item);
         } catch (RuntimeException e) {
             if (e instanceof CoinGeckoClient.RateLimited) limited[0] = true;
             int failures = b == null ? 1 : b.failures() + 1;
             Duration wait = Duration.ofHours(Math.min(24, 1L << Math.min(failures, 5)));
-            backoff.put(item, new Backoff(failures, now.plus(wait)));
+            jdbc.sql("INSERT OR REPLACE INTO research_backoff(item, failures, retry_at) VALUES (:i, :f, :r)")
+                    .param("i", item).param("f", failures).param("r", now.plus(wait).toString()).update();
             log.warn("研究资料 {} 刷新失败（连续第 {} 次，{} 小时后再试，期间记为研究缺口）：{}", item, failures,
                     wait.toHours(), e.getMessage());
         }
@@ -114,7 +115,8 @@ public class ResearchService {
     /** 当前处在失败退避中的资料项（供状态接口展示）。 */
     public Map<String, Instant> backoffs() {
         Map<String, Instant> out = new LinkedHashMap<>();
-        backoff.forEach((k, v) -> out.put(k, v.retryAt()));
+        jdbc.sql("SELECT item, retry_at FROM research_backoff ORDER BY item")
+                .query((rs, n) -> out.put(rs.getString(1), Instant.parse(rs.getString(2)))).list();
         return out;
     }
 

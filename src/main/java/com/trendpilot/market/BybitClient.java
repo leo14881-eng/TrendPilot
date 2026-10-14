@@ -27,10 +27,12 @@ public class BybitClient implements MarketDataSource {
 
     private final RestClient http;
     private final PublicRest rest;
+    private JsonNode tickersBody;
+    private long tickersAt;
 
     public BybitClient(BybitProperties props, RestClient.Builder builder) {
         this.http = builder.baseUrl(props.baseUrl()).build();
-        this.rest = new PublicRest("Bybit", props.maxConcurrency());
+        this.rest = new PublicRest("Bybit", props.maxConcurrency(), 100);
     }
 
     @Override
@@ -58,7 +60,7 @@ public class BybitClient implements MarketDataSource {
 
     @Override
     public List<Ticker24h> tickers24h() {
-        JsonNode result = call(() -> http.get().uri("/v5/market/tickers?category=spot"), "tickers");
+        JsonNode result = spotTickers();
         List<Ticker24h> out = new ArrayList<>();
         for (JsonNode t : result.path("list")) {
             out.add(new Ticker24h(t.path("symbol").asText(), t.path("lastPrice").asDouble(),
@@ -70,12 +72,22 @@ public class BybitClient implements MarketDataSource {
     /** 全市场最优买卖价（与 24h 行情同一个接口，一次请求）。 */
     @Override
     public List<BookTicker> bookTickers() {
-        JsonNode result = call(() -> http.get().uri("/v5/market/tickers?category=spot"), "bookTickers");
+        JsonNode result = spotTickers();
         List<BookTicker> out = new ArrayList<>();
         for (JsonNode t : result.path("list")) {
             out.add(new BookTicker(t.path("symbol").asText(), t.path("bid1Price").asDouble(), t.path("ask1Price").asDouble()));
         }
         return out;
+    }
+
+    /** 24h 行情和最优买卖价来自同一个接口：20 秒内复用同一次响应，只请求一次。 */
+    private synchronized JsonNode spotTickers() {
+        long now = System.currentTimeMillis();
+        if (tickersBody == null || now - tickersAt > 20_000) {
+            tickersBody = call(() -> http.get().uri("/v5/market/tickers?category=spot"), "tickers");
+            tickersAt = now;
+        }
+        return tickersBody;
     }
 
     /** Bybit K 线按时间倒序返回、没有收盘时间字段；这里转成升序并补上收盘时间。 */

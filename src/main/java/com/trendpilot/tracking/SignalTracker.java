@@ -182,6 +182,12 @@ public class SignalTracker {
         }
     }
 
+    /** 仍在跟踪窗口内的信号标的，需要继续订阅 K 线，避免跟踪数据出现缺口。 */
+    public java.util.Set<String> trackingSymbols(com.trendpilot.market.Venue venue) {
+        return new java.util.HashSet<>(jdbc.sql("SELECT DISTINCT symbol FROM signal_episode WHERE status = 'TRACKING' AND venue = :v")
+                .param("v", venue.name()).query(String.class).list());
+    }
+
     @Scheduled(cron = "0 25 * * * *", zone = "${trendpilot.zone}")
     public void scheduled() {
         Instant started = Instant.now().truncatedTo(ChronoUnit.SECONDS);

@@ -202,7 +202,7 @@ public class DiscoveryJob {
         Map<Venue, Map<String, BookTicker>> quotes = new EnumMap<>(Venue.class);
         for (Pool pool : pools) {
             try {
-                quotes.put(pool.venue(), pool.market().source().bookTickers().stream()
+                quotes.put(pool.venue(), pool.market().tickers().bookTickers().stream()
                         .collect(Collectors.toMap(BookTicker::symbol, q -> q, (a, b) -> a)));
             } catch (RuntimeException e) {
                 log.warn("{} 最优价获取失败：{}", pool.venue(), e.getMessage());
@@ -355,14 +355,23 @@ public class DiscoveryJob {
     }
 
     private Pool loadPool(VenueMarket m, Set<String> alreadyCovered, Instant now) {
-        List<Ticker24h> tickers = m.source().tickers24h();
+        List<Ticker24h> tickers = m.tickers().tickers24h();
         List<Ticker24h> universe = universeFilter.select(m.directory().all(), tickers, alreadyCovered,
                 research.excludedSymbols(m.venue()));
         List<String> names = new ArrayList<>(universe.stream().map(Ticker24h::symbol).toList());
         if (!names.contains(UniverseFilter.BTC)) {
             names.add(UniverseFilter.BTC);
         }
-        streams.watchKlines(m.venue(), Set.copyOf(names)); // 之后的 15m K 线由 WebSocket 写入缓存
+        // 之后的 15m K 线由 WebSocket 写入缓存：标的全集 + 持仓（V1/V2）+ 跟踪中的信号，掉出全集后也不用 REST 补
+        Set<String> watched = new java.util.HashSet<>(names);
+        book.positions().stream().filter(p -> p.venue() == m.venue()).forEach(p -> watched.add(p.symbol()));
+        v1.positions().stream().filter(p -> p.venue() == m.venue()).forEach(p -> watched.add(p.symbol()));
+        try {
+            watched.addAll(tracker.trackingSymbols(m.venue()));
+        } catch (RuntimeException e) {
+            log.warn("跟踪标的读取失败：{}", e.getMessage());
+        }
+        streams.watchKlines(m.venue(), watched);
         BarsLoader.Result bars = m.bars().load(names, now);
         SymbolBars btc = bars.bars().get(UniverseFilter.BTC);
         double missingRatio = bars.missing().size() / (double) names.size();

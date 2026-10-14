@@ -25,7 +25,7 @@ public class BinanceClient implements MarketDataSource {
 
     public BinanceClient(BinanceProperties props, RestClient.Builder builder) {
         this.http = builder.baseUrl(props.baseUrl()).build();
-        this.rest = new PublicRest("Binance", props.maxConcurrency());
+        this.rest = new PublicRest("Binance", props.maxConcurrency(), 50);
     }
 
     @Override

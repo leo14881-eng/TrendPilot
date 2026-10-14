@@ -10,11 +10,16 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/** 研究资料刷新：启动后一次，之后每小时 :45 检查是否到期（越南时间）。资料拉取在后台，不占用 Discovery。 */
+/**
+ * 研究资料刷新：启动 5 分钟后检查一次（避开启动时的行情初始化），之后每小时 :45 检查是否到期（越南时间）。
+ * 资料存在 SQLite，未过期不请求；拉取在后台，不占用 Discovery。
+ */
 @Component
 public class ResearchJob {
 
     private static final Logger log = LoggerFactory.getLogger(ResearchJob.class);
+
+    static final long STARTUP_DELAY_MS = 5 * 60_000L;
 
     private final ResearchService research;
     private final ResearchProperties props;
@@ -27,7 +32,15 @@ public class ResearchJob {
     @EventListener(ApplicationReadyEvent.class)
     public void onStartup() {
         if (!props.enabled()) return;
-        Thread.ofVirtual().name("research-refresh").start(this::refresh);
+        Thread.ofVirtual().name("research-refresh").start(() -> {
+            try {
+                Thread.sleep(STARTUP_DELAY_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            refresh();
+        });
     }
 
     @Scheduled(cron = "0 45 * * * *", zone = "${trendpilot.zone}")

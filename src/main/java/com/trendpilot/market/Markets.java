@@ -21,7 +21,7 @@ public class Markets {
                 throw new IllegalStateException("重复的行情来源：" + s.venue());
             }
             byVenue.put(s.venue(), new VenueMarket(s.venue(), s, new SymbolDirectory(s), new DepthCache(s),
-                    new BarsLoader(s, store)));
+                    new BarsLoader(s, store), new TickerCache(s)));
         }
     }
 
