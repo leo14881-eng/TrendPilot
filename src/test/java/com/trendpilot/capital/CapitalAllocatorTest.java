@@ -24,8 +24,10 @@ class CapitalAllocatorTest {
     void availableFollowsRegimeAndNormalPool() {
         assertThat(allocator.available(risk(Regime.RISK_OFF, 1), 0, 0)).isEqualTo(12000);
         assertThat(allocator.available(risk(Regime.NEUTRAL, 1), 0, 0)).isEqualTo(15000);
-        // STRONG 95% = 19000，但普通资金池只有 17000
-        assertThat(allocator.available(risk(Regime.STRONG, 1), 0, 0)).isEqualTo(17000);
+        // CONSTRUCTIVE 85% = 17000，正好是普通资金池
+        assertThat(allocator.available(risk(Regime.CONSTRUCTIVE, 1), 0, 0)).isEqualTo(17000);
+        // STRONG 可动用战略储备：95% = 19000，在 17000 + 3000 以内
+        assertThat(allocator.available(risk(Regime.STRONG, 1), 0, 0)).isEqualTo(19000);
     }
 
     @Test
