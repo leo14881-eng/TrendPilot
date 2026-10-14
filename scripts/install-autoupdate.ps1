@@ -10,7 +10,10 @@ $AppDir = Split-Path -Parent $PSScriptRoot
 $user = "$env:USERDOMAIN\$env:USERNAME"
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 
-$svcAction = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$AppDir\scripts\run-service.cmd`"" -WorkingDirectory $AppDir
+# 用隐藏窗口的 PowerShell 启动，桌面上不出现命令行窗口，避免被误关
+$svcAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"& '$AppDir\scripts\run-service.cmd'`"" `
+    -WorkingDirectory $AppDir
 $svcSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 $svcTrigger = New-ScheduledTaskTrigger -AtLogOn -User $user

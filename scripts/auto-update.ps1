@@ -131,10 +131,15 @@ if (-not $mutex.WaitOne(0)) { exit 0 }
 
 try {
     # ---------- 1. 计划任务齐全（守护任务由 install-autoupdate.ps1 注册，缺了就补装） ----------
+    # 安装脚本有变化（例如服务改为隐藏窗口运行）或守护任务缺失时重新注册
+    $installer = Join-Path $PSScriptRoot 'install-autoupdate.ps1'
+    $hash = (Get-FileHash $installer -Algorithm SHA256).Hash
+    $hashFile = Join-Path $Bin 'installer.sha256'
     & schtasks.exe /Query /TN 'TrendPilot-Watchdog' 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    if ($LASTEXITCODE -ne 0 -or $hash -ne (Read-Text $hashFile)) {
+        Set-Content $hashFile $hash
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'install-autoupdate.ps1') | Out-Null
-        Write-Log '已补装计划任务 TrendPilot-Watchdog'
+        Write-Log '已重新注册计划任务（服务、自动更新、守护）'
     }
 
     # ---------- 2. 检查新提交 ----------
