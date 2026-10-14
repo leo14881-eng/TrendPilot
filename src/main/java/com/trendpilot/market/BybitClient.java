@@ -67,6 +67,17 @@ public class BybitClient implements MarketDataSource {
         return out;
     }
 
+    /** 全市场最优买卖价（与 24h 行情同一个接口，一次请求）。 */
+    @Override
+    public List<BookTicker> bookTickers() {
+        JsonNode result = call(() -> http.get().uri("/v5/market/tickers?category=spot"), "bookTickers");
+        List<BookTicker> out = new ArrayList<>();
+        for (JsonNode t : result.path("list")) {
+            out.add(new BookTicker(t.path("symbol").asText(), t.path("bid1Price").asDouble(), t.path("ask1Price").asDouble()));
+        }
+        return out;
+    }
+
     /** Bybit K 线按时间倒序返回、没有收盘时间字段；这里转成升序并补上收盘时间。 */
     @Override
     public List<Kline> klines(String symbol, String interval, Long startTime, int limit) {

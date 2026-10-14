@@ -30,6 +30,7 @@ import com.trendpilot.notify.Notifier;
 import com.trendpilot.portfolio.ObservationBook;
 import com.trendpilot.portfolio.ShadowBook;
 import com.trendpilot.research.ResearchService;
+import com.trendpilot.tracking.TrackingReport;
 import com.trendpilot.universe.UniverseFilter;
 
 /**
@@ -50,11 +51,11 @@ public class MissedReplay {
     private final Notifier notifier;
     private final JobRuns runs;
     private final BlindReplay blind;
-    private final SignalPath paths;
+    private final TrackingReport tracking;
     private final ZoneId zone;
 
     public MissedReplay(Markets markets, UniverseFilter universeFilter, ResearchService research, JdbcClient jdbc,
-                        Notifier notifier, JobRuns runs, BlindReplay blind, SignalPath paths, @Value("${trendpilot.zone}") String zone) {
+                        Notifier notifier, JobRuns runs, BlindReplay blind, TrackingReport tracking, @Value("${trendpilot.zone}") String zone) {
         this.markets = markets;
         this.universeFilter = universeFilter;
         this.research = research;
@@ -62,7 +63,7 @@ public class MissedReplay {
         this.notifier = notifier;
         this.runs = runs;
         this.blind = blind;
-        this.paths = paths;
+        this.tracking = tracking;
         this.zone = ZoneId.of(zone);
     }
 
@@ -190,8 +191,7 @@ public class MissedReplay {
         if (rows.isEmpty()) lines.add("行情获取失败，今天没有复盘结果");
         rows.forEach(r -> lines.add(r.line()));
         lines.add("");
-        lines.add("⏱ EARLY 之后的走势（近 7 天）");
-        lines.addAll(paths.stats(now, 7).lines());
+        lines.addAll(tracking.lines(tracking.summary(now), false));
         List<BlindReplay.Bucket> buckets = blind.summary(now, 7);
         if (!buckets.isEmpty()) {
             lines.add("");

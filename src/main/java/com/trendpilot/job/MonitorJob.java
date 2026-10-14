@@ -33,6 +33,7 @@ import com.trendpilot.portfolio.ShadowBook;
 import com.trendpilot.signal.EarlySignal;
 import com.trendpilot.signal.EarlySignalCalculator;
 import com.trendpilot.universe.UniverseFilter;
+import com.trendpilot.variant.ParallelExits;
 
 /**
  * Monitor（每 5 分钟）：对每个持仓拉新鲜盘口和 K 线，按退出顺序判定。
@@ -54,10 +55,12 @@ public class MonitorJob {
     private final Notifier notifier;
     private final JobRuns runs;
     private final AppState state;
+    private final ParallelExits parallel;
 
     public MonitorJob(Markets markets, V1Tracker v1, EarlySignalCalculator signals,
                       ExitPolicy exitPolicy, ShadowBook book, PortfolioLock lock, Notifier notifier, JobRuns runs,
-                      AppState state) {
+                      AppState state, ParallelExits parallel) {
+        this.parallel = parallel;
         this.markets = markets;
         this.v1 = v1;
         this.signals = signals;
@@ -177,7 +180,7 @@ public class MonitorJob {
                 long hour = sig == null ? -1 : b.hourly().getLast().openTime();
                 boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
                 ExitDecision d = exitPolicy.evaluate(pos, o.info(), o.book(), sig, fresh);
-                apply(gen, now, pos, d, exits);
+                apply(gen, now, pos, d, exits, sig == null ? Double.NaN : sig.atr1hPct());
                 if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);
             }
         });
@@ -201,7 +204,7 @@ public class MonitorJob {
                 + " 已停止交易且拿不到盘口：无法模拟卖出，持仓冻结在账上，浮亏按最后一次标记计入");
     }
 
-    private void apply(String gen, Instant now, Position pos, ExitDecision d, List<String> exits) {
+    private void apply(String gen, Instant now, Position pos, ExitDecision d, List<String> exits, double atrPct) {
         String posKey = pos.symbol() + ":" + pos.openedAt();
         for (String note : d.notes()) {
             if (note.equals("PROTECTION_GAPPED")) {
@@ -217,8 +220,10 @@ public class MonitorJob {
             book.close(pos, d.fill(), d.netPnl(), d.reason(), gen, now);
             exits.add(d.reason() + ":" + pos.symbol());
             notifier.send("exit:" + posKey, Messages.exit(pos.venue(), d));
+            parallel.closeWithV2(pos, d, now);
         } else {
             book.update(d.updated(), d.netPnl(), now);
+            parallel.observe(pos, d, atrPct, now);
         }
     }
 }

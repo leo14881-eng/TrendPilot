@@ -17,6 +17,7 @@ import com.trendpilot.notify.Notifier;
 import com.trendpilot.portfolio.ObservationBook;
 import com.trendpilot.portfolio.Position;
 import com.trendpilot.portfolio.ShadowBook;
+import com.trendpilot.tracking.TrackingReport;
 
 /**
  * 自检（每小时 :07 / :37）与每日汇总（每天 21:00），时间均为越南时间。
@@ -34,9 +35,11 @@ public class HealthJob {
     private final ObservationBook v1;
     private final AppState state;
     private final ZoneId zone;
+    private final TrackingReport tracking;
 
     public HealthJob(JobRuns runs, Notifier notifier, ShadowBook book, ObservationBook v1, AppState state,
-                     @Value("${trendpilot.zone}") String zone) {
+                     @Value("${trendpilot.zone}") String zone, TrackingReport tracking) {
+        this.tracking = tracking;
         this.runs = runs;
         this.notifier = notifier;
         this.book = book;
@@ -119,6 +122,12 @@ public class HealthJob {
         lines.add("");
         lines.add(under.isEmpty() ? "被套持仓：无" : "被套持仓（浮亏中，" + under.size() + " 个）");
         lines.addAll(under);
+        lines.add("");
+        try {
+            lines.addAll(tracking.lines(tracking.summary(now), false));
+        } catch (RuntimeException e) {
+            lines.add("信号跟踪统计暂不可用：" + e.getMessage());
+        }
         List<String> problems = problems(now).stream().map(Problem::text).toList();
         lines.add(problems.isEmpty() ? "任务运行正常" : "异常：" + String.join("；", problems));
         notifier.send("daily:" + now.atZone(zone).toLocalDate(), Messages.lines(lines));

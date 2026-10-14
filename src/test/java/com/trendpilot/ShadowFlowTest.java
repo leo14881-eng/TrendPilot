@@ -25,7 +25,10 @@ import com.trendpilot.market.KlineStore;
 import com.trendpilot.market.Markets;
 import com.trendpilot.replay.BlindReplay;
 import com.trendpilot.replay.MissedReplay;
-import com.trendpilot.replay.SignalPath;
+import com.trendpilot.tracking.ExitReplay;
+import com.trendpilot.tracking.ExitRule;
+import com.trendpilot.tracking.SignalTracker;
+import com.trendpilot.tracking.TrackingReport;
 import com.trendpilot.research.CoinGeckoClient;
 import com.trendpilot.research.ResearchService;
 import com.trendpilot.market.Ticker24h;
@@ -48,6 +51,7 @@ class ShadowFlowTest {
         r.add("trendpilot.data-dir", () -> dataDir.toString());
         r.add("trendpilot.telegram.bot-token", () -> "");
         r.add("trendpilot.telegram.chat-id", () -> "");
+        r.add("trendpilot.tracking.parallel-rules", () -> "S1_L8,T1_T12_g0");
     }
 
     @TestConfiguration
@@ -76,7 +80,9 @@ class ShadowFlowTest {
     @Autowired KlineStore klines;
     @Autowired BlindReplay blind;
     @Autowired MissedReplay missed;
-    @Autowired SignalPath paths;
+    @Autowired SignalTracker tracker;
+    @Autowired TrackingReport trackingReport;
+    @Autowired ExitReplay exitReplay;
 
     @org.junit.jupiter.api.BeforeEach
     void reset() {
@@ -84,7 +90,7 @@ class ShadowFlowTest {
         bybit.reset();
         markets.invalidate();
         for (String t : new String[]{"position", "shadow_event", "early_seen", "notification_outbox", "app_state",
-                "kline_15m", "v1_position", "replay_outcome", "missed_replay", "signal_path", "signal_log", "decision_log"}) {
+                "kline_15m", "v1_position", "replay_outcome", "missed_replay", "signal_log", "signal_episode", "signal_track_bar", "signal_outcome", "signal_pullback", "exit_rule_eval", "variant_trade", "equity_curve", "decision_log"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
         // 身份资料：测试标的在 CoinGecko 上唯一对应一个项目（资料时间放在测试截面之后，不算过期）
@@ -131,23 +137,43 @@ class ShadowFlowTest {
                 .query(String.class).single();
         assertThat(text).contains("Missed Replay", "ABCUSDT", "V2 已买入", "Blind Replay");
 
-        // 信号后 24 小时路径：先跌 2%，第 40 根到 +25% 高点，之后回落到 +5%
-        List<Kline> day = java.util.stream.IntStream.range(0, 96).mapToObj(i -> {
-            double c = i < 4 ? price * 0.98 : i <= 40 ? price * (0.98 + 0.27 * (i - 4) / 36.0) : price * (1.25 - 0.2 * (i - 40) / 55.0);
-            return new Kline(start + i * q, c, c, c, c, 1e5, start + (i + 1) * q - 1);
+        // 信号跟踪：本轮 ABC 开了 SIGNAL 和 V2_ENTRY 两个样本，起点价取最优价卖一
+        var episodes = jdbc.sql("SELECT start_type, p0, status FROM signal_episode WHERE symbol = 'ABCUSDT' ORDER BY start_type")
+                .query((rs, i) -> rs.getString(1) + ":" + rs.getString(3)).list();
+        assertThat(episodes).containsExactly("SIGNAL:TRACKING", "V2_ENTRY:TRACKING");
+        double p0 = jdbc.sql("SELECT p0 FROM signal_episode WHERE symbol = 'ABCUSDT' AND start_type = 'SIGNAL'")
+                .query(Double.class).single();
+        assertThat(p0).isGreaterThan(price); // 卖一价高于最近收盘价
+        // 同一轮重复：不开新样本，只记重复次数
+        discovery.runOnce(t0);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM signal_episode WHERE symbol = 'ABCUSDT' AND start_type = 'SIGNAL'")
+                .query(Integer.class).single()).isEqualTo(1);
+
+        // 之后 80 小时的 15m K 线（缓存里有）：先跌 3%，再涨到 +25%，回落 12%，再创新高
+        List<Kline> path = java.util.stream.IntStream.range(0, 320).mapToObj(i -> {
+            double c = i < 8 ? price * (1 - 0.03 * i / 8) : i < 40 ? price * (0.97 + 0.28 * (i - 8) / 32)
+                    : i < 60 ? price * (1.25 - 0.15 * (i - 40) / 20) : price * (1.10 + 0.2 * (i - 60) / 260);
+            return new Kline(start + i * q, c, c * 1.002, c * 0.998, c, 1e5, start + (i + 1) * q - 1);
         }).toList();
-        klines.upsert(Venue.BINANCE, "ABCUSDT", day);
-        assertThat(paths.run(t0.plusSeconds(3600))).isZero();          // 未满 24 小时
-        assertThat(paths.run(t0.plus(java.time.Duration.ofHours(25)))).isEqualTo(1);
-        assertThat(paths.run(t0.plus(java.time.Duration.ofHours(26)))).isZero();
-        SignalPath.Stats st = paths.stats(t0.plus(java.time.Duration.ofHours(25)), 7);
-        assertThat(st.samples()).isEqualTo(1);
-        assertThat(st.medianPeakPct()).isCloseTo(25, org.assertj.core.data.Offset.offset(0.01));
-        assertThat(st.medianMinutesToPeak()).isEqualTo(41 * 15 - 2.0);  // 第 40 根收盘，信号在 10:17
-        assertThat(st.medianDrawdownPct()).isCloseTo(-2, org.assertj.core.data.Offset.offset(0.01));
-        assertThat(st.medianMinutesTo10()).isNotNull();
-        assertThat(st.medianMinutesTo20()).isGreaterThan(st.medianMinutesTo10());
-        assertThat(st.medianMinutesToProfit()).isLessThan(st.medianMinutesTo10());
+        klines.upsert(Venue.BINANCE, "ABCUSDT", path);
+        Instant later = t0.plus(java.time.Duration.ofHours(76));
+        assertThat(tracker.track(later)).isGreaterThanOrEqualTo(2);
+        TrackingReport.Summary sum = trackingReport.summary(later);
+        assertThat(sum.signal().gate().show()).isFalse(); // 1 个样本：样本不足，不给结论
+        var sample = trackingReport.samples("SIGNAL").stream().filter(x -> x.symbol().equals("ABCUSDT")).findFirst().orElseThrow();
+        assertThat(sample.observedMinutes()).isGreaterThan(72 * 60);
+        assertThat(sample.m().get("t_big_20")).isNotNull();
+        assertThat(sample.m().get("swing_10_recovered")).isEqualTo(true);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM signal_pullback").query(Integer.class).single()).isPositive();
+        assertThat(trackingReport.lines(sum, true)).anyMatch(l -> l.contains("样本不足"));
+
+        // 离线回放：B0 + 全部候选规则，每个样本一条
+        List<ExitReplay.Trade> trades = exitReplay.run(later);
+        int perEpisode = ExitRule.grid().size() + 1;
+        assertThat(trades).hasSize(perEpisode * 2);
+        var stats = exitReplay.stats(exitReplay.latest());
+        assertThat(stats).anyMatch(st -> st.ruleId().equals("B0"));
+        assertThat(exitReplay.lines(stats, 3)).anyMatch(l -> l.contains("未达采纳门槛"));
     }
 
     @Test
@@ -199,6 +225,11 @@ class ShadowFlowTest {
         assertThat(ex[0]).isGreaterThan(ex[3]);
         assertThat(ex[1]).isLessThanOrEqualTo(ex[3]);
         assertThat(ex[2]).isEqualTo(5.0);
+        // 候选规则影子并行：没触发提前卖出的变体随 V2 一起卖出，并记录 V2 的结果用于配对
+        var variants = jdbc.sql("SELECT rule_id, status, exit_reason, b0_pnl FROM variant_trade ORDER BY rule_id")
+                .query((rs, i) -> rs.getString(1) + ":" + rs.getString(2) + ":" + rs.getString(3) + ":" + (rs.getObject(4) != null))
+                .list();
+        assertThat(variants).containsExactly("S1_L8:CLOSED:PROFIT_PROTECTION:true", "T1_T12_g0:CLOSED:PROFIT_PROTECTION:true");
 
         Integer events = jdbc.sql("SELECT COUNT(*) FROM shadow_event WHERE book = 'V2' AND type IN ('BUY','SELL','PROTECT_ARM')")
                 .query(Integer.class).single();

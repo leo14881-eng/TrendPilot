@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -50,6 +51,7 @@ import com.trendpilot.risk.RiskState;
 import com.trendpilot.risk.SystemRiskAssessor;
 import com.trendpilot.signal.EarlySignal;
 import com.trendpilot.signal.EarlySignalCalculator;
+import com.trendpilot.tracking.SignalTracker;
 import com.trendpilot.universe.UniverseFilter;
 
 /**
@@ -83,10 +85,13 @@ public class DiscoveryJob {
     private final AppState state;
     private final JdbcClient jdbc;
     private final StrategyParams params;
+    private final SignalTracker tracker;
 
     public DiscoveryJob(Markets markets, ResearchService research, StreamHub streams, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, RiskRecovery recovery, CapitalReviewer reviewer,
                         CapitalAllocator allocator, ShadowBook book, PortfolioLock lock, Notifier notifier,
-                        JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params) {
+                        JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params,
+                        SignalTracker tracker) {
+        this.tracker = tracker;
         this.markets = markets;
         this.research = research;
         this.streams = streams;
@@ -193,8 +198,19 @@ public class DiscoveryJob {
         // 亏损冻结：窗口内亏损退出 + 深度浮亏的持仓（亏损仓不卖出，不能让它们在风控里隐身）
         int lossExits = book.lossExitsSince(now.minus(Duration.ofHours(params.risk().lossWindowHours())))
                 + book.underwaterCount(params.risk().underwaterLossPct());
+        // 全市场最优买卖价：每个池一次请求，用于流动性证据和信号跟踪的起点价
+        Map<Venue, Map<String, BookTicker>> quotes = new EnumMap<>(Venue.class);
+        for (Pool pool : pools) {
+            try {
+                quotes.put(pool.venue(), pool.market().source().bookTickers().stream()
+                        .collect(Collectors.toMap(BookTicker::symbol, q -> q, (a, b) -> a)));
+            } catch (RuntimeException e) {
+                log.warn("{} 最优价获取失败：{}", pool.venue(), e.getMessage());
+                quotes.put(pool.venue(), Map.of());
+            }
+        }
         RiskState raw = riskAssessor.assess(main.btc(), btcTicker, main.universe(), lossExits,
-                evidence(binance, main, now));
+                evidence(quotes.getOrDefault(Venue.BINANCE, Map.of()), main, now));
         if (main.btc() != null) recovery.recordShockIfAny(raw, now);
         RiskState risk = recovery.apply(raw, gen);
         String prevRegime = state.get("regime").orElse(null);
@@ -229,6 +245,11 @@ public class DiscoveryJob {
         // 5. 审核与分配（锁内）
         List<String> entries = new ArrayList<>();
         List<String> v1Entries = new ArrayList<>();
+        Map<String, ReviewResult> reviewed = new LinkedHashMap<>();
+        Map<String, Boolean> fundedBy = new LinkedHashMap<>();
+        Map<String, Double> firstSeen = new LinkedHashMap<>();
+        List<SignalTracker.EntryInput> trackEntries = new ArrayList<>();
+        Map<String, SignalTracker.SignalInput> trackSignals = new LinkedHashMap<>();
         lock.run(() -> {
             List<ReviewResult> results = new ArrayList<>();
             Map<String, Venue> venueOf = new LinkedHashMap<>();
@@ -251,6 +272,9 @@ public class DiscoveryJob {
             // 不在候选中的 EARLY 只记录首次出现价格
             early.stream().filter(c -> !candidates.contains(c))
                     .forEach(c -> book.touchEarlySeen(c.signal().symbol(), c.signal().price(), now));
+            results.forEach(r -> reviewed.put(r.symbol(), r));
+            early.forEach(c -> book.earlySeenPrice(c.signal().symbol())
+                    .ifPresent(v -> firstSeen.put(c.signal().symbol(), v.doubleValue())));
 
             List<ReviewResult> approved = results.stream().filter(ReviewResult::approved).toList();
             CapitalAllocator.Allocation alloc = allocator.allocate(approved, risk, book.deployedCost(), book.realizedPnl(),
@@ -262,6 +286,7 @@ public class DiscoveryJob {
                     book.add(book.position(r.symbol()).orElseThrow(), r.fill(), gen, now);
                 }
                 entries.add(r.action() + ":" + r.symbol());
+                fundedBy.put(r.symbol(), true);
                 notifier.send("entry:" + gen + ":" + r.symbol(), Messages.entry(venueOf.get(r.symbol()), r));
             }
             // V1 宽口径观察：所有 EARLY（不要求评分 8、不占 V2 资金）
@@ -274,6 +299,30 @@ public class DiscoveryJob {
                 logDecision(gen, venueOf.get(r.symbol()), r, alloc.funded().contains(r), alloc.unfunded().contains(r), now);
             }
         });
+        // 信号跟踪：只观察，失败不影响 Discovery
+        try {
+            for (Candidate c : early) {
+                String sym = c.signal().symbol();
+                ReviewResult r = reviewed.get(sym);
+                String result = r == null ? "NOT_REVIEWED"
+                        : Boolean.TRUE.equals(fundedBy.get(sym)) ? "BUY" : r.approved() ? "BUDGET_WAIT" : r.decision().name();
+                trackSignals.put(sym, new SignalTracker.SignalInput(c.venue(), c.signal(), c.ticker(), result,
+                        r == null ? "" : String.join(",", r.reasons()), firstSeen.get(sym)));
+            }
+            for (Candidate c : candidates) {
+                ReviewResult r = reviewed.get(c.signal().symbol());
+                if (r == null || !Boolean.TRUE.equals(fundedBy.get(r.symbol()))) continue;
+                SignalTracker.SignalInput in = trackSignals.getOrDefault(r.symbol(), new SignalTracker.SignalInput(
+                        c.venue(), c.signal(), c.ticker(), r.action().name(), "", firstSeen.get(r.symbol())));
+                trackEntries.add(new SignalTracker.EntryInput(in, r.fill().avgPrice().doubleValue()));
+            }
+            Instant tSig = Instant.ofEpochMilli(main.btc() == null ? now.toEpochMilli()
+                    : main.btc().quarter().getLast().closeTime() + 1);
+            tracker.onDiscovery(new SignalTracker.Context(gen, tSig, now, risk, quotes),
+                    List.copyOf(trackSignals.values()), trackEntries);
+        } catch (RuntimeException e) {
+            log.warn("信号跟踪开样本失败：{}", e.getMessage(), e);
+        }
         int universe = pools.stream().mapToInt(p -> p.universe().size()).sum();
         int missing = pools.stream().mapToInt(Pool::missing).sum();
         int requests = pools.stream().mapToInt(p -> p.bars() == null ? 0 : p.bars().requests()).sum();
@@ -285,11 +334,9 @@ public class DiscoveryJob {
     }
 
     /** 流动性（全市场最优价一次请求）与稳定币证据；拿不到时为 NaN，由风险评估保守处理。 */
-    private MarketEvidence evidence(VenueMarket binance, Pool main, Instant now) {
+    private MarketEvidence evidence(Map<String, BookTicker> quotes, Pool main, Instant now) {
         double medianSpread = Double.NaN;
         try {
-            Map<String, BookTicker> quotes = binance.source().bookTickers().stream()
-                    .collect(Collectors.toMap(BookTicker::symbol, q -> q, (a, b) -> a));
             List<Ticker24h> top = main.universe().stream()
                     .sorted(Comparator.comparingDouble((Ticker24h t) -> -t.quoteVolume())).limit(50).toList();
             List<Double> spreads = top.stream()

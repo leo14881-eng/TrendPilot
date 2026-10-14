@@ -22,4 +22,10 @@ class ShadowOnlyArchitectureTest {
                     "org.knowm.xchange..",
                     "info.bitrich.xchangestream..")
             .because("TrendPilot 只做影子模拟，capital_authority 固定为 NONE_SHADOW_ONLY");
+
+    @ArchTest
+    static final ArchRule trackingOnlyObserves = noClasses().that().resideInAPackage("com.trendpilot.tracking..")
+            .should().dependOnClassesThat().resideInAnyPackage("com.trendpilot.portfolio..", "com.trendpilot.capital..",
+                    "com.trendpilot.monitor..", "com.trendpilot.variant..")
+            .because("信号跟踪只读行情、只写跟踪表，不写正式账本、不调用资金分配");
 }

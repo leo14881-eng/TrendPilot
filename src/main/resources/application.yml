@@ -114,6 +114,28 @@ trendpilot.strategy:
     recovery-half-budget-observations: 2  # 恢复后再 2 轮只用一半额度
     underwater-loss-pct: 5            # 浮亏超过成本 5% 的持仓，在亏损冻结里按一次亏损计
 
+# 信号跟踪与退出策略研究（docs/信号跟踪与退出策略设计.md），只观察，不影响交易
+trendpilot.tracking:
+  enabled: true
+  dedupe-hours: 24
+  main-window-hours: 72
+  ext-window-hours: 168
+  big-thresholds-pct: [5, 10, 20, 30]
+  big-default-pct: 10
+  swing-drawdowns-pct: [5, 10, 15, 20]
+  swing-main-pct: 10
+  swing-min-gain-pct: 3
+  pullback-min-pct: 5
+  max-gap-run: 2
+  max-gap-ratio: 0.05
+  show-min-samples: 30
+  show-min-symbols: 10
+  show-min-days: 7
+  decide-min-samples: 100
+  decide-min-symbols: 20
+  decide-min-weeks: 4
+  parallel-rules: []      # 候选退出规则影子并行，例如 [S1_L15, T1_T48_G0]；离线分析选出后再加
+
 trendpilot.binance:
   enabled: true
   base-url: https://api.binance.com

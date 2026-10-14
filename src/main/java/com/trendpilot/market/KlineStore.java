@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 public class KlineStore {
 
-    static final Duration RETENTION = Duration.ofDays(3);
+    static final Duration RETENTION = Duration.ofDays(9); // 信号跟踪 7 天窗口 + 信号前 1 天 + 1 天余量
 
     private final JdbcClient jdbc;
 
