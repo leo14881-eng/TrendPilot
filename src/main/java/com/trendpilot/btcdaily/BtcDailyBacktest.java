@@ -34,8 +34,11 @@ public final class BtcDailyBacktest {
                          double endUnrealized, double endCost, int tradeDays, double buyHoldPct, int skippedDays,
                          int reducedDays, List<StopAlt> stopAlts, String exitMode, double totalPnl,
                          double annualPct, double maxDrawdown, double maxDrawdownPct, double winRate, double avgWin,
-                         double avgLoss, double winLossRatio, int losses) {
+                         double avgLoss, double winLossRatio, int losses, int bigRounds, double captureRatio) {
     }
+
+    /** 持仓期间最高涨幅 ≥ 此值（%）的轮算"大涨轮"，统计卖出时吃到了多少涨幅。 */
+    public static final double BIG_MOVE_PCT = 3;
 
     /** 候选止损对比：触发的轮按假设止损结算，其余按实际结果（期末持仓按浮动盈亏）。 */
     public record StopAlt(double stopPct, int hits, double pnl) {
@@ -121,13 +124,17 @@ public final class BtcDailyBacktest {
         double[] losses = rounds.stream().mapToDouble(Book.Round::pnl).filter(x -> x <= 0).toArray();
         double avgWin = java.util.Arrays.stream(wins).average().orElse(0);
         double avgLoss = java.util.Arrays.stream(losses).average().orElse(0);
+        List<Book.Round> big = rounds.stream().filter(r -> r.mfePct() >= BIG_MOVE_PCT).toList();
+        double mfeSum = big.stream().mapToDouble(Book.Round::mfePct).sum();
+        double capture = mfeSum > 0 ? big.stream().mapToDouble(Book.Round::pnlPct).sum() / mfeSum * 100 : 0;
         return new Result(p.version(), from, last, days, book.rounds(), round2(book.realized()),
                 round2(book.maxFloatLoss()), round2(book.maxFloatLoss() / p.capUsdt() * 100), maxHold,
                 round2(avgHold), round2(endUnrealized), round2(book.cost()), tradeDays,
                 firstOpen > 0 ? round2((lastClose / firstOpen - 1) * 100) : 0, skipped, reduced, List.copyOf(alts),
                 p.exit().mode(), round2(total), round2(total / p.capUsdt() * 100 / years), round2(maxDd),
                 round2(maxDd / p.capUsdt() * 100), rounds.isEmpty() ? 0 : round2(100.0 * wins.length / rounds.size()),
-                round2(avgWin), round2(avgLoss), avgLoss < 0 ? round2(avgWin / -avgLoss) : 0, losses.length);
+                round2(avgWin), round2(avgLoss), avgLoss < 0 ? round2(avgWin / -avgLoss) : 0, losses.length,
+                big.size(), round2(capture));
     }
 
     private static double round2(double v) {

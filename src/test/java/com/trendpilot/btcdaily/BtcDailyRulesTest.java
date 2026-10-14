@@ -300,6 +300,39 @@ class BtcDailyRulesTest {
     }
 
     @Test
+    void partialSellsHalfThenTrailsRestAcrossDays() {
+        BtcDailyProperties part = P.withExitMode("PARTIAL");
+        Book book = new Book();
+        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, part);
+        BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 58_700, 58_750), part);
+        double qty = book.qty();
+        double arm = BtcDailyRules.takeProfitPrice(plan, book, part);
+        List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 1, 58_750, arm + 10, 58_700, arm), part);
+        assertThat(f).singleElement().satisfies(x -> {
+            assertThat(x.side()).isEqualTo(Fill.Side.SELL);
+            assertThat(x.qty()).isCloseTo(qty / 2, within(1e-9));
+            assertThat(x.pnl()).isPositive();
+        });
+        assertThat(book.qty()).isCloseTo(qty / 2, within(1e-9));
+        assertThat(book.rounds()).isZero();
+        assertThat(BtcDailyMessages.fill(f.getFirst(), book, plan, null, part)).contains("部分卖出", "继续跟踪");
+        // 次日：跟踪中不加仓，大涨 10% 继续拿着
+        LocalDate next = DAY.plusDays(1);
+        DailyPlan plan2 = BtcDailyRules.plan(next, daily(DAY, 60, 60_000, 2_000), arm, book, part);
+        assertThat(plan2.levels()).isEmpty();
+        double high = arm * 1.10;
+        assertThat(BtcDailyRules.onBar(plan2, book, bar(next, 0, arm, arm, 59_100, arm), part)).isEmpty(); // 跟踪中不买
+        assertThat(BtcDailyRules.onBar(plan2, book, bar(next, 1, arm + 100, high, arm + 100, high - 100), part)).isEmpty();
+        // 从最高价回落 1 × ATR（2,000）：剩下的全卖，整轮盈亏 = 两次合计
+        List<Fill> g = BtcDailyRules.onBar(plan2, book, bar(next, 2, high - 100, high - 100, high - 2500, high - 2400), part);
+        assertThat(g).singleElement().satisfies(x -> assertThat(x.price()).isGreaterThan(high - 2100));
+        assertThat(book.holding()).isFalse();
+        assertThat(book.lastRound.pnl()).isCloseTo(f.getFirst().pnl() + g.getFirst().pnl(), within(1e-6));
+        assertThat(book.lastRound.cost()).isCloseTo(3000, within(1e-6));
+        assertThat(book.realized()).isCloseTo(book.lastRound.pnl(), within(1e-6));
+    }
+
+    @Test
     void wideStopSellsAtEightPercentLoss() {
         BtcDailyProperties stop = P.withExitMode("STOP");
         Book book = new Book();

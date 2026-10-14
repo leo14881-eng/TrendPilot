@@ -65,6 +65,8 @@ public class BtcDailyStore {
             b.openFilters = rs.getString("open_filters");
             b.stopHits.putAll(parseStops(rs.getString("stop_hits")));
             b.trailPeak = rs.getDouble("trail_peak");
+            b.soldCost = rs.getDouble("sold_cost");
+            b.soldProceeds = rs.getDouble("sold_proceeds");
             long last = rs.getLong("last_bar_open");
             return new State(b, rs.wasNull() ? null : last);
         }).optional().orElseGet(() -> new State(new Book(), null));
@@ -89,10 +91,11 @@ public class BtcDailyStore {
         jdbc.sql("""
                 INSERT OR REPLACE INTO btc_daily_state(id, qty, cost, buys, last_buy_price, opened_day, realized, rounds,
                     wins, last_exit_day, round_max_float_loss, max_float_loss, last_bar_open, updated_at,
-                    opened_at, mae_pct, mfe_pct, open_filters, stop_hits, trail_peak)
-                VALUES (1, :q, :c, :b, :lb, :od, :r, :n, :w, :le, :rm, :m, :bar, :now, :oa, :mae, :mfe, :of, :sh, :tp)
+                    opened_at, mae_pct, mfe_pct, open_filters, stop_hits, trail_peak, sold_cost, sold_proceeds)
+                VALUES (1, :q, :c, :b, :lb, :od, :r, :n, :w, :le, :rm, :m, :bar, :now, :oa, :mae, :mfe, :of, :sh, :tp,
+                    :sc, :sp)
                 """)
-                .param("tp", b.trailPeak)
+                .param("tp", b.trailPeak).param("sc", b.soldCost).param("sp", b.soldProceeds)
                 .param("oa", b.openedAt).param("mae", b.maePct).param("mfe", b.mfePct)
                 .param("of", b.openFilters == null ? "" : b.openFilters).param("sh", formatStops(b.stopHits))
                 .param("q", b.qty).param("c", b.cost).param("b", b.buys).param("lb", b.lastBuyPrice)
