@@ -35,8 +35,10 @@ public class BlindReplay {
     private final JdbcClient jdbc;
     private final KlineStore klines;
     private final JobRuns runs;
+    private final SignalPath paths;
 
-    public BlindReplay(JdbcClient jdbc, KlineStore klines, JobRuns runs) {
+    public BlindReplay(JdbcClient jdbc, KlineStore klines, JobRuns runs, SignalPath paths) {
+        this.paths = paths;
         this.jdbc = jdbc;
         this.klines = klines;
         this.runs = runs;
@@ -59,7 +61,9 @@ public class BlindReplay {
         Instant started = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         try {
             int n = run(started);
-            runs.record(JOB, "R-" + started, started, Instant.now(), "SUCCESS", "N/A", "新增 " + n + " 个样本");
+            int p = paths.run(started);
+            runs.record(JOB, "R-" + started, started, Instant.now(), "SUCCESS", "N/A",
+                    "新增 " + n + " 个前向收益样本，" + p + " 个信号路径");
         } catch (RuntimeException e) {
             log.error("Blind Replay 失败", e);
             runs.record(JOB, "R-" + started, started, Instant.now(), "FAILED", "N/A", String.valueOf(e.getMessage()));

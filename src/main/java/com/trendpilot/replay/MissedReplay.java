@@ -50,10 +50,11 @@ public class MissedReplay {
     private final Notifier notifier;
     private final JobRuns runs;
     private final BlindReplay blind;
+    private final SignalPath paths;
     private final ZoneId zone;
 
     public MissedReplay(Markets markets, UniverseFilter universeFilter, ResearchService research, JdbcClient jdbc,
-                        Notifier notifier, JobRuns runs, BlindReplay blind, @Value("${trendpilot.zone}") String zone) {
+                        Notifier notifier, JobRuns runs, BlindReplay blind, SignalPath paths, @Value("${trendpilot.zone}") String zone) {
         this.markets = markets;
         this.universeFilter = universeFilter;
         this.research = research;
@@ -61,6 +62,7 @@ public class MissedReplay {
         this.notifier = notifier;
         this.runs = runs;
         this.blind = blind;
+        this.paths = paths;
         this.zone = ZoneId.of(zone);
     }
 
@@ -187,6 +189,9 @@ public class MissedReplay {
         lines.add("🔍 Missed Replay " + day + "（24h 涨幅榜复盘，只复盘不补交易）");
         if (rows.isEmpty()) lines.add("行情获取失败，今天没有复盘结果");
         rows.forEach(r -> lines.add(r.line()));
+        lines.add("");
+        lines.add("⏱ EARLY 之后的走势（近 7 天）");
+        lines.addAll(paths.stats(now, 7).lines());
         List<BlindReplay.Bucket> buckets = blind.summary(now, 7);
         if (!buckets.isEmpty()) {
             lines.add("");

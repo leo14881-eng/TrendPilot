@@ -12,6 +12,7 @@ import com.trendpilot.market.stream.StreamHub;
 import com.trendpilot.portfolio.ObservationBook;
 import com.trendpilot.portfolio.ShadowBook;
 import com.trendpilot.replay.BlindReplay;
+import com.trendpilot.replay.SignalPath;
 
 /** 本机只读状态接口：http://localhost:8080/api/status */
 @RestController
@@ -22,10 +23,12 @@ public class StatusController {
     private final JdbcClient jdbc;
     private final StreamHub streams;
     private final BlindReplay blind;
+    private final SignalPath paths;
 
     public StatusController(ShadowBook book, ObservationBook v1, JdbcClient jdbc, StreamHub streams,
-                            BlindReplay blind) {
+                            BlindReplay blind, SignalPath paths) {
         this.blind = blind;
+        this.paths = paths;
         this.book = book;
         this.v1 = v1;
         this.streams = streams;
@@ -42,6 +45,7 @@ public class StatusController {
                 Map.entry("websocket", streams.health()),
                 Map.entry("deployedCost", book.deployedCost()),
                 Map.entry("realizedPnl", book.realizedPnl()),
+                Map.entry("signalPath7d", paths.stats(java.time.Instant.now(), 7)),
                 Map.entry("blindReplay7d", blind.summary(java.time.Instant.now(), 7)),
                 Map.entry("recentRuns", rows("SELECT job, generation, started_at, program_status, data_status, note FROM job_run ORDER BY id DESC LIMIT 20")),
                 Map.entry("recentEvents", rows("SELECT book, venue, symbol, type, price, notional_usdt, pnl_usdt, reason_code, hold_minutes, max_net, min_net, minutes_to_profit, created_at FROM shadow_event ORDER BY id DESC LIMIT 20")),

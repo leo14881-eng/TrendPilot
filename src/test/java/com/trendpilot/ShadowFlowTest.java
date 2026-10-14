@@ -25,6 +25,7 @@ import com.trendpilot.market.KlineStore;
 import com.trendpilot.market.Markets;
 import com.trendpilot.replay.BlindReplay;
 import com.trendpilot.replay.MissedReplay;
+import com.trendpilot.replay.SignalPath;
 import com.trendpilot.research.CoinGeckoClient;
 import com.trendpilot.research.ResearchService;
 import com.trendpilot.market.Ticker24h;
@@ -75,6 +76,7 @@ class ShadowFlowTest {
     @Autowired KlineStore klines;
     @Autowired BlindReplay blind;
     @Autowired MissedReplay missed;
+    @Autowired SignalPath paths;
 
     @org.junit.jupiter.api.BeforeEach
     void reset() {
@@ -82,7 +84,7 @@ class ShadowFlowTest {
         bybit.reset();
         markets.invalidate();
         for (String t : new String[]{"position", "shadow_event", "early_seen", "notification_outbox", "app_state",
-                "kline_15m", "v1_position", "replay_outcome", "missed_replay", "signal_log", "decision_log"}) {
+                "kline_15m", "v1_position", "replay_outcome", "missed_replay", "signal_path", "signal_log", "decision_log"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
         // 身份资料：测试标的在 CoinGecko 上唯一对应一个项目（资料时间放在测试截面之后，不算过期）
@@ -128,6 +130,24 @@ class ShadowFlowTest {
         String text = jdbc.sql("SELECT text FROM notification_outbox WHERE event_key LIKE 'missed:%'")
                 .query(String.class).single();
         assertThat(text).contains("Missed Replay", "ABCUSDT", "V2 已买入", "Blind Replay");
+
+        // 信号后 24 小时路径：先跌 2%，第 40 根到 +25% 高点，之后回落到 +5%
+        List<Kline> day = java.util.stream.IntStream.range(0, 96).mapToObj(i -> {
+            double c = i < 4 ? price * 0.98 : i <= 40 ? price * (0.98 + 0.27 * (i - 4) / 36.0) : price * (1.25 - 0.2 * (i - 40) / 55.0);
+            return new Kline(start + i * q, c, c, c, c, 1e5, start + (i + 1) * q - 1);
+        }).toList();
+        klines.upsert(Venue.BINANCE, "ABCUSDT", day);
+        assertThat(paths.run(t0.plusSeconds(3600))).isZero();          // 未满 24 小时
+        assertThat(paths.run(t0.plus(java.time.Duration.ofHours(25)))).isEqualTo(1);
+        assertThat(paths.run(t0.plus(java.time.Duration.ofHours(26)))).isZero();
+        SignalPath.Stats st = paths.stats(t0.plus(java.time.Duration.ofHours(25)), 7);
+        assertThat(st.samples()).isEqualTo(1);
+        assertThat(st.medianPeakPct()).isCloseTo(25, org.assertj.core.data.Offset.offset(0.01));
+        assertThat(st.medianMinutesToPeak()).isEqualTo(41 * 15 - 2.0);  // 第 40 根收盘，信号在 10:17
+        assertThat(st.medianDrawdownPct()).isCloseTo(-2, org.assertj.core.data.Offset.offset(0.01));
+        assertThat(st.medianMinutesTo10()).isNotNull();
+        assertThat(st.medianMinutesTo20()).isGreaterThan(st.medianMinutesTo10());
+        assertThat(st.medianMinutesToProfit()).isLessThan(st.medianMinutesTo10());
     }
 
     @Test
