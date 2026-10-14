@@ -185,7 +185,7 @@ trendpilot.research:
 # 改参数时同时改 version（会自动重新回测一次）
 trendpilot.btc-daily:
   enabled: true
-  version: btc-v2.1-2026-10-15   # 只加了卖出方式回测对比，实盘规则未变
+  version: btc-v2.2-2026-10-15   # 卖出改为回本后跟踪（TRAIL），回测确认后生效
   symbol: BTCUSDT
   cap-usdt: 10000
   cap-until: "2026-11-14"         # 第一个月上限，到期按数据复评
@@ -195,18 +195,18 @@ trendpilot.btc-daily:
   step-atr: 0.5                  # 档距 0.5 × ATR
   tp-atr-mult: 0.5               # 止盈 = 均价 × (1 + max(0.5 × ATR%, 0.8%))
   tp-min-pct: 0.8
-  carry-tp-pct: 0.3              # 跨天未卖：均价 +0.3% 即卖（扣费后仍小赚），不割肉
+  carry-tp-pct: 0.3              # 跨天未卖：止盈价降为均价 +0.3%（TRAIL 下到了先跟踪，最低按此价卖），不割肉
   fee-rate: 0.001
   slippage-bps: 2
   atr-days: 14
   ema-days: 20
   backtest-days: 365
-  # 卖出方式：FIXED（现行）/ TRAIL（移动止盈）/ STOP（宽止损）；上线回测会三种都跑一遍对比
+  # 卖出方式：FIXED（到止盈价就卖）/ TRAIL（回本后跟踪：到止盈价后跟踪最高价）/ STOP（宽止损）；上线回测三种都跑
+  # 用户 2026-10-15 选定 TRAIL；回滚：mode 改回 FIXED 并改 version
   exit:
-    mode: FIXED
-    trail-arm-pct: 0.8             # TRAIL：跨天仓位涨到均价 +0.8% 启动跟踪（当日仓位用当日止盈线）
-    trail-atr: 0.5                 # TRAIL：从最高价回落 0.5 × ATR 全卖
-    trail-floor-pct: 0.3           # TRAIL：卖出价不低于均价 +0.3%
+    mode: TRAIL
+    require-backtest: true         # 本版本回测确认 TRAIL 不比 FIXED 差才实盘生效，之前和不达标都按 FIXED
+    trail-atr: 0.5                 # TRAIL：从最高价回落 0.5 × ATR 全卖，最低按原止盈价
     hard-stop-pct: 8               # STOP：跌到均价 −8% 全部止损
   # 市场与宏观过滤：只影响当天是否开新一轮、开多大；已有仓位照常止盈，不止损
   filters:

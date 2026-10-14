@@ -12,7 +12,8 @@ import com.trendpilot.market.Kline;
  * <ul>
  * <li>计划：空仓时按今日开盘价向下挂三档；持仓跨天时只把没用完的档位从上次买入价继续往下挂。</li>
  * <li>成交：用已收盘 K 线的最低/最高价判断；同一根 K 线里先算已有持仓的止盈，止盈了就不再买（保守）。</li>
- * <li>不止损：亏损时不卖，跨天后把止盈幅度降到 carryTpPct，尽快回本离场。每天最多完成一轮。</li>
+ * <li>不止损：亏损时不卖，跨天后把止盈幅度降到 carryTpPct；TRAIL 模式下到了止盈价不立即卖，跟踪最高价，
+ *     回落才卖、最低按原止盈价。每天最多完成一轮。</li>
  * </ul>
  */
 public final class BtcDailyRules {
@@ -190,27 +191,33 @@ public final class BtcDailyRules {
     static Exit exitSignal(DailyPlan plan, Book book, Kline bar, BtcDailyProperties p) {
         BtcDailyProperties.Exit x = p.exit();
         boolean carried = book.openedDay != null && book.openedDay.isBefore(plan.day());
-        double avg = book.avgCost();
+        double target = takeProfitPrice(plan, book, p);
         switch (x.mode()) {
             case "STOP" -> {
-                double stop = avg * (1 - x.hardStopPct() / 100);
+                double stop = book.avgCost() * (1 - x.hardStopPct() / 100);
                 if (bar.low() <= stop) return new Exit(Math.min(stop, bar.open()), "止损 " + fmt(x.hardStopPct()) + "%");
             }
             case "TRAIL" -> {
                 if (book.trailPeak > 0) {
-                    double stop = Math.max(book.trailPeak - x.trailAtr() * plan.atr(), avg * (1 + x.trailFloorPct() / 100));
-                    if (bar.low() <= stop) return new Exit(Math.min(stop, bar.open()), "移动止盈");
+                    // 保底 = 原止盈价（加仓后按新均价重算），所以不会比 FIXED 卖得低，也不会卖亏
+                    double stop = Math.max(book.trailPeak - x.trailAtr() * plan.atr(), target);
+                    if (bar.low() <= stop) {
+                        double price = Math.min(stop, bar.open());
+                        if (price < target) {
+                            if (bar.high() < target) return null; // 跳空到保底价下方：不卖亏，等回到保底价
+                            price = target;
+                        }
+                        return new Exit(price, carried ? "回本后跟踪止盈" : "移动止盈");
+                    }
                     book.trailPeak = Math.max(book.trailPeak, bar.high());
-                } else {
-                    double arm = avg * (1 + (carried ? x.trailArmPct() : plan.tpPct()) / 100);
-                    if (bar.high() >= arm) book.trailPeak = bar.high(); // 启动跟踪，下一根 K 线起判断回落
+                } else if (bar.high() >= target) {
+                    book.trailPeak = bar.high(); // 到了原止盈价：启动跟踪，下一根 K 线起判断回落
                 }
                 return null;
             }
             default -> {
             }
         }
-        double target = takeProfitPrice(plan, book, p);
         if (bar.high() >= target) return new Exit(Math.max(target, bar.open()), carried ? "跨天回本止盈" : "当日止盈");
         return null;
     }
