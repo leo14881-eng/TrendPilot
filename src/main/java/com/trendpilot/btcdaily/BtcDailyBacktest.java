@@ -3,6 +3,7 @@ package com.trendpilot.btcdaily;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 
 import com.trendpilot.market.Kline;
@@ -34,7 +35,13 @@ public final class BtcDailyBacktest {
                          double endUnrealized, double endCost, int tradeDays, double buyHoldPct, int skippedDays,
                          int reducedDays, List<StopAlt> stopAlts, String exitMode, double totalPnl,
                          double annualPct, double maxDrawdown, double maxDrawdownPct, double winRate, double avgWin,
-                         double avgLoss, double winLossRatio, int losses, int bigRounds, double captureRatio) {
+                         double avgLoss, double winLossRatio, int losses, int bigRounds, double captureRatio,
+                         String strategy, Map<String, RegimeStat> byRegime, Map<String, Integer> regimeDays) {
+    }
+
+    /** 按开仓当天行情分组的结果。 */
+    public record RegimeStat(int rounds, double pnl, double winRate, double maxHoldDays, double avgHoldDays,
+                             double worstMaePct) {
     }
 
     /** 持仓期间最高涨幅 ≥ 此值（%）的轮算"大涨轮"，统计卖出时吃到了多少涨幅。 */
@@ -51,6 +58,13 @@ public final class BtcDailyBacktest {
      */
     public static Result run(List<Kline> daily, List<Kline> bars, BtcDailyProperties p,
                              Function<LocalDate, MarketContext> ctx) {
+        return run(daily, bars, bars, p, ctx);
+    }
+
+    /** @param hourly 1h K 线（升序，V3 计划用；可比回测区间早几天开始） */
+    public static Result run(List<Kline> daily, List<Kline> bars, List<Kline> hourly, BtcDailyProperties p,
+                             Function<LocalDate, MarketContext> ctx) {
+        Map<String, Integer> regimeDays = new java.util.LinkedHashMap<>();
         Book book = new Book();
         int need = BtcDailyRules.dailyNeeded(p);
         int skipped = 0, reduced = 0;
@@ -67,11 +81,16 @@ public final class BtcDailyBacktest {
                 long start = BtcDailyRules.dayStart(day);
                 List<Kline> before = daily.stream().filter(k -> k.openTime() < start).toList();
                 Kline today = daily.stream().filter(k -> k.openTime() == start).findFirst().orElse(null);
-                if (before.size() < need || today == null) {
+                List<Kline> hBefore = p.isV3() ? hourlyBefore(hourly, start, 72) : List.of();
+                if (before.size() < need || today == null
+                        || (p.isV3() && hBefore.size() < BtcDailyRules.HOURLY_NEEDED)) {
                     plan = null;
                     continue;
                 }
-                plan = BtcDailyRules.plan(day, before, today.open(), book, p, ctx == null ? null : ctx.apply(day));
+                MarketContext c = ctx == null ? null : ctx.apply(day);
+                plan = p.isV3() ? BtcDailyRules.planV3(day, before, hBefore, today.open(), book, p, c)
+                        : BtcDailyRules.plan(day, before, today.open(), book, p, c);
+                regimeDays.merge(plan.regime(), 1, Integer::sum);
                 if (plan.skipNew()) skipped++;
                 else if (plan.multiplier() < 1) reduced++;
                 if (from == null) {
@@ -127,6 +146,22 @@ public final class BtcDailyBacktest {
         List<Book.Round> big = rounds.stream().filter(r -> r.mfePct() >= BIG_MOVE_PCT).toList();
         double mfeSum = big.stream().mapToDouble(Book.Round::mfePct).sum();
         double capture = mfeSum > 0 ? big.stream().mapToDouble(Book.Round::pnlPct).sum() / mfeSum * 100 : 0;
+        Map<String, RegimeStat> byRegime = new java.util.LinkedHashMap<>();
+        for (String rg : List.of("UP", "SIDE", "DOWN")) {
+            List<Book.Round> rs = rounds.stream().filter(r -> rg.equals(r.regime())).toList();
+            if (rs.isEmpty()) continue;
+            byRegime.put(rg, new RegimeStat(rs.size(), round2(rs.stream().mapToDouble(Book.Round::pnl).sum()),
+                    round2(100.0 * rs.stream().filter(r -> r.pnl() > 0).count() / rs.size()),
+                    round2(rs.stream().mapToLong(Book.Round::holdMinutes).max().orElse(0) / 1440.0),
+                    round2(rs.stream().mapToLong(Book.Round::holdMinutes).average().orElse(0) / 1440.0),
+                    round2(rs.stream().mapToDouble(Book.Round::maePct).min().orElse(0))));
+        }
+        if (book.holding()) {
+            // 期末未卖的仓位单列，按开仓行情记浮动
+            byRegime.merge(book.openRegime + "_OPEN", new RegimeStat(1, round2(endUnrealizedOf(book, bars, p)), 0,
+                    round2(java.time.temporal.ChronoUnit.DAYS.between(book.openedDay(), last)), 0, round2(book.maePct())),
+                    (a, b) -> a);
+        }
         return new Result(p.version(), from, last, days, book.rounds(), round2(book.realized()),
                 round2(book.maxFloatLoss()), round2(book.maxFloatLoss() / p.capUsdt() * 100), maxHold,
                 round2(avgHold), round2(endUnrealized), round2(book.cost()), tradeDays,
@@ -134,7 +169,22 @@ public final class BtcDailyBacktest {
                 p.exit().mode(), round2(total), round2(total / p.capUsdt() * 100 / years), round2(maxDd),
                 round2(maxDd / p.capUsdt() * 100), rounds.isEmpty() ? 0 : round2(100.0 * wins.length / rounds.size()),
                 round2(avgWin), round2(avgLoss), avgLoss < 0 ? round2(avgWin / -avgLoss) : 0, losses.length,
-                big.size(), round2(capture));
+                big.size(), round2(capture), p.strategy(), byRegime, regimeDays);
+    }
+
+    private static double endUnrealizedOf(Book book, List<Kline> bars, BtcDailyProperties p) {
+        return bars.isEmpty() ? 0 : book.unrealized(bars.getLast().close(), p.feeRate());
+    }
+
+    /** start 之前最近 n 根 1h K 线。 */
+    static List<Kline> hourlyBefore(List<Kline> hourly, long start, int n) {
+        int lo = 0, hi = hourly.size();
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (hourly.get(mid).openTime() < start) lo = mid + 1;
+            else hi = mid;
+        }
+        return hourly.subList(Math.max(0, lo - n), lo);
     }
 
     private static double round2(double v) {

@@ -28,7 +28,39 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
                                  List<Double> tranches, double kStrong, double kWeak, double stepAtr,
                                  double tpAtrMult, double tpMinPct, double carryTpPct, double feeRate,
                                  double slippageBps, int atrDays, int emaDays, int backtestDays, Filters filters,
-                                 List<Double> stopCandidatesPct, Exit exit) {
+                                 List<Double> stopCandidatesPct, Exit exit, String strategy, V3 v3) {
+
+    /**
+     * v3 策略（2026-10-15 用户批准）：先按日线判断行情，再决定挂不挂单；卖出分批 + 跟踪，不止损。
+     * <ul>
+     * <li>上升（昨收 > EMA20 > EMA50）：开盘前在下方支撑挂三档（1h EMA20、前一日 VWAP、前一日低点，
+     *     不够的按 stepAtr 往下补，相邻至少 minGapAtr × ATR），满额。</li>
+     * <li>震荡：只挂更深的三档（开盘 − sideAtr × ATR 起），金额 × sideMultiplier。</li>
+     * <li>下跌（昨收 < EMA20 < EMA50 且 EMA20 走低）：不挂单。议息 / CPI / ETF 大幅流出等过滤照旧。</li>
+     * <li>加仓只在趋势还在时：上升行情档位须在日线 EMA20 上方，震荡须在 EMA50 上方；跨天的仓位不再加仓。</li>
+     * <li>卖出：涨到均价 + partialAtPct% 先卖 partialPct%；同时启动跟踪，剩下的从最高价回落
+     *     trailHourAtr × 1h ATR 再卖，最低按均价 + floorPct%（不卖亏）。不强制当天平仓，跟踪期间不加仓。</li>
+     * <li>被套（跨天）：不止损、不加仓、不开新一轮；回到均价 + floorPct% 后启动同样的跟踪。</li>
+     * </ul>
+     */
+    public record V3(double partialAtPct, double partialPct, double trailHourAtr, double floorPct, int hourEmaBars,
+                     int hourAtrBars, double sideAtr, double sideMultiplier, double minGapAtr, double firstFallbackAtr) {
+
+        public static V3 defaults() {
+            return new V3(1.5, 33.33, 1.5, 0.3, 20, 14, 1.5, 0.5, 0.3, 0.25);
+        }
+    }
+
+    public boolean isV3() {
+        return "V3".equals(strategy);
+    }
+
+    /** 同一套参数，换策略（V2 / V3）。 */
+    public BtcDailyProperties withStrategy(String s) {
+        return new BtcDailyProperties(enabled, version, symbol, capUsdt, capUntil, tranches, kStrong, kWeak, stepAtr,
+                tpAtrMult, tpMinPct, carryTpPct, feeRate, slippageBps, atrDays, emaDays, backtestDays, filters,
+                stopCandidatesPct, exit, s, v3);
+    }
 
     /**
      * 卖出方式。
@@ -68,7 +100,7 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
     public BtcDailyProperties withExitMode(String mode) {
         return new BtcDailyProperties(enabled, version, symbol, capUsdt, capUntil, tranches, kStrong, kWeak, stepAtr,
                 tpAtrMult, tpMinPct, carryTpPct, feeRate, slippageBps, atrDays, emaDays, backtestDays, filters,
-                stopCandidatesPct, exit.withMode(mode));
+                stopCandidatesPct, exit.withMode(mode), strategy, v3);
     }
 
     /**
@@ -117,6 +149,8 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
         if (filters == null) filters = Filters.defaults();
         if (stopCandidatesPct == null) stopCandidatesPct = List.of(3.0, 5.0, 8.0, 12.0);
         if (exit == null) exit = Exit.defaults();
+        if (strategy == null || strategy.isBlank()) strategy = "V2";
+        if (v3 == null) v3 = V3.defaults();
         double sum = tranches.stream().mapToDouble(Double::doubleValue).sum();
         if (sum > capUsdt + 1e-6) {
             throw new IllegalArgumentException("BTC 每日短线：档位合计 " + sum + " 超过上限 " + capUsdt);
@@ -125,8 +159,8 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
 
     /** 测试和回测用的默认参数（与 application.yml 一致）。 */
     public static BtcDailyProperties defaults() {
-        return new BtcDailyProperties(true, "btc-v2.3-2026-10-15", "BTCUSDT", 10_000, "2026-11-14",
+        return new BtcDailyProperties(true, "btc-v3-2026-10-15", "BTCUSDT", 10_000, "2026-11-14",
                 List.of(3000.0, 3000.0, 4000.0), 0.25, 0.6, 0.5, 0.5, 0.8, 0.3, 0.001, 2, 14, 20, 365,
-                Filters.defaults(), List.of(3.0, 5.0, 8.0, 12.0), Exit.defaults());
+                Filters.defaults(), List.of(3.0, 5.0, 8.0, 12.0), Exit.defaults().withMode("FIXED"), "AUTO", V3.defaults());
     }
 }

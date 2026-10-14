@@ -27,16 +27,18 @@ public class BtcDailyStore {
                         rs.getDouble("open"), rs.getDouble("atr"), rs.getDouble("ema"), rs.getDouble("prev_close"),
                         rs.getInt("strong") == 1, rs.getInt("carried") == 1, rs.getDouble("tp_pct"),
                         parseLevels(rs.getString("levels")), rs.getInt("skip_new") == 1, rs.getDouble("multiplier"),
-                        rs.getString("reasons")))
+                        rs.getString("reasons"), rs.getString("strategy"), rs.getString("regime"),
+                        rs.getDouble("hour_atr"), rs.getDouble("add_floor")))
                 .optional();
     }
 
     public void savePlan(DailyPlan p, Instant now) {
         jdbc.sql("""
                 INSERT OR IGNORE INTO btc_daily_plan(day, version, open, atr, ema, prev_close, strong, carried, tp_pct, levels,
-                    skip_new, multiplier, reasons, created_at)
-                VALUES (:d, :v, :o, :a, :e, :pc, :s, :c, :tp, :l, :sk, :m, :r, :now)
+                    skip_new, multiplier, reasons, created_at, strategy, regime, hour_atr, add_floor)
+                VALUES (:d, :v, :o, :a, :e, :pc, :s, :c, :tp, :l, :sk, :m, :r, :now, :st, :rg, :ha, :af)
                 """)
+                .param("st", p.strategy()).param("rg", p.regime()).param("ha", p.hourAtr()).param("af", p.addFloor())
                 .param("d", p.day().toString()).param("v", p.version()).param("o", p.open()).param("a", p.atr())
                 .param("e", p.ema()).param("pc", p.prevClose()).param("s", p.strong() ? 1 : 0)
                 .param("c", p.carried() ? 1 : 0).param("tp", p.tpPct()).param("l", formatLevels(p.levels()))
@@ -67,6 +69,7 @@ public class BtcDailyStore {
             b.trailPeak = rs.getDouble("trail_peak");
             b.soldCost = rs.getDouble("sold_cost");
             b.soldProceeds = rs.getDouble("sold_proceeds");
+            b.openRegime = rs.getString("open_regime");
             long last = rs.getLong("last_bar_open");
             return new State(b, rs.wasNull() ? null : last);
         }).optional().orElseGet(() -> new State(new Book(), null));
@@ -91,10 +94,11 @@ public class BtcDailyStore {
         jdbc.sql("""
                 INSERT OR REPLACE INTO btc_daily_state(id, qty, cost, buys, last_buy_price, opened_day, realized, rounds,
                     wins, last_exit_day, round_max_float_loss, max_float_loss, last_bar_open, updated_at,
-                    opened_at, mae_pct, mfe_pct, open_filters, stop_hits, trail_peak, sold_cost, sold_proceeds)
+                    opened_at, mae_pct, mfe_pct, open_filters, stop_hits, trail_peak, sold_cost, sold_proceeds, open_regime)
                 VALUES (1, :q, :c, :b, :lb, :od, :r, :n, :w, :le, :rm, :m, :bar, :now, :oa, :mae, :mfe, :of, :sh, :tp,
-                    :sc, :sp)
+                    :sc, :sp, :org)
                 """)
+                .param("org", b.openRegime == null ? "" : b.openRegime)
                 .param("tp", b.trailPeak).param("sc", b.soldCost).param("sp", b.soldProceeds)
                 .param("oa", b.openedAt).param("mae", b.maePct).param("mfe", b.mfePct)
                 .param("of", b.openFilters == null ? "" : b.openFilters).param("sh", formatStops(b.stopHits))
@@ -118,9 +122,10 @@ public class BtcDailyStore {
         if (round != null) {
             jdbc.sql("""
                     INSERT OR IGNORE INTO btc_daily_round(version, opened_day, opened_at, closed_at, hold_minutes, buys, cost,
-                        proceeds, pnl, pnl_pct, mae_pct, mfe_pct, exit_reason, open_filters, stop_hits)
-                    VALUES (:v, :od, :oa, :ca, :hm, :b, :c, :p, :pnl, :pp, :mae, :mfe, :er, :of, :sh)
+                        proceeds, pnl, pnl_pct, mae_pct, mfe_pct, exit_reason, open_filters, stop_hits, regime)
+                    VALUES (:v, :od, :oa, :ca, :hm, :b, :c, :p, :pnl, :pp, :mae, :mfe, :er, :of, :sh, :rg)
                     """)
+                    .param("rg", round.regime() == null ? "" : round.regime())
                     .param("v", round.version()).param("od", round.openedDay().toString())
                     .param("oa", Instant.ofEpochMilli(round.openedAt()).toString())
                     .param("ca", Instant.ofEpochMilli(round.closedAt() + 1).toString())

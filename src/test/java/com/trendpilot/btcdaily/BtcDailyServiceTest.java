@@ -129,8 +129,35 @@ class BtcDailyServiceTest {
     }
 
     @Test
+    void strategyFollowsBacktestChoice() {
+        assertThat(service.live().strategy()).isEqualTo("V2"); // 回测前用 V2
+        store.saveBacktest(service.live().version(), "{\"liveStrategy\":\"V3\",\"liveExit\":\"FIXED\"}", Instant.now());
+        assertThat(service.live().isV3()).isTrue();
+        assertThat(service.summary(Instant.now())).containsEntry("strategy", "V3");
+    }
+
+    @Test
+    void v3PlanUsesHourlyBarsWhenLive() {
+        LocalDate day = LocalDate.parse("2026-10-15");
+        long start = BtcDailyRules.dayStart(day);
+        List<Kline> daily = new ArrayList<>(BtcDailyRulesTest.daily(day.minusDays(1), 80, 60_000, 2_000));
+        daily.add(new Kline(start, 60_000, 60_000, 60_000, 60_000, 1e9, start + 86_399_999L));
+        market.daily.put("BTCUSDT", daily);
+        market.hourly.put("BTCUSDT", BtcDailyRulesTest.hourlyFlat(day, 72, 60_000, 400));
+        market.quarters.put("BTCUSDT", quarters(start - 120 * Q, start, 60_000));
+        store.saveBacktest(service.live().version(), "{\"liveStrategy\":\"V3\"}", Instant.now());
+        service.tick(Instant.ofEpochMilli(start + 60_000));
+        DailyPlan p = store.plan(day).orElseThrow();
+        assertThat(p.strategy()).isEqualTo("V3");
+        assertThat(p.regime()).isEqualTo("SIDE");
+        assertThat(p.hourAtr()).isCloseTo(400, org.assertj.core.api.Assertions.within(1e-6));
+        assertThat(jdbc.sql("SELECT text FROM notification_outbox WHERE event_key = 'btc-daily-plan-2026-10-15'")
+                .query(String.class).single()).contains("策略 v3", "先卖 1/3", "1h ATR");
+    }
+
+    @Test
     void decideExitRequiresNotWorseThanFixed() {
-        BtcDailyProperties.Exit x = BtcDailyProperties.defaults().exit();
+        BtcDailyProperties.Exit x = BtcDailyProperties.defaults().exit().withMode("AUTO");
         Map<String, BtcDailyBacktest.Result> exits = new java.util.LinkedHashMap<>();
         exits.put("FIXED", result(500, 800, 30));
         exits.put("TRAIL", result(650, 820, 31));
@@ -152,7 +179,7 @@ class BtcDailyServiceTest {
 
     static BtcDailyBacktest.Result result(double total, double dd, long hold) {
         return new BtcDailyBacktest.Result("v", null, null, 365, 100, total, 0, 0, hold, 1, 0, 0, 100, 0, 0, 0,
-                List.of(), "X", total, total / 100, dd, dd / 100, 90, 10, -5, 2, 1, 0, 0);
+                List.of(), "X", total, total / 100, dd, dd / 100, 90, 10, -5, 2, 1, 0, 0, "V2", Map.of(), Map.of());
     }
 
     @Test
