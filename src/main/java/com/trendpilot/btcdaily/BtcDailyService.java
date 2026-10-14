@@ -219,9 +219,16 @@ public class BtcDailyService {
         }
     }
 
-    /** 不比基准差：总盈亏不低于基准，最大回撤不超过基准 1.1 倍，最长被套不多于基准 2 天。 */
+    /** 新策略至少要完成的轮数：几乎不交易时"回撤小"不能算更好。 */
+    static final int MIN_ROUNDS = 10;
+
+    /**
+     * 不比基准差：至少完成 {@link #MIN_ROUNDS} 轮，总盈亏不低于基准，最大回撤不超过基准 1.1 倍，
+     * 最长被套不多于基准 2 天。
+     */
     static boolean notWorse(BtcDailyBacktest.Result r, BtcDailyBacktest.Result base) {
-        return r.totalPnl() >= base.totalPnl() - 0.01
+        return r.rounds() >= MIN_ROUNDS
+                && r.totalPnl() >= base.totalPnl() - 0.01
                 && r.maxDrawdown() <= base.maxDrawdown() * 1.1 + 0.01
                 && r.maxHoldDays() <= base.maxHoldDays() + 2;
     }

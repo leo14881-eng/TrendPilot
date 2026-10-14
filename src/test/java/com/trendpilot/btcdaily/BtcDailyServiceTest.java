@@ -156,6 +156,15 @@ class BtcDailyServiceTest {
     }
 
     @Test
+    void newStrategyNeedsEnoughCompletedRounds() {
+        BtcDailyBacktest.Result base = result(-800, 3900, 271);
+        BtcDailyBacktest.Result idle = new BtcDailyBacktest.Result("v", null, null, 365, 0, 0, 0, 0, 268, 0, -800, 10000,
+                1, 0, 0, 0, List.of(), "X", -700, -7, 2300, 23, 0, 0, 0, 0, 0, 0, 0, "V3", Map.of(), Map.of());
+        assertThat(BtcDailyService.notWorse(idle, base)).isFalse(); // 一年只做 1 笔、被套：不算更好
+        assertThat(BtcDailyService.notWorse(result(-700, 2300, 268), base)).isTrue();
+    }
+
+    @Test
     void decideExitRequiresNotWorseThanFixed() {
         BtcDailyProperties.Exit x = BtcDailyProperties.defaults().exit().withMode("AUTO");
         Map<String, BtcDailyBacktest.Result> exits = new java.util.LinkedHashMap<>();
