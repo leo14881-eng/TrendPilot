@@ -17,9 +17,10 @@ public final class Messages {
     }
 
     public static String entry(Venue venue, ReviewResult r) {
-        String verb = r.action().name().equals("ADD") ? "影子加仓 ADD" : "影子买入 BUY";
+        String verb = r.action().name().equals("ADD") ? "V2 影子加仓 ADD" : "V2 影子买入 BUY";
         return String.format(Locale.ROOT, """
                 🟢 %s %s%s
+                原因：通过 Capital Review，获得 V2 资金池额度
                 成交均价 %s，金额 %s U（含费 %s U）
                 评分 %.2f，RR %.2f，价差 %.1f bps，滑点 %.1f bps
                 研究缺口：%s""",
@@ -30,7 +31,7 @@ public final class Messages {
     public static String exit(Venue venue, ExitDecision d) {
         String icon = d.netPnl().signum() >= 0 ? "🔵" : "🔴";
         return String.format(Locale.ROOT, """
-                %s 影子卖出 SELL %s%s
+                %s V2 影子卖出 SELL %s%s
                 原因：%s
                 成交均价 %s，净盈亏 %s U，原始收益 %.2f%%""",
                 icon, d.symbol(), venueTag(venue), d.reason(), price(d.fill().avgPrice()), money(d.netPnl()), d.rawReturnPct());
@@ -43,7 +44,7 @@ public final class Messages {
             case "LOSS_RECOVERY" -> "信号连续走弱但仍亏损，进入 LOSS_RECOVERY 观察";
             default -> note;
         };
-        return String.format(Locale.ROOT, "🟡 %s %s\n当前可退出净利 %s U，原始收益 %.2f%%",
+        return String.format(Locale.ROOT, "🟡 V2 %s %s\n当前可退出净利 %s U，原始收益 %.2f%%",
                 symbol, what, money(d.netPnl()), d.rawReturnPct());
     }
 
