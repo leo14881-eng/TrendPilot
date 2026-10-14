@@ -77,6 +77,14 @@ function Get-Health {
     }
 }
 
+# 只结束我们自己的服务：java 进程且命令行含 trendpilot.jar（8080 端口可能被别的程序占用）
+function Test-OurProcess($procId) {
+    try {
+        $p = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction Stop
+        return ($p.Name -match '^javaw?\.exe$') -and ($p.CommandLine -match 'trendpilot\.jar')
+    } catch { return $false }
+}
+
 function Start-TrendPilot {
     & schtasks.exe /Run /TN 'TrendPilot-Service' | Out-Null
     for ($i = 0; $i -lt 24; $i++) {
@@ -121,6 +129,13 @@ try {
         Write-Log "健康检查异常：$h（连续第 $($s.hangCount) 次）PID=$procId"
         if ($h -eq 'stale' -or $s.hangCount -ge 3) {
             $reason = if ($h -eq 'stale') { '服务卡住了（Monitor 超过 20 分钟没有运行）' } else { '服务没有响应（约 6 分钟）' }
+            if (-not (Test-OurProcess $procId)) {
+                Write-Log "端口 $Port 被其他程序占用 PID=$procId，不结束它"
+                if (-not $s.down) { Send-Telegram "❗ TrendPilot 无法启动：8080 端口被其他程序占用（PID=$procId），请关掉那个程序" }
+                $s.down = $true; if (-not $s.downSince) { $s.downSince = (Get-Date).ToString('o') }
+                Save-State $s
+                exit 0
+            }
             try { Stop-Process -Id $procId -Force } catch { Write-Log "结束进程失败：$($_.Exception.Message)" }
             Start-Sleep -Seconds 3
         } else {

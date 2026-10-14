@@ -68,6 +68,12 @@ public class BtcDailyService {
         } else if (last < lastClosed) {
             m.bars().load(Set.of(sym), now); // 只补缓存里没有的部分
             List<Kline> bars = klines.range(Venue.BINANCE, sym, last + BarsLoader.QUARTER_MS, lastClosed);
+            long expected = (lastClosed - last) / BarsLoader.QUARTER_MS;
+            if (bars.size() < expected) {
+                // 停机较久：缓存只补最近 104 根，更早的缺口按时间段补齐，不跳过期间的成交和止盈
+                backfill(m, sym, last + BarsLoader.QUARTER_MS, lastClosed);
+                bars = klines.range(Venue.BINANCE, sym, last + BarsLoader.QUARTER_MS, lastClosed);
+            }
             if (!bars.isEmpty() && bars.getFirst().openTime() != last + BarsLoader.QUARTER_MS) {
                 log.warn("BTC 每日短线：K 线有缺口，从 {} 接着处理", Instant.ofEpochMilli(bars.getFirst().openTime()));
             }
@@ -99,6 +105,27 @@ public class BtcDailyService {
         if (!fills.isEmpty()) log.info("BTC 每日短线成交 {} 笔", fills.size());
     }
 
+    static final int BACKFILL_LIMIT = 1000;      // 每次请求约 10 天的 15m K 线
+    static final int BACKFILL_MAX_REQUESTS = 4;
+
+    private void backfill(VenueMarket m, String sym, long from, long lastClosed) {
+        long cursor = from;
+        for (int i = 0; i < BACKFILL_MAX_REQUESTS && cursor <= lastClosed; i++) {
+            List<Kline> closed;
+            try {
+                closed = m.source().klines(sym, "15m", cursor, BACKFILL_LIMIT).stream()
+                        .filter(k -> k.openTime() >= from && k.openTime() <= lastClosed).toList();
+            } catch (RuntimeException e) {
+                log.warn("BTC 每日短线：补 K 线失败，下次再试：{}", e.getMessage());
+                return;
+            }
+            if (closed.isEmpty()) return;
+            klines.upsert(Venue.BINANCE, sym, closed);
+            cursor = closed.getLast().openTime() + BarsLoader.QUARTER_MS;
+        }
+        log.info("BTC 每日短线：已按时间段补齐 K 线到 {}", Instant.ofEpochMilli(cursor));
+    }
+
     private DailyPlan createPlan(LocalDate day, List<Kline> daily, Book book, Instant now) {
         long start = BtcDailyRules.dayStart(day);
         List<Kline> before = daily.stream().filter(k -> k.openTime() < start).toList();
@@ -117,7 +144,25 @@ public class BtcDailyService {
         store.savePlan(plan, now);
         LocalDate yesterday = day.minusDays(1);
         notifier.send("btc-daily-plan-" + day, BtcDailyMessages.plan(plan, book, store.daySummary(yesterday), props));
+        remindCapReview(day);
         return plan;
+    }
+
+    /** 到了资金上限复评日发一次提醒（只提醒，不自动放大上限）。 */
+    private void remindCapReview(LocalDate day) {
+        LocalDate until;
+        try {
+            until = LocalDate.parse(props.capUntil());
+        } catch (RuntimeException e) {
+            return;
+        }
+        if (day.isBefore(until)) return;
+        BtcDailyStore.State st = store.state();
+        notifier.send("btc-daily-cap-review-" + until, "【BTC 每日短线·影子】资金上限 " + Math.round(props.capUsdt())
+                + " USDT 已到复评日 " + until + "\n累计完成 " + st.book().rounds() + " 轮，已实现 "
+                + String.format(java.util.Locale.ROOT, "%.2f", st.book().realized()) + " USDT，最大浮亏 "
+                + String.format(java.util.Locale.ROOT, "%.2f", st.book().maxFloatLoss())
+                + " USDT\n上限不会自动放大，是否调整由你决定。");
     }
 
     private List<Kline> daily(VenueMarket m) {

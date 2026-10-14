@@ -34,7 +34,8 @@ final class BtcDailyMessages {
         if (b.holding()) {
             double tpPct = BtcDailyRules.takeProfitPct(p, b, props);
             sb.append("  持仓 ").append(qty(b.qty())).append(" BTC，成本 ").append(money(b.cost()))
-                    .append("，均价 ").append(money(b.avgCost())).append("（").append(b.openedDay()).append(" 开始持有）\n");
+                    .append("，均价 ").append(money(b.avgCost())).append("（").append(b.openedDay()).append(" 开始持有，已 ")
+                    .append(java.time.temporal.ChronoUnit.DAYS.between(b.openedDay(), p.day())).append(" 天）\n");
             sb.append("  涨到 ").append(money(BtcDailyRules.takeProfitPrice(p, b, props))).append("（均价 +")
                     .append(pct(tpPct)).append("）全部卖出\n");
             sb.append("  若今天又加仓，止盈价按新均价重算\n");

@@ -21,6 +21,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.trendpilot.market.BarsLoader;
 import com.trendpilot.market.Kline;
 import com.trendpilot.market.KlineStore;
 import com.trendpilot.market.Markets;
@@ -60,6 +61,7 @@ class BtcDailyServiceTest {
     @Autowired BtcDailyService service;
     @Autowired JdbcClient jdbc;
     @Autowired KlineStore klines;
+    @Autowired BtcDailyStore store;
     @Autowired Markets markets;
     @Autowired ContextService context;
 
@@ -113,6 +115,26 @@ class BtcDailyServiceTest {
         // 独立账本：不写 V1/V2 的表
         assertThat(jdbc.sql("SELECT COUNT(*) FROM position").query(Integer.class).single()).isZero();
         assertThat(klines.latestOpenTime(Venue.BINANCE, "BTCUSDT")).isEqualTo(start + Q);
+    }
+
+    @Test
+    void longDowntimeBackfillsMissedBars() {
+        LocalDate day = LocalDate.parse("2026-10-15");
+        long start = BtcDailyRules.dayStart(day);
+        List<Kline> daily = new ArrayList<>(BtcDailyRulesTest.daily(day.minusDays(1), 80, 60_000, 2_000));
+        for (int d = 0; d < 4; d++) {
+            long s = start + d * 86_400_000L;
+            daily.add(new Kline(s, 60_000, 60_000, 60_000, 60_000, 1e9, s + 86_399_999L));
+        }
+        market.daily.put("BTCUSDT", daily);
+        market.quarters.put("BTCUSDT", quarters(start - 120 * Q, start + 3 * 96 * Q + Q, 60_000));
+        service.tick(Instant.ofEpochMilli(start + 60_000));
+        // 停机 3 天（288 根，超过缓存自动补的 104 根）后再运行：中间的 K 线全部按时间段补齐并处理
+        Instant later = Instant.ofEpochMilli(start + 3 * 96 * Q + 60_000);
+        service.tick(later);
+        long lastClosed = BarsLoader.lastClosedOpenTime(later);
+        assertThat(klines.range(Venue.BINANCE, "BTCUSDT", start, lastClosed)).hasSize((int) ((lastClosed - start) / Q) + 1);
+        assertThat(store.state().lastBarOpen()).isEqualTo(lastClosed);
     }
 
     @Test

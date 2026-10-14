@@ -74,6 +74,14 @@ function Get-ServicePid {
     return $null
 }
 
+# 只结束我们自己的服务：java 进程且命令行含 trendpilot.jar（8080 端口可能被别的程序占用）
+function Test-OurProcess($procId) {
+    try {
+        $p = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction Stop
+        return ($p.Name -match '^javaw?\.exe$') -and ($p.CommandLine -match 'trendpilot\.jar')
+    } catch { return $false }
+}
+
 function Start-TrendPilot {
     if (-not (Test-Path $Jar)) {
         $built = Join-Path $AppDir 'target\trendpilot.jar'
@@ -105,6 +113,10 @@ function Stop-TrendPilot {
     for ($i = 0; $i -lt 40; $i++) {
         if (-not (Get-Process -Id $procId -ErrorAction SilentlyContinue)) { return $true }
         Start-Sleep -Seconds 3
+    }
+    if (-not (Test-OurProcess $procId)) {
+        Write-Log "端口 $Port 上的进程 PID=$procId 不是 TrendPilot，不结束它"
+        return $false
     }
     try {
         Stop-Process -Id $procId -Force
