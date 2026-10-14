@@ -450,6 +450,27 @@ class BtcDailyRulesTest {
     }
 
     @Test
+    void v3GuardsSellStuckPositionsOnlyInBacktestVariants() {
+        DailyPlan plan = BtcDailyRules.planV3(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000),
+                hourlyFlat(DAY, 72, 60_000, 400), 60_000, new Book(), V3, null);
+        LocalDate next = DAY.plusDays(1);
+        List<Kline> down = dailyTrend(DAY, 60, 70_000, -200, 2_000);
+        for (String g : List.of("NONE", "TREND", "STOP", "TIME")) {
+            BtcDailyProperties p = V3.withGuard(g);
+            Book book = new Book();
+            BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 56_900, 56_000), p);
+            DailyPlan p2 = BtcDailyRules.planV3(next, down, hourlyFlat(next, 72, 52_000, 400), 52_000, book, p, null);
+            assertThat(p2.regime()).isEqualTo("DOWN");
+            List<Fill> f = BtcDailyRules.onBar(p2, book, bar(next, 0, 52_000, 52_100, 51_000, 51_500), p);
+            switch (g) {
+                case "TREND" -> assertThat(f).singleElement().satisfies(x -> assertThat(x.reason()).isEqualTo("趋势转跌离场"));
+                case "STOP" -> assertThat(f).singleElement().satisfies(x -> assertThat(x.reason()).isEqualTo("止损 8%"));
+                default -> assertThat(f).isEmpty(); // NONE 不止损；TIME 未满 10 天
+            }
+        }
+    }
+
+    @Test
     void wideStopSellsAtEightPercentLoss() {
         BtcDailyProperties stop = P.withExitMode("STOP");
         Book book = new Book();

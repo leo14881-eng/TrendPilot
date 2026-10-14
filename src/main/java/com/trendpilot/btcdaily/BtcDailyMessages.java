@@ -188,7 +188,9 @@ final class BtcDailyMessages {
     static String strategies(Map<String, BtcDailyBacktest.Result> runs, BtcDailyProperties props, String live) {
         Map<String, String> names = Map.of(
                 "V2", "现行 V2：开盘下方三档，到止盈价全卖（跨天 +" + fmt(props.carryTpPct()) + "%）",
-                "V2.2", "V2.2（过渡版）：V2 + 到止盈价后跟踪最高价",
+                "V3+TREND", "V3 + 趋势转跌就卖（行情变成下跌当天开盘卖）",
+                "V3+TIME", "V3 + 持有满 " + props.v3().guardDays() + " 天就卖",
+                "V3+STOP", "V3 + 跌 " + fmt(props.v3().guardStopPct()) + "% 止损",
                 "V3", "新 V3：按行情挂单（上升满额 / 震荡深位减半 / 下跌不做），涨 " + fmt(props.v3().partialAtPct())
                         + "% 卖 1/3，剩下跟踪 " + fmt(props.v3().trailHourAtr()) + "×1h ATR");
         StringBuilder sb = new StringBuilder("【BTC 每日短线】策略回测对比（参数 " + props.version() + "，近一年，同一套过滤）\n");
@@ -222,6 +224,7 @@ final class BtcDailyMessages {
                 sb.append('\n');
             }
         }
+        sb.append("\n说明：带 + 的三种是被套保护（都会亏着卖），只做回测对比，实盘仍不止损，等你决定。\n");
         if ("V3".equals(live)) {
             sb.append("\n✅ V3 不比现行差（总盈亏不低、最大回撤不超 1.1 倍、最长被套不多 2 天），影子实盘从下一个计划起改用 V3。回滚：配置 strategy 改为 V2。");
         } else if ("AUTO".equals(props.strategy())) {

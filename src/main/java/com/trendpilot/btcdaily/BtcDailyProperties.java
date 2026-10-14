@@ -44,11 +44,34 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
      * </ul>
      */
     public record V3(double partialAtPct, double partialPct, double trailHourAtr, double floorPct, int hourEmaBars,
-                     int hourAtrBars, double sideAtr, double sideMultiplier, double minGapAtr, double firstFallbackAtr) {
+                     int hourAtrBars, double sideAtr, double sideMultiplier, double minGapAtr, double firstFallbackAtr,
+                     String guard, int guardDays, double guardStopPct) {
+
+        /**
+         * guard：被套时的离场保护（用户未批准前实盘为 NONE，即不止损；其余只在回测里对比）。
+         * TREND 行情转为下跌当天开盘卖；TIME 持有满 guardDays 天卖；STOP 跌到均价 − guardStopPct% 卖。
+         */
+        public V3 {
+            if (guard == null || guard.isBlank()) guard = "NONE";
+            if (guardDays <= 0) guardDays = 10;
+            if (guardStopPct <= 0) guardStopPct = 8;
+        }
 
         public static V3 defaults() {
-            return new V3(1.5, 33.33, 1.5, 0.3, 20, 14, 1.5, 0.5, 0.3, 0.25);
+            return new V3(1.5, 33.33, 1.5, 0.3, 20, 14, 1.5, 0.5, 0.3, 0.25, "NONE", 10, 8);
         }
+
+        public V3 withGuard(String g) {
+            return new V3(partialAtPct, partialPct, trailHourAtr, floorPct, hourEmaBars, hourAtrBars, sideAtr,
+                    sideMultiplier, minGapAtr, firstFallbackAtr, g, guardDays, guardStopPct);
+        }
+    }
+
+    /** 同一套参数，换 V3 的被套保护（回测对比用）。 */
+    public BtcDailyProperties withGuard(String g) {
+        return new BtcDailyProperties(enabled, version, symbol, capUsdt, capUntil, tranches, kStrong, kWeak, stepAtr,
+                tpAtrMult, tpMinPct, carryTpPct, feeRate, slippageBps, atrDays, emaDays, backtestDays, filters,
+                stopCandidatesPct, exit, strategy, v3.withGuard(g));
     }
 
     public boolean isV3() {
@@ -159,7 +182,7 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
 
     /** 测试和回测用的默认参数（与 application.yml 一致）。 */
     public static BtcDailyProperties defaults() {
-        return new BtcDailyProperties(true, "btc-v3-2026-10-15", "BTCUSDT", 10_000, "2026-11-14",
+        return new BtcDailyProperties(true, "btc-v3.1-2026-10-15", "BTCUSDT", 10_000, "2026-11-14",
                 List.of(3000.0, 3000.0, 4000.0), 0.25, 0.6, 0.5, 0.5, 0.8, 0.3, 0.001, 2, 14, 20, 365,
                 Filters.defaults(), List.of(3.0, 5.0, 8.0, 12.0), Exit.defaults().withMode("FIXED"), "AUTO", V3.defaults());
     }
