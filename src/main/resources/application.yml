@@ -11,12 +11,20 @@ spring:
       maximum-pool-size: 1   # SQLite 单写者
   flyway:
     enabled: true
+  task:
+    scheduling:
+      shutdown:
+        await-termination: true          # 停机时等正在跑的 Discovery / Monitor 结束
+        await-termination-period: 90s
+  lifecycle:
+    timeout-per-shutdown-phase: 90s
   jackson:
     time-zone: Asia/Ho_Chi_Minh
 
 server:
   port: 8080
   address: 127.0.0.1   # 只在本机可访问
+  shutdown: graceful   # 自动更新停机时等正在处理的请求结束
 
 trendpilot:
   zone: Asia/Ho_Chi_Minh
