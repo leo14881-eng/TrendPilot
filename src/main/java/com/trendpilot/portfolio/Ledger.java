@@ -194,6 +194,7 @@ public abstract class Ledger {
                         rs.getObject(5), rs.getObject(6)}).list();
         int wins = 0;
         double realized = 0, peak = 0, maxDrawdown = 0, retSum = 0, holdSum = 0;
+        List<Double> returns = new ArrayList<>();
         int retCount = 0, holdCount = 0, excursionCount = 0, profitCount = 0;
         double maxUpSum = 0, maxDownSum = 0, toProfitSum = 0;
         for (Object[] r : sells) {
@@ -203,7 +204,9 @@ public abstract class Ledger {
             peak = Math.max(peak, realized);
             maxDrawdown = Math.max(maxDrawdown, peak - realized);
             if (r[1] != null) {
-                retSum += pnl / Double.parseDouble((String) r[1]) * 100;
+                double ret = pnl / Double.parseDouble((String) r[1]) * 100;
+                retSum += ret;
+                returns.add(ret);
                 retCount++;
             }
             if (r[1] != null && r[3] != null && r[4] != null) {
@@ -239,7 +242,16 @@ public abstract class Ledger {
                 retCount == 0 ? Double.NaN : retSum / retCount, holdCount == 0 ? Double.NaN : holdSum / holdCount / 60,
                 maxDrawdown, excursionCount == 0 ? Double.NaN : maxUpSum / excursionCount,
                 excursionCount == 0 ? Double.NaN : maxDownSum / excursionCount,
-                profitCount == 0 ? Double.NaN : toProfitSum / profitCount / 60);
+                profitCount == 0 ? Double.NaN : toProfitSum / profitCount / 60,
+                median(returns), (int) open.stream().filter(p -> markNet(p.symbol()) < 0).count(),
+                open.stream().mapToDouble(p -> Math.min(0, markNet(p.symbol()))).sum());
+    }
+
+    private static double median(List<Double> values) {
+        if (values.isEmpty()) return Double.NaN;
+        List<Double> v = values.stream().sorted().toList();
+        int n = v.size();
+        return n % 2 == 1 ? v.get(n / 2) : (v.get(n / 2 - 1) + v.get(n / 2)) / 2;
     }
 
     /** 状态类事件（PROTECT_ARM 等），不涉及成交。 */
