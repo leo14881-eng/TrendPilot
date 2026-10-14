@@ -11,6 +11,7 @@ spring:
       maximum-pool-size: 1   # SQLite 单写者
   flyway:
     enabled: true
+    out-of-order: true   # 多个线程并行开发时迁移编号可能不按合并顺序到达
   task:
     scheduling:
       shutdown:
@@ -167,6 +168,7 @@ trendpilot.research:
   coingecko-base-url: https://api.coingecko.com/api/v3
   coingecko-api-key: ${COINGECKO_API_KEY:}
   defillama-base-url: https://api.llama.fi
+  defillama-datasets-url: https://defillama-datasets.llama.fi   # 代币解锁数据集，免费，每天一次
   rotation: 25
   top-early: 10
   top-movers: 10

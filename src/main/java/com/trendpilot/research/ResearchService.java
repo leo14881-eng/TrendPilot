@@ -27,7 +27,9 @@ import com.trendpilot.market.Venue;
  * <li>资料按天从 CoinGecko（交易所交易对 → 项目、市值与供给）和 DefiLlama（TVL、手续费、收入）批量拉取并存库，
  *     Discovery 只读本地资料，不逐币请求。</li>
  * <li>每轮研究：轮转 25 个币 + 前 10 个 EARLY + 前 10 个价格异动币，结论写入 research_record。</li>
- * <li>解锁计划没有免费公开数据源，统一记为缺口 UNLOCK_SCHEDULE_NOT_COVERED，不当作拒绝理由。</li>
+ * <li>解锁计划取 DefiLlama 公开数据集（每天一次）：未来 30 天解锁 ≥ 流通 5% 标 HEAVY_UNLOCK_30D，
+ *     7 天内单次 ≥ 1% 标 UNLOCK_CLIFF_7D，否则 UNLOCK_LIGHT；未收录的币记缺口 UNLOCK_SCHEDULE_NOT_COVERED。
+ *     这些都只是标签和缺口，不当作拒绝理由。</li>
  * </ul>
  */
 @Service
@@ -36,6 +38,11 @@ public class ResearchService {
     static final Duration IDENTITY_TTL = Duration.ofHours(24);
     static final Duration MARKET_TTL = Duration.ofHours(12);
     static final Duration PROTOCOL_TTL = Duration.ofHours(24);
+    static final Duration UNLOCK_TTL = Duration.ofHours(24);
+    /** 未来 30 天解锁 ≥ 流通量 5%：供给压力大。 */
+    static final double HEAVY_UNLOCK_30D_PCT = 5;
+    /** 7 天内有一次 ≥ 流通量 1% 的集中解锁。 */
+    static final double NEAR_CLIFF_PCT = 1;
     static final Map<Venue, String> EXCHANGE_IDS = Map.of(Venue.BINANCE, "binance", Venue.BYBIT, "bybit_spot");
 
     private static final Logger log = LoggerFactory.getLogger(ResearchService.class);
@@ -83,6 +90,9 @@ public class ResearchService {
         }
         if (stale("SELECT MAX(updated_at) FROM protocol_value", PROTOCOL_TTL, now)) {
             attempt("DEFILLAMA", false, limited, now, done, () -> saveProtocols(defiLlama.protocolsByGeckoId(), now));
+        }
+        if (stale("SELECT MAX(updated_at) FROM unlock_schedule", UNLOCK_TTL, now)) {
+            attempt("UNLOCKS", false, limited, now, done, () -> saveUnlocks(defiLlama.unlocksByGeckoId(now), now));
         }
         return done;
     }
@@ -185,6 +195,21 @@ public class ResearchService {
         }
     }
 
+    @Transactional
+    public void saveUnlocks(Map<String, DefiLlamaClient.Unlock> unlocks, Instant now) {
+        if (unlocks.isEmpty()) throw new ResearchDataException("DefiLlama 解锁数据集为空");
+        jdbc.sql("DELETE FROM unlock_schedule").update();
+        for (var u : unlocks.values()) {
+            jdbc.sql("""
+                    INSERT INTO unlock_schedule(gecko_id, next_unlock_at, next_unlock_pct, unlock_30d_pct, circulating, max_supply, updated_at)
+                    VALUES (:g, :na, :np, :u30, :c, :m, :t)
+                    """)
+                    .param("g", u.geckoId()).param("na", u.nextUnlockAt() == null ? null : u.nextUnlockAt().toString())
+                    .param("np", u.nextUnlockPct()).param("u30", u.unlock30dPct()).param("c", u.circulating())
+                    .param("m", nan(u.maxSupply())).param("t", now.toString()).update();
+        }
+    }
+
     // ---------- 研究结论（只读本地资料） ----------
 
     /** 一个标的的研究结论；身份资料缺失或过期时返回 DATA_UNAVAILABLE。 */
@@ -238,7 +263,24 @@ public class ResearchService {
                 gaps.add("VALUE_CAPTURE_NOT_COVERED");
             }
         }
-        gaps.add("UNLOCK_SCHEDULE_NOT_COVERED");
+        if (coinId != null && !stale("SELECT MAX(updated_at) FROM unlock_schedule", UNLOCK_TTL.multipliedBy(3), now)) {
+            var unlock = jdbc.sql("SELECT next_unlock_at, next_unlock_pct, unlock_30d_pct FROM unlock_schedule WHERE gecko_id = :id")
+                    .param("id", coinId).query((rs, i) -> new Object[]{rs.getString(1), rs.getDouble(2), rs.getDouble(3)})
+                    .optional();
+            if (unlock.isPresent()) {
+                Object[] u = unlock.get();
+                if ((double) u[2] >= HEAVY_UNLOCK_30D_PCT) labels.add("HEAVY_UNLOCK_30D");
+                if (u[0] != null && Instant.parse((String) u[0]).isBefore(now.plus(Duration.ofDays(7)))
+                        && (double) u[1] >= NEAR_CLIFF_PCT) labels.add("UNLOCK_CLIFF_7D");
+                if (labels.stream().noneMatch(l -> l.startsWith("HEAVY_UNLOCK") || l.startsWith("UNLOCK_CLIFF"))) {
+                    labels.add("UNLOCK_LIGHT");
+                }
+            } else {
+                gaps.add("UNLOCK_SCHEDULE_NOT_COVERED"); // DefiLlama 没收录该币的解锁计划
+            }
+        } else {
+            gaps.add("UNLOCK_SCHEDULE_NOT_COVERED");
+        }
         return new ResearchRecord(venue, symbol, coinId, identity, mc, fdv, circRatio, tvl, fees, revenue,
                 List.copyOf(labels), List.copyOf(gaps));
     }
