@@ -1,11 +1,15 @@
 package com.trendpilot.notify;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -13,15 +17,22 @@ import org.springframework.web.client.RestClientException;
 /**
  * 通知发送：先写 Outbox（PREPARED），再发 Telegram，成功记 SENT，失败记 FAILED。
  * 同一个 eventKey 只发一次。PREPARED 不代表用户已收到。
+ * 超过 Telegram 单条上限的消息按行分段发送；失败的消息每 2 分钟重试，24 小时内最多 6 次，
+ * 已发出的分段不重发。
  */
 @Service
 public class Notifier {
 
     private static final Logger log = LoggerFactory.getLogger(Notifier.class);
+    /** Telegram 单条上限 4096 字符，留余量。 */
+    static final int MAX_PART = 4000;
+    static final int MAX_ATTEMPTS = 6;
 
     private final JdbcClient jdbc;
     private final TelegramProperties props;
     private final RestClient http;
+    /** 组合锁内产生的通知：先记下，解锁后再发。 */
+    private final ThreadLocal<List<String[]>> deferred = new ThreadLocal<>();
 
     public Notifier(JdbcClient jdbc, TelegramProperties props, RestClient.Builder builder) {
         this.jdbc = jdbc;
@@ -47,26 +58,110 @@ public class Notifier {
             log.warn("Telegram 未配置，通知只记录在 Outbox：{}", eventKey);
             return false;
         }
+        List<String[]> queue = deferred.get();
+        if (queue != null) {
+            queue.add(new String[] {eventKey, text});
+            return true;
+        }
+        return deliver(eventKey, text, 0);
+    }
+
+    /** 本线程之后的通知先排队；@return 是否由本次调用开启（嵌套时只有最外层负责发送）。 */
+    public boolean deferOnThisThread() {
+        if (deferred.get() != null) return false;
+        deferred.set(new ArrayList<>());
+        return true;
+    }
+
+    /** 发出本线程排队的通知并结束排队。 */
+    public void flushDeferred() {
+        List<String[]> queue = deferred.get();
+        deferred.remove();
+        if (queue == null) return;
+        for (String[] n : queue) deliver(n[0], n[1], 0);
+    }
+
+    /** 重发失败的通知（只发还没发出的分段）。 */
+    @Scheduled(fixedDelay = 120_000, initialDelay = 90_000)
+    public void retryFailed() {
+        retryFailed(Instant.now());
+    }
+
+    public int retryFailed(Instant now) {
+        if (!props.configured()) return 0;
+        record Pending(String key, String text, int sentParts) { }
+        List<Pending> pending = jdbc.sql("""
+                SELECT event_key, text, sent_parts FROM notification_outbox
+                WHERE status = 'FAILED' AND attempts < :max AND created_at >= :since ORDER BY id
+                """)
+                .param("max", MAX_ATTEMPTS).param("since", now.minus(Duration.ofHours(24)).toString())
+                .query((rs, i) -> new Pending(rs.getString(1), rs.getString(2), rs.getInt(3))).list();
+        int sent = 0;
+        for (Pending p : pending) {
+            if (deliver(p.key(), p.text(), p.sentParts())) sent++;
+            else break; // 网络还没恢复，下一轮再试
+        }
+        return sent;
+    }
+
+    private boolean deliver(String eventKey, String text, int fromPart) {
+        List<String> parts = split(text, MAX_PART);
+        int done = fromPart;
         try {
-            http.post()
-                    .uri("/bot{token}/sendMessage", props.botToken())
-                    .body(Map.of("chat_id", props.chatId(), "text", text))
-                    .retrieve()
-                    .toBodilessEntity();
-            mark(eventKey, "SENT", null);
+            for (int i = fromPart; i < parts.size(); i++) {
+                String part = parts.size() == 1 ? parts.get(i) : "(" + (i + 1) + "/" + parts.size() + ")\n" + parts.get(i);
+                http.post()
+                        .uri("/bot{token}/sendMessage", props.botToken())
+                        .body(Map.of("chat_id", props.chatId(), "text", part))
+                        .retrieve()
+                        .toBodilessEntity();
+                done = i + 1;
+            }
+            mark(eventKey, "SENT", null, done);
             return true;
         } catch (RestClientException e) {
-            log.error("Telegram 发送失败：{}", eventKey, e);
-            mark(eventKey, "FAILED", e.getMessage());
+            String msg = mask(e.getMessage());
+            log.error("Telegram 发送失败：{}：{}", eventKey, msg);
+            mark(eventKey, "FAILED", msg, done);
             return false;
         }
     }
 
-    private void mark(String eventKey, String status, String error) {
-        jdbc.sql("UPDATE notification_outbox SET status = :s, last_error = :e, updated_at = :now WHERE event_key = :key")
+    /** 按行切分，单行过长时硬切。 */
+    static List<String> split(String text, int max) {
+        List<String> out = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        for (String line : text.split("\n", -1)) {
+            while (line.length() > max) {
+                if (!cur.isEmpty()) { out.add(cur.toString()); cur.setLength(0); }
+                out.add(line.substring(0, max));
+                line = line.substring(max);
+            }
+            if (cur.length() + line.length() + 1 > max && !cur.isEmpty()) {
+                out.add(cur.toString());
+                cur.setLength(0);
+            }
+            if (!cur.isEmpty()) cur.append('\n');
+            cur.append(line);
+        }
+        if (!cur.isEmpty() || out.isEmpty()) out.add(cur.toString());
+        return out;
+    }
+
+    /** 错误信息里可能带请求地址（含 Token），记录前遮住。 */
+    static String mask(String s) {
+        return s == null ? null : s.replaceAll("bot[0-9]+(:|%3A|%3a)[A-Za-z0-9_-]+", "bot***");
+    }
+
+    private void mark(String eventKey, String status, String error, int sentParts) {
+        jdbc.sql("""
+                UPDATE notification_outbox SET status = :s, last_error = :e, updated_at = :now,
+                       attempts = attempts + 1, sent_parts = :p WHERE event_key = :key
+                """)
                 .param("s", status)
                 .param("e", error)
                 .param("now", Instant.now().toString())
+                .param("p", sentParts)
                 .param("key", eventKey)
                 .update();
     }

@@ -5,10 +5,11 @@ spring:
     # 本机私密配置（Telegram Token 等），不进代码仓库
     import: optional:file:${trendpilot.local-config:./config/application-local.yml}
   datasource:
-    url: jdbc:sqlite:${trendpilot.data-dir:./data}/trendpilot.db
+    url: jdbc:sqlite:${trendpilot.data-dir:./data}/trendpilot.db?journal_mode=WAL&busy_timeout=10000
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 1   # SQLite 单写者
+      connection-timeout: 120000   # 多个定时任务排队用同一个连接
   flyway:
     enabled: true
     out-of-order: true   # 多个线程并行开发时迁移编号可能不按合并顺序到达
