@@ -1,10 +1,13 @@
 package com.trendpilot.config;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+
+import com.trendpilot.lease.ActiveLease;
 
 /**
  * 定时任务开关；测试中关闭（trendpilot.scheduling.enabled=false）。
@@ -18,9 +21,15 @@ public class SchedulingConfig {
 
     static final int POOL_SIZE = 8;
 
+    /** 本机待命（另一台电脑在运行，见 ActiveLease）时，所有定时任务跳过。 */
     @Bean
-    public ThreadPoolTaskScheduler taskScheduler() {
-        return scheduler();
+    public ThreadPoolTaskScheduler taskScheduler(ObjectProvider<ActiveLease> lease) {
+        ThreadPoolTaskScheduler s = scheduler();
+        s.setTaskDecorator(task -> () -> {
+            ActiveLease l = lease.getIfAvailable();
+            if (l == null || l.active()) task.run();
+        });
+        return s;
     }
 
     static ThreadPoolTaskScheduler scheduler() {

@@ -31,6 +31,8 @@ public class Notifier {
     private final JdbcClient jdbc;
     private final TelegramProperties props;
     private final RestClient http;
+    /** 本机是否是运行实例（跨机器保护，见 lease.ActiveLease）；待命时只写 Outbox（STANDBY），不发。 */
+    private volatile java.util.function.BooleanSupplier sendGate = () -> true;
     /** 组合锁内产生的通知：先记下，解锁后再发。 */
     private final ThreadLocal<List<String[]>> deferred = new ThreadLocal<>();
 
@@ -40,8 +42,21 @@ public class Notifier {
         this.http = builder.baseUrl(props.apiBase()).build();
     }
 
-    /** @return 本次是否真正发出（重复事件或未配置时返回 false） */
+    public void gate(java.util.function.BooleanSupplier gate) {
+        this.sendGate = gate;
+    }
+
+    /** @return 本次是否真正发出（重复事件、未配置或本机待命时返回 false） */
     public boolean send(String eventKey, String text) {
+        return send(eventKey, text, false);
+    }
+
+    /** 不受待命限制（只用于"本机待命 / 接管"这类实例切换通知）。 */
+    public boolean sendAlways(String eventKey, String text) {
+        return send(eventKey, text, true);
+    }
+
+    private boolean send(String eventKey, String text, boolean always) {
         int inserted = jdbc.sql("""
                 INSERT OR IGNORE INTO notification_outbox(event_key, channel, text, status, created_at)
                 VALUES (:key, 'TELEGRAM', :text, 'PREPARED', :now)
@@ -56,6 +71,11 @@ public class Notifier {
         }
         if (!props.configured()) {
             log.warn("Telegram 未配置，通知只记录在 Outbox：{}", eventKey);
+            return false;
+        }
+        if (!always && !sendGate.getAsBoolean()) {
+            mark(eventKey, "STANDBY", null, 0);
+            log.info("本机待命，不发通知：{}", eventKey);
             return false;
         }
         List<String[]> queue = deferred.get();
@@ -88,7 +108,7 @@ public class Notifier {
     }
 
     public int retryFailed(Instant now) {
-        if (!props.configured()) return 0;
+        if (!props.configured() || !sendGate.getAsBoolean()) return 0;
         record Pending(String key, String text, int sentParts) { }
         List<Pending> pending = jdbc.sql("""
                 SELECT event_key, text, sent_parts FROM notification_outbox
@@ -146,6 +166,11 @@ public class Notifier {
         }
         if (!cur.isEmpty() || out.isEmpty()) out.add(cur.toString());
         return out;
+    }
+
+    /** 同 mask，供其他直接调用 Telegram 的类使用。 */
+    public static String maskText(String s) {
+        return mask(s);
     }
 
     /** 错误信息里可能带请求地址（含 Token），记录前遮住。 */

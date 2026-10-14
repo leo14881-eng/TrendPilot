@@ -18,7 +18,7 @@ import java.time.Instant;
  * <p>
  * 注意：这只管同一个数据目录。两台电脑各有自己的 data 目录，各自都能启动；
  * 目前是影子模式不下单，最坏是两份账本和两份 Telegram（启动消息里带机器名可以看出来）。
- * 将来接真实下单前，必须再加跨机器的唯一性保护（见 docs/规则说明.md「多实例」）。
+ * 跨机器的保护见 lease.ActiveLease。
  */
 public final class InstanceLock {
 
@@ -30,6 +30,10 @@ public final class InstanceLock {
 
     /** 本机标识：机器名 + 进程号，写进启动通知，方便看出是哪台机器在跑。 */
     public static String instanceId() {
+        return hostName() + "/pid " + ProcessHandle.current().pid();
+    }
+
+    public static String hostName() {
         String host = System.getenv("COMPUTERNAME");
         if (host == null || host.isBlank()) {
             try {
@@ -38,7 +42,7 @@ public final class InstanceLock {
                 host = "unknown";
             }
         }
-        return host + "/pid " + ProcessHandle.current().pid();
+        return host;
     }
 
     /** 加锁；已被别的进程持有时抛 IllegalStateException（启动失败）。同一进程重复调用无副作用。 */

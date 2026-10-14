@@ -73,4 +73,18 @@ class NotifierTest {
                 .query(String.class).single()).isEqualTo("SENT");
         assertThat(n.retryFailed(Instant.now())).isZero();
     }
+
+    @Test
+    void standbyOnlyRecordsButSwitchNoticesStillGoOut() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        Notifier n = new Notifier(jdbc, new TelegramProperties("1:t", "9", "https://tg.test"), builder);
+        n.gate(() -> false);
+        assertThat(n.send("standby-test", "x")).isFalse();
+        assertThat(jdbc.sql("SELECT status FROM notification_outbox WHERE event_key = 'standby-test'")
+                .query(String.class).single()).isEqualTo("STANDBY");
+        server.expect(ExpectedCount.once(), requestTo("https://tg.test/bot1%3At/sendMessage")).andRespond(withSuccess());
+        assertThat(n.sendAlways("standby-switch", "⏸")).isTrue();
+        server.verify();
+    }
 }
