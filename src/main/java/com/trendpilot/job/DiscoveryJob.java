@@ -232,8 +232,12 @@ public class DiscoveryJob {
                 quotes.put(pool.venue(), Map.of());
             }
         }
-        RiskState raw = riskAssessor.assess(main.btc(), btcTicker, main.universe(), lossExits,
-                evidence(quotes.getOrDefault(Venue.BINANCE, Map.of()), main, now));
+        MarketEvidence ev = evidence(quotes.getOrDefault(Venue.BINANCE, Map.of()), main, now);
+        RiskState raw = riskAssessor.assess(main.btc(), btcTicker, main.universe(), lossExits, ev);
+        // V1 只受市场类风险（BTC 急跌、流动性、稳定币、数据缺失）限制，不受 V2 的亏损冻结和恢复期限制，
+        // 否则 V2 浮亏时 V1 也停止采样，对比数据正好在行情差的时候断档
+        RiskState v1Risk = riskAssessor.assess(main.btc(), btcTicker, main.universe(), 0,
+                new MarketEvidence(ev.medianSpreadBps(), ev.stableDeviationPct(), 0));
         if (main.btc() != null) recovery.recordShockIfAny(raw, now);
         RiskState risk = recovery.apply(raw, gen);
         String prevRegime = state.get("regime").orElse(null);
@@ -317,7 +321,7 @@ public class DiscoveryJob {
                     .map(c -> new V1Tracker.Candidate(c.venue(), c.signal(), c.ticker(),
                             main.complete() && poolBy.get(c.venue()).complete(), researched.get(c.signal().symbol()).identity()))
                     .toList();
-            v1Entries.addAll(v1.enter(gen, now, v1Candidates, risk));
+            v1Entries.addAll(v1.enter(gen, now, v1Candidates, v1Risk));
             for (ReviewResult r : results) {
                 logDecision(gen, venueOf.get(r.symbol()), r, alloc.funded().contains(r), alloc.unfunded().contains(r), now);
             }
@@ -379,8 +383,8 @@ public class DiscoveryJob {
 
     private Pool loadPool(VenueMarket m, Set<String> alreadyCovered, Instant now) {
         List<Ticker24h> tickers = m.tickers().tickers24h();
-        List<Ticker24h> universe = universeFilter.select(m.directory().all(), tickers, alreadyCovered,
-                research.excludedSymbols(m.venue()));
+        Set<String> excluded = research.excludedSymbols(m.venue());
+        List<Ticker24h> universe = universeFilter.select(m.directory().all(), tickers, alreadyCovered, excluded);
         List<String> names = new ArrayList<>(universe.stream().map(Ticker24h::symbol).toList());
         if (!names.contains(UniverseFilter.BTC)) {
             names.add(UniverseFilter.BTC);
@@ -398,8 +402,11 @@ public class DiscoveryJob {
         BarsLoader.Result bars = m.bars().load(names, now);
         SymbolBars btc = bars.bars().get(UniverseFilter.BTC);
         double missingRatio = bars.missing().size() / (double) names.size();
-        boolean complete = btc != null && missingRatio <= params.universe().maxMissingRatio();
-        return new Pool(m, tickers, universe, bars, btc, complete, null);
+        // 分类资料（稳定币、代币化股票）还没加载时不放行：交易所本身不标股票类，只靠名单会漏掉
+        boolean categoriesLoaded = !excluded.isEmpty();
+        if (!categoriesLoaded) log.warn("{} 分类资料缺失（CATEGORY_DATA_MISSING），本轮不做新买入", m.venue());
+        boolean complete = btc != null && missingRatio <= params.universe().maxMissingRatio() && categoriesLoaded;
+        return new Pool(m, tickers, universe, bars, btc, complete, categoriesLoaded ? null : "CATEGORY_DATA_MISSING");
     }
 
     private Map<String, OrderBook> fetchBooks(List<Candidate> candidates) {

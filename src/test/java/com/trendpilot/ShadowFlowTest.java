@@ -96,10 +96,12 @@ class ShadowFlowTest {
         }
         // 身份资料：测试标的在 CoinGecko 上唯一对应一个项目（资料时间放在测试截面之后，不算过期）
         Instant fresh = Instant.parse("2026-12-31T00:00:00Z");
-        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "XYZ", "BYO", "WEAK", "AAA", "BBB", "CCC")
+        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "XYZ", "BYO", "WEAK", "AAA", "BBB", "CCC", "STKX")
                 .map(b -> new CoinGeckoClient.ExchangeTicker(b, "USDT", b.toLowerCase() + "-coin")).toList();
         research.saveIdentity(Venue.BINANCE, listed, fresh);
         research.saveIdentity(Venue.BYBIT, listed, fresh);
+        // 分类资料已加载（没有分类资料时不做新买入）
+        research.saveCategory("tokenized-stock", List.of("stkx-coin"), fresh);
     }
 
     @Test
@@ -175,6 +177,22 @@ class ShadowFlowTest {
         var stats = exitReplay.stats(exitReplay.latest());
         assertThat(stats).anyMatch(st -> st.ruleId().equals("B0"));
         assertThat(exitReplay.lines(stats, 3)).anyMatch(l -> l.contains("未达采纳门槛"));
+    }
+
+    @Test
+    void missingCategoryDataBlocksNewBuys() {
+        jdbc.sql("DELETE FROM coin_category").update();
+        Instant t0 = Instant.parse("2026-10-14T10:17:00Z");
+        market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
+        for (String s : new String[]{"AAAUSDT", "BBBUSDT", "CCCUSDT"}) {
+            market.put(s, 2.0, TestData.flatQuarters(t0, 10), null);
+        }
+        DiscoveryJob.Report d = discovery.runOnce(t0);
+        assertThat(d.scanComplete()).isFalse();
+        assertThat(d.entries()).isEmpty();
+        assertThat(d.pools()).contains("CATEGORY_DATA_MISSING");
+        assertThat(book.positions()).isEmpty();
     }
 
     @Test
