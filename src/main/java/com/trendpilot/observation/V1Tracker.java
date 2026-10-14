@@ -51,6 +51,8 @@ import com.trendpilot.universe.UniverseFilter;
 public class V1Tracker {
 
     private static final Logger log = LoggerFactory.getLogger(V1Tracker.class);
+    /** V1 买入/卖出通知只列前 20 个，其余只给数量（全部明细在网页和数据库里）。 */
+    static final int NOTIFY_TOP = 20;
 
     private final ObservationBook book;
     private final Markets markets;
@@ -76,7 +78,7 @@ public class V1Tracker {
     /** @return 本轮新进入 V1 的标的 */
     public List<String> enter(String gen, Instant now, List<Candidate> early, RiskState risk) {
         List<String> entered = new ArrayList<>();
-        List<String> lines = new ArrayList<>();
+        List<Map.Entry<Double, String>> ranked = new ArrayList<>();
         if (!risk.newRiskAllowed()) {
             return entered; // 系统风险不允许新增时 V1 也不进入
         }
@@ -94,13 +96,13 @@ public class V1Tracker {
             Fill fill = ExecutionSimulator.buy(ref, BigDecimal.valueOf(params.capital().tradeSize()), params.feeRate());
             book.open(c.venue(), s.symbol(), fill, gen, now);
             entered.add(s.symbol());
-            lines.add(String.format(Locale.ROOT, "· %s%s 价格 %s，评分 %.1f，命中 %s", s.symbol(),
-                    Messages.venueTag(c.venue()), Messages.price(fill.avgPrice()), s.score(), String.join("/", s.hits())));
+            ranked.add(Map.entry(s.score(), String.format(Locale.ROOT, "· %s%s 价格 %s，评分 %.1f，命中 %s", s.symbol(),
+                    Messages.venueTag(c.venue()), Messages.price(fill.avgPrice()), s.score(), String.join("/", s.hits()))));
         }
-        if (!lines.isEmpty()) {
-            notifier.send("v1-entry:" + gen, "🟢 V1 观察买入 " + lines.size() + " 个（每个名义 "
+        if (!ranked.isEmpty()) {
+            notifier.send("v1-entry:" + gen, "🟢 V1 观察买入 " + ranked.size() + " 个（每个名义 "
                     + (int) params.capital().tradeSize() + " U，参考价记账，不占 V2 资金）\n"
-                    + "原因：EARLY 至少命中 " + params.early().minHits() + " 个条件\n" + Messages.lines(lines));
+                    + "原因：EARLY 至少命中 " + params.early().minHits() + " 个条件\n" + Messages.top(ranked, NOTIFY_TOP, "评分最高"));
         }
         return entered;
     }
@@ -121,7 +123,8 @@ public class V1Tracker {
         Map<Venue, List<Position>> byVenue = positions.stream().collect(Collectors.groupingBy(Position::venue,
                 () -> new EnumMap<>(Venue.class), Collectors.toList()));
         List<String> exits = new ArrayList<>();
-        List<String> lines = new ArrayList<>();
+        List<Map.Entry<Double, String>> lines = new ArrayList<>();
+        BigDecimal total = BigDecimal.ZERO;
         for (var e : byVenue.entrySet()) {
             VenueMarket m = markets.get(e.getKey());
             if (m == null) continue;
@@ -153,15 +156,18 @@ public class V1Tracker {
                 if (d.sell()) {
                     book.close(pos, d.fill(), d.netPnl(), d.reason(), gen, now);
                     exits.add(pos.symbol());
-                    lines.add(String.format(Locale.ROOT, "· %s%s %s，净盈亏 %s U（%.2f%%）", pos.symbol(),
-                            Messages.venueTag(pos.venue()), d.reason(), Messages.money(d.netPnl()), d.rawReturnPct()));
+                    total = total.add(d.netPnl());
+                    lines.add(Map.entry(d.netPnl().abs().doubleValue(), String.format(Locale.ROOT,
+                            "· %s%s %s，净盈亏 %s U（%.2f%%）", pos.symbol(),
+                            Messages.venueTag(pos.venue()), d.reason(), Messages.money(d.netPnl()), d.rawReturnPct())));
                 } else {
                     book.update(d.updated(), d.netPnl(), now);
                 }
             }
         }
         if (!lines.isEmpty()) {
-            notifier.send("v1-exit:" + gen, "🔵 V1 观察卖出 " + lines.size() + " 个（参考价记账）\n" + Messages.lines(lines));
+            notifier.send("v1-exit:" + gen, "🔵 V1 观察卖出 " + lines.size() + " 个（参考价记账），合计净盈亏 "
+                    + Messages.money(total) + " U\n" + Messages.top(lines, NOTIFY_TOP, "盈亏金额最大"));
         }
         return exits;
     }

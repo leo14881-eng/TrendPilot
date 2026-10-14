@@ -1,0 +1,76 @@
+package com.trendpilot.notify;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.List;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.client.ExpectedCount;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
+
+import com.trendpilot.support.TestData;
+
+/** 通知：长消息分段、失败重试只补发没发出的分段、错误信息遮住 Token。 */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@ActiveProfiles("test")
+class NotifierTest {
+
+    static final Path dataDir = TestData.dataDir();
+
+    @DynamicPropertySource
+    static void props(DynamicPropertyRegistry r) {
+        r.add("trendpilot.data-dir", () -> dataDir.toString());
+    }
+
+    @Autowired JdbcClient jdbc;
+
+    @Test
+    void splitsLongMessagesByLine() {
+        String line = "x".repeat(1500);
+        List<String> parts = Notifier.split(String.join("\n", line, line, line, line), Notifier.MAX_PART);
+        assertThat(parts).hasSize(2);
+        assertThat(parts).allMatch(p -> p.length() <= Notifier.MAX_PART);
+        assertThat(Notifier.split("x".repeat(9000), 4000)).hasSize(3);
+        assertThat(Notifier.split("短消息", 4000)).containsExactly("短消息");
+    }
+
+    @Test
+    void masksTokenInErrors() {
+        assertThat(Notifier.mask("I/O error on POST request for \"https://api.telegram.org/bot123%3AAbC_d-9/sendMessage\"")).doesNotContain("AbC_d");
+        assertThat(Notifier.mask("bot123:AbC_d-9/x"))
+                .doesNotContain("123:AbC").contains("bot***");
+    }
+
+    @Test
+    void failedPartsAreRetriedOnce() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        Notifier n = new Notifier(jdbc, new TelegramProperties("1:t", "9", "https://tg.test"), builder);
+        String url = "https://tg.test/bot1%3At/sendMessage";
+        String text = "a".repeat(3000) + "\n" + "b".repeat(3000);
+        server.expect(ExpectedCount.once(), requestTo(url)).andRespond(withSuccess());
+        server.expect(ExpectedCount.once(), requestTo(url)).andRespond(withServerError());
+        assertThat(n.send("retry-test", text)).isFalse();
+        server.verify();
+
+        server.reset();
+        server.expect(ExpectedCount.once(), requestTo(url)).andRespond(withSuccess());   // 只补发第 2 段
+        assertThat(n.retryFailed(Instant.now())).isEqualTo(1);
+        server.verify();
+        assertThat(jdbc.sql("SELECT status FROM notification_outbox WHERE event_key = 'retry-test'")
+                .query(String.class).single()).isEqualTo("SENT");
+        assertThat(n.retryFailed(Instant.now())).isZero();
+    }
+}

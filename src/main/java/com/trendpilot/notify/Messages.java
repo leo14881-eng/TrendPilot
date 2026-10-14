@@ -3,6 +3,7 @@ package com.trendpilot.notify;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 
 import com.trendpilot.capital.ReviewResult;
@@ -65,6 +66,14 @@ public final class Messages {
 
     public static String lines(List<String> lines) {
         return String.join("\n", lines);
+    }
+
+    /** 按分值从大到小列出前 n 行，其余只给数量。 */
+    public static String top(List<Map.Entry<Double, String>> ranked, int n, String by) {
+        List<String> sorted = ranked.stream().sorted(Map.Entry.<Double, String>comparingByKey().reversed())
+                .map(Map.Entry::getValue).toList();
+        if (sorted.size() <= n) return lines(sorted);
+        return "（只列" + by + "的 " + n + " 个，另有 " + (sorted.size() - n) + " 个见网页）\n" + lines(sorted.subList(0, n));
     }
 
     public static String money(BigDecimal v) {
