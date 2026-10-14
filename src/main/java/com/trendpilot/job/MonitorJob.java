@@ -3,6 +3,7 @@ package com.trendpilot.job;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,11 +17,12 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.trendpilot.market.BarsLoader;
-import com.trendpilot.market.DepthCache;
+import com.trendpilot.market.Markets;
 import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.SymbolBars;
-import com.trendpilot.market.SymbolDirectory;
 import com.trendpilot.market.SymbolInfo;
+import com.trendpilot.market.Venue;
+import com.trendpilot.market.VenueMarket;
 import com.trendpilot.monitor.ExitDecision;
 import com.trendpilot.monitor.ExitPolicy;
 import com.trendpilot.notify.Messages;
@@ -42,9 +44,7 @@ public class MonitorJob {
 
     private static final Logger log = LoggerFactory.getLogger(MonitorJob.class);
 
-    private final SymbolDirectory directory;
-    private final DepthCache depthCache;
-    private final BarsLoader barsLoader;
+    private final Markets markets;
     private final EarlySignalCalculator signals;
     private final ExitPolicy exitPolicy;
     private final ShadowBook book;
@@ -53,12 +53,10 @@ public class MonitorJob {
     private final JobRuns runs;
     private final AppState state;
 
-    public MonitorJob(SymbolDirectory directory, DepthCache depthCache, BarsLoader barsLoader, EarlySignalCalculator signals,
+    public MonitorJob(Markets markets, EarlySignalCalculator signals,
                       ExitPolicy exitPolicy, ShadowBook book, PortfolioLock lock, Notifier notifier, JobRuns runs,
                       AppState state) {
-        this.directory = directory;
-        this.depthCache = depthCache;
-        this.barsLoader = barsLoader;
+        this.markets = markets;
         this.signals = signals;
         this.exitPolicy = exitPolicy;
         this.book = book;
@@ -100,15 +98,21 @@ public class MonitorJob {
         if (snapshot.isEmpty()) {
             return new Report(gen, 0, List.of(), "N/A");
         }
-        List<String> symbols = snapshot.stream().map(Position::symbol).toList();
 
-        // 必需数据：交易状态（缓存的整表）+ 全数量盘口；缺任何一个就停止本轮
+        // 必需数据：交易状态（缓存的整表）+ 全数量盘口，都取持仓所在交易所的；缺任何一个就停止本轮
         Map<String, Observed> observed = new LinkedHashMap<>();
         List<String> missing = new ArrayList<>();
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             Map<String, Future<Observed>> fs = new LinkedHashMap<>();
-            symbols.forEach(s -> fs.put(s, pool.submit(
-                    () -> new Observed(directory.get(s), depthCache.get(s, DiscoveryJob.DEPTH_LIMIT)))));
+            for (Position p : snapshot) {
+                VenueMarket m = markets.get(p.venue());
+                if (m == null) {
+                    missing.add(p.symbol());
+                    continue;
+                }
+                fs.put(p.symbol(), pool.submit(() -> new Observed(m.directory().get(p.symbol()),
+                        m.depth().get(p.symbol(), DiscoveryJob.DEPTH_LIMIT))));
+            }
             for (var e : fs.entrySet()) {
                 try {
                     Observed o = e.getValue().get();
@@ -124,11 +128,14 @@ public class MonitorJob {
             return new Report(gen, snapshot.size(), List.of(), "STOPPED_MISSING:" + missing);
         }
 
-        // 信号指标（可选）：K 线走本地缓存，只有新收盘的 15m K 线才请求；缺失时该持仓本轮不算有效观察
-        List<String> barNames = new ArrayList<>(symbols);
-        barNames.add(UniverseFilter.BTC);
-        BarsLoader.Result bars = barsLoader.load(barNames, now);
-        SymbolBars btc = bars.bars().get(UniverseFilter.BTC);
+        // 信号指标（可选）：K 线走本地缓存，只有新收盘的 15m K 线才请求；每个交易所用自己的 BTC 基准；
+        // 缺失时该持仓本轮不算有效观察
+        Map<Venue, BarsLoader.Result> barsBy = new EnumMap<>(Venue.class);
+        for (Venue v : snapshot.stream().map(Position::venue).distinct().toList()) {
+            List<String> names = new ArrayList<>(snapshot.stream().filter(p -> p.venue() == v).map(Position::symbol).toList());
+            names.add(UniverseFilter.BTC);
+            barsBy.put(v, markets.get(v).bars().load(names, now));
+        }
 
         List<String> exits = new ArrayList<>();
         lock.run(() -> {
@@ -137,13 +144,16 @@ public class MonitorJob {
                 if (o == null) {
                     continue; // 抓取之后新开的仓，下轮再看
                 }
-                SymbolBars b = bars.bars().get(pos.symbol());
+                BarsLoader.Result bars = barsBy.get(pos.venue());
+                SymbolBars b = bars == null ? null : bars.bars().get(pos.symbol());
+                SymbolBars btc = bars == null ? null : bars.bars().get(UniverseFilter.BTC);
                 EarlySignal sig = (b == null || btc == null) ? null : signals.compute(b, btc);
                 ExitDecision d = exitPolicy.evaluate(pos, o.info(), o.book(), sig);
                 apply(gen, now, pos, d, exits);
             }
         });
-        return new Report(gen, snapshot.size(), exits, bars.complete() ? "COMPLETE" : "PARTIAL_DATA");
+        boolean complete = barsBy.values().stream().allMatch(BarsLoader.Result::complete);
+        return new Report(gen, snapshot.size(), exits, complete ? "COMPLETE" : "PARTIAL_DATA");
     }
 
     private void apply(String gen, Instant now, Position pos, ExitDecision d, List<String> exits) {
@@ -155,13 +165,13 @@ public class MonitorJob {
                 if (state.get(flag).isPresent()) continue;
                 state.put(flag, now.toString());
             }
-            book.note(pos.symbol(), note, gen, now);
+            book.note(pos, note, gen, now);
             notifier.send("note:" + note + ":" + posKey + ":" + gen, Messages.note(pos.symbol(), note, d));
         }
         if (d.sell()) {
             book.close(pos, d.fill(), d.netPnl(), d.reason(), gen, now);
             exits.add(d.reason() + ":" + pos.symbol());
-            notifier.send("exit:" + posKey, Messages.exit(d));
+            notifier.send("exit:" + posKey, Messages.exit(pos.venue(), d));
         } else {
             book.update(d.updated(), now);
         }

@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.trendpilot.config.StrategyParams;
 import com.trendpilot.market.ExecutionSimulator.Fill;
+import com.trendpilot.market.Venue;
 
 /**
  * V2 影子账本：事件只追加（shadow_event），持仓表保存当前状态。
@@ -63,30 +64,30 @@ public class ShadowBook {
     }
 
     @Transactional
-    public Position open(String symbol, Fill fill, String generation, Instant now) {
-        Position p = new Position(symbol, fill.qty(), fill.totalCost(), fill.notional(), 1, fill.avgPrice(), now,
+    public Position open(Venue venue, String symbol, Fill fill, String generation, Instant now) {
+        Position p = new Position(venue, symbol, fill.qty(), fill.totalCost(), fill.notional(), 1, fill.avgPrice(), now,
                 generation, now, false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false);
         insertPosition(p, now);
-        event(symbol, "BUY", fill, null, "CAPITAL_REVIEW_BUY", generation, now);
+        event(venue, symbol, "BUY", fill, null, "CAPITAL_REVIEW_BUY", generation, now);
         return p;
     }
 
     @Transactional
     public Position add(Position cur, Fill fill, String generation, Instant now) {
         // 加仓后利润保护重新基准化
-        Position p = new Position(cur.symbol(), cur.qty().add(fill.qty()), cur.costBasis().add(fill.totalCost()),
+        Position p = new Position(cur.venue(), cur.symbol(), cur.qty().add(fill.qty()), cur.costBasis().add(fill.totalCost()),
                 cur.entryNotional().add(fill.notional()), cur.tranches() + 1, fill.avgPrice(), now, generation,
                 cur.openedAt(), false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false);
         jdbc.sql("DELETE FROM position WHERE symbol = :s").param("s", cur.symbol()).update();
         insertPosition(p, now);
-        event(cur.symbol(), "ADD", fill, null, "CAPITAL_REVIEW_ADD", generation, now);
+        event(cur.venue(), cur.symbol(), "ADD", fill, null, "CAPITAL_REVIEW_ADD", generation, now);
         return p;
     }
 
     @Transactional
     public void close(Position cur, Fill fill, BigDecimal pnl, String reason, String generation, Instant now) {
         jdbc.sql("DELETE FROM position WHERE symbol = :s").param("s", cur.symbol()).update();
-        event(cur.symbol(), "SELL", fill, pnl, reason, generation, now);
+        event(cur.venue(), cur.symbol(), "SELL", fill, pnl, reason, generation, now);
     }
 
     public void update(Position p, Instant now) {
@@ -101,8 +102,8 @@ public class ShadowBook {
     }
 
     /** 状态类事件（PROTECT_ARM 等），不涉及成交。 */
-    public void note(String symbol, String type, String generation, Instant now) {
-        event(symbol, type, null, null, type, generation, now);
+    public void note(Position pos, String type, String generation, Instant now) {
+        event(pos.venue(), pos.symbol(), type, null, null, type, generation, now);
     }
 
     /** 记录 EARLY 首次出现价格；超过 7 天未再出现则重新计。 */
@@ -128,13 +129,13 @@ public class ShadowBook {
 
     private void insertPosition(Position p, Instant now) {
         jdbc.sql("""
-                INSERT INTO position(symbol, qty, cost_basis, entry_notional, tranches, last_tranche_price,
+                INSERT INTO position(venue, symbol, qty, cost_basis, entry_notional, tranches, last_tranche_price,
                     last_signal_at, last_generation, opened_at, protect_armed, protect_floor, peak_net,
                     weak_streak, loss_recovery, updated_at)
-                VALUES (:s, :qty, :cost, :notional, :tr, :ltp, :lsa, :gen, :opened, :armed, :floor, :peak,
+                VALUES (:venue, :s, :qty, :cost, :notional, :tr, :ltp, :lsa, :gen, :opened, :armed, :floor, :peak,
                     :streak, :recovery, :now)
                 """)
-                .param("s", p.symbol()).param("qty", p.qty().toPlainString())
+                .param("venue", p.venue().name()).param("s", p.symbol()).param("qty", p.qty().toPlainString())
                 .param("cost", p.costBasis().toPlainString()).param("notional", p.entryNotional().toPlainString())
                 .param("tr", p.tranches()).param("ltp", p.lastTranchePrice().toPlainString())
                 .param("lsa", p.lastSignalAt().toString()).param("gen", p.lastGeneration())
@@ -144,14 +145,14 @@ public class ShadowBook {
                 .param("now", now.toString()).update();
     }
 
-    private void event(String symbol, String type, Fill fill, BigDecimal pnl, String reason, String generation,
+    private void event(Venue venue, String symbol, String type, Fill fill, BigDecimal pnl, String reason, String generation,
                        Instant now) {
         jdbc.sql("""
-                INSERT INTO shadow_event(event_id, book, symbol, type, quantity, price, notional_usdt, fee_usdt,
+                INSERT INTO shadow_event(event_id, book, venue, symbol, type, quantity, price, notional_usdt, fee_usdt,
                     pnl_usdt, reason_code, generation, params_version, created_at)
-                VALUES (:id, :book, :s, :type, :qty, :price, :notional, :fee, :pnl, :reason, :gen, :ver, :now)
+                VALUES (:id, :book, :venue, :s, :type, :qty, :price, :notional, :fee, :pnl, :reason, :gen, :ver, :now)
                 """)
-                .param("id", UUID.randomUUID().toString()).param("book", BOOK).param("s", symbol).param("type", type)
+                .param("id", UUID.randomUUID().toString()).param("book", BOOK).param("venue", venue.name()).param("s", symbol).param("type", type)
                 .param("qty", fill == null ? null : fill.qty().toPlainString())
                 .param("price", fill == null ? null : fill.avgPrice().toPlainString())
                 .param("notional", fill == null ? null : fill.notional().toPlainString())
@@ -163,7 +164,7 @@ public class ShadowBook {
     }
 
     private static Position mapPosition(ResultSet rs, int row) throws SQLException {
-        return new Position(rs.getString("symbol"), new BigDecimal(rs.getString("qty")),
+        return new Position(Venue.valueOf(rs.getString("venue")), rs.getString("symbol"), new BigDecimal(rs.getString("qty")),
                 new BigDecimal(rs.getString("cost_basis")), new BigDecimal(rs.getString("entry_notional")),
                 rs.getInt("tranches"), new BigDecimal(rs.getString("last_tranche_price")),
                 Instant.parse(rs.getString("last_signal_at")), rs.getString("last_generation"),

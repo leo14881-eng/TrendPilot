@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.SymbolInfo;
+import com.trendpilot.market.Venue;
 import com.trendpilot.portfolio.Position;
 import com.trendpilot.signal.EarlySignal;
 import com.trendpilot.support.TestData;
@@ -18,13 +19,13 @@ class ExitPolicyTest {
 
     private final ExitPolicy policy = new ExitPolicy(TestData.params());
     private final Instant now = Instant.parse("2026-10-14T10:20:00Z");
-    private final SymbolInfo trading = new SymbolInfo("ABCUSDT", "ABC", "USDT", "TRADING", true);
+    private final SymbolInfo trading = new SymbolInfo("ABCUSDT", "ABC", "USDT", true, "");
     private final EarlySignal neutral = signal(0.1, 0.1, 0.1, 0.1);
     private final EarlySignal weak = signal(-0.5, -1, -0.3, -0.2);
 
     /** 买入 10 个，均价 100，成本 1001。 */
     private Position bought() {
-        return new Position("ABCUSDT", new BigDecimal("10"), new BigDecimal("1001"), new BigDecimal("1000"), 1,
+        return new Position(Venue.BINANCE, "ABCUSDT", new BigDecimal("10"), new BigDecimal("1001"), new BigDecimal("1000"), 1,
                 new BigDecimal("100"), now, "D-0", now, false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false);
     }
 
@@ -67,7 +68,7 @@ class ExitPolicyTest {
 
     @Test
     void hardInvalidSellsEvenAtLoss() {
-        SymbolInfo halted = new SymbolInfo("ABCUSDT", "ABC", "USDT", "BREAK", true);
+        SymbolInfo halted = new SymbolInfo("ABCUSDT", "ABC", "USDT", false, "");
         ExitDecision d = policy.evaluate(bought(), halted, book(95), neutral);
         assertThat(d.sell()).isTrue();
         assertThat(d.reason()).isEqualTo("HARD_INVALID_NOT_TRADING");

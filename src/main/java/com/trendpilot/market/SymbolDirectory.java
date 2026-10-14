@@ -8,14 +8,11 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 
 /**
  * 交易对信息缓存：整表一次请求，缓存 10 分钟，Discovery 和 Monitor 共用。
- * 不在表里的标的（已下架）返回 null。
+ * 不在表里的标的（已下架）返回 null。每个交易所一个实例（见 {@link Markets}）。
  */
-@Component
 public class SymbolDirectory {
 
     static final Duration TTL = Duration.ofMinutes(10);
@@ -27,7 +24,6 @@ public class SymbolDirectory {
     private record Snapshot(List<SymbolInfo> all, Map<String, SymbolInfo> bySymbol, Instant fetchedAt) {
     }
 
-    @Autowired
     public SymbolDirectory(MarketDataSource market) {
         this(market, Clock.systemUTC());
     }

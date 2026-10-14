@@ -44,7 +44,8 @@ class BarsLoaderTest {
     }
 
     @Autowired FakeMarket market;
-    @Autowired BarsLoader loader;
+    @Autowired Markets markets;
+    BarsLoader loader;
     @Autowired JdbcClient jdbc;
 
     private final Instant t0 = Instant.parse("2026-10-14T10:17:00Z");
@@ -52,6 +53,7 @@ class BarsLoaderTest {
     @BeforeEach
     void reset() {
         market.reset();
+        loader = markets.get(Venue.BINANCE).bars();
         jdbc.sql("DELETE FROM kline_15m").update();
     }
 

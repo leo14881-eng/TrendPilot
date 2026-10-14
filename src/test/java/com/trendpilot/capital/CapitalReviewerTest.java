@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.Ticker24h;
+import com.trendpilot.market.Venue;
 import com.trendpilot.portfolio.Position;
 import com.trendpilot.risk.Regime;
 import com.trendpilot.risk.RiskState;
@@ -120,7 +121,7 @@ class CapitalReviewerTest {
     }
 
     private Position position(BigDecimal lastPrice, Instant lastSignal, int tranches) {
-        return new Position("ABCUSDT", new BigDecimal("10"), new BigDecimal("1001"), new BigDecimal("1000"), tranches,
+        return new Position(Venue.BINANCE, "ABCUSDT", new BigDecimal("10"), new BigDecimal("1001"), new BigDecimal("1000"), tranches,
                 lastPrice, lastSignal, "D-0", lastSignal, false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false);
     }
 }

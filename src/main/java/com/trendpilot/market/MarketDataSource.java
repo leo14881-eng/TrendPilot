@@ -4,9 +4,11 @@ import java.util.List;
 
 /**
  * 行情来源。实现必须在失败时抛 {@link MarketDataException}，绝不返回伪造数据。
- * 调用方应通过 {@link SymbolDirectory}、{@link KlineStore}、{@link DepthCache} 使用缓存，避免频繁请求。
+ * 调用方应通过 {@link Markets} 拿到带缓存的 {@link VenueMarket}，避免频繁请求。
  */
 public interface MarketDataSource {
+
+    Venue venue();
 
     /** 全部现货交易对（一次请求）。 */
     List<SymbolInfo> symbols();

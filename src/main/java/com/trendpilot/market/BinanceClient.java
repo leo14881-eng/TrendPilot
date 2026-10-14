@@ -1,39 +1,36 @@
 package com.trendpilot.market;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Semaphore;
 import java.util.function.Supplier;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatusCode;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.HttpStatusCodeException;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
 /**
  * Binance 现货公开行情（只读，不涉及任何下单接口）。
- * 全局最多 maxConcurrency 个并发请求；429/5xx/网络错误有界重试 + 指数退避，418（封禁）立即失败。
+ * 请求限流与重试见 {@link PublicRest}。
  */
 @Component
+@ConditionalOnProperty(prefix = "trendpilot.binance", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class BinanceClient implements MarketDataSource {
 
-    private static final Logger log = LoggerFactory.getLogger(BinanceClient.class);
-    private static final int MAX_ATTEMPTS = 3;
-
     private final RestClient http;
-    private final Semaphore permits;
+    private final PublicRest rest;
 
     public BinanceClient(BinanceProperties props, RestClient.Builder builder) {
         this.http = builder.baseUrl(props.baseUrl()).build();
-        this.permits = new Semaphore(Math.max(1, props.maxConcurrency()));
+        this.rest = new PublicRest("Binance", props.maxConcurrency());
+    }
+
+    @Override
+    public Venue venue() {
+        return Venue.BINANCE;
     }
 
     @Override
@@ -80,7 +77,7 @@ public class BinanceClient implements MarketDataSource {
 
     private static SymbolInfo toSymbol(JsonNode s) {
         return new SymbolInfo(s.path("symbol").asText(), s.path("baseAsset").asText(), s.path("quoteAsset").asText(),
-                s.path("status").asText(), s.path("isSpotTradingAllowed").asBoolean());
+                "TRADING".equals(s.path("status").asText()) && s.path("isSpotTradingAllowed").asBoolean(), "");
     }
 
     private static List<OrderBook.Level> levels(JsonNode arr) {
@@ -92,40 +89,6 @@ public class BinanceClient implements MarketDataSource {
     }
 
     private JsonNode get(Supplier<RestClient.RequestHeadersSpec<?>> request, String what) {
-        Exception last = null;
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            try {
-                permits.acquire();
-                try {
-                    return request.get().retrieve().body(JsonNode.class);
-                } finally {
-                    permits.release();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new MarketDataException("请求被中断：" + what, e);
-            } catch (HttpStatusCodeException e) {
-                HttpStatusCode code = e.getStatusCode();
-                if (code.value() == 418 || (code.is4xxClientError() && code.value() != 429)) {
-                    throw new MarketDataException("Binance 拒绝请求 " + code.value() + "：" + what, e);
-                }
-                last = e;
-            } catch (ResourceAccessException e) {
-                last = e;
-            }
-            if (attempt < MAX_ATTEMPTS) {
-                log.warn("Binance 请求失败，第 {} 次重试：{}", attempt, what);
-                sleep(Duration.ofMillis(500L << (attempt - 1)));
-            }
-        }
-        throw new MarketDataException("Binance 请求多次失败：" + what, last);
-    }
-
-    private static void sleep(Duration d) {
-        try {
-            Thread.sleep(d);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        return rest.get(request, what);
     }
 }

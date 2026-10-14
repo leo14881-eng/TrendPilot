@@ -1,6 +1,11 @@
 trendpilot:
   scheduling:
     enabled: false
+  # 测试不连真实交易所，行情由各测试的 FakeMarket 提供
+  binance:
+    enabled: false
+  bybit:
+    enabled: false
 
 logging:
   file:

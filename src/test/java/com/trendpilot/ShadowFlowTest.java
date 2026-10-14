@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -18,8 +19,8 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import com.trendpilot.job.DiscoveryJob;
 import com.trendpilot.job.MonitorJob;
-import com.trendpilot.market.DepthCache;
-import com.trendpilot.market.SymbolDirectory;
+import com.trendpilot.market.Markets;
+import com.trendpilot.market.Venue;
 import com.trendpilot.portfolio.ShadowBook;
 import com.trendpilot.support.FakeMarket;
 import com.trendpilot.support.TestData;
@@ -45,21 +46,26 @@ class ShadowFlowTest {
         FakeMarket fakeMarket() {
             return new FakeMarket();
         }
+
+        @Bean
+        FakeMarket bybitMarket() {
+            return new FakeMarket(Venue.BYBIT);
+        }
     }
 
     @Autowired FakeMarket market;
+    @Autowired @Qualifier("bybitMarket") FakeMarket bybit;
     @Autowired DiscoveryJob discovery;
     @Autowired MonitorJob monitor;
     @Autowired ShadowBook book;
     @Autowired JdbcClient jdbc;
-    @Autowired SymbolDirectory directory;
-    @Autowired DepthCache depthCache;
+    @Autowired Markets markets;
 
     @org.junit.jupiter.api.BeforeEach
     void reset() {
         market.reset();
-        directory.invalidate();
-        depthCache.invalidate();
+        bybit.reset();
+        markets.invalidate();
         for (String t : new String[]{"position", "shadow_event", "early_seen", "notification_outbox", "app_state",
                 "kline_15m"}) {
             jdbc.sql("DELETE FROM " + t).update();
@@ -93,7 +99,7 @@ class ShadowFlowTest {
         // 价格上涨 3%：启动利润保护
         Instant t1 = t0.plusSeconds(300);
         market.books.put("ABCUSDT", TestData.book("ABCUSDT", 107.2, 2, 100, t1));
-        depthCache.invalidate(); // 模拟 5 分钟后盘口缓存已过期
+        markets.invalidate(); // 模拟 5 分钟后盘口缓存已过期
         int klinesBefore = market.klineRequests.get();
         MonitorJob.Report m1 = monitor.runOnce(t1);
         assertThat(m1.exits()).isEmpty();
@@ -103,7 +109,7 @@ class ShadowFlowTest {
         // 回落到底线以下但仍有净利：保护卖出
         Instant t2 = t1.plusSeconds(300);
         market.books.put("ABCUSDT", TestData.book("ABCUSDT", 104.7, 2, 100, t2));
-        depthCache.invalidate();
+        markets.invalidate();
         MonitorJob.Report m2 = monitor.runOnce(t2);
         assertThat(m2.exits()).containsExactly("PROFIT_PROTECTION:ABCUSDT");
         assertThat(book.positions()).isEmpty();
@@ -126,9 +132,44 @@ class ShadowFlowTest {
         assertThat(book.position("XYZUSDT")).isPresent();
 
         market.books.remove("XYZUSDT");
-        depthCache.invalidate();
+        markets.invalidate();
         MonitorJob.Report m = monitor.runOnce(t0.plusSeconds(300));
         assertThat(m.dataStatus()).startsWith("STOPPED_MISSING");
         assertThat(book.position("XYZUSDT")).isPresent();
+    }
+
+    @Test
+    void bybitPoolOnlyCoversSymbolsMissingOnBinanceAndUsesItsOwnBtc() {
+        Instant t0 = Instant.parse("2026-10-16T10:17:00Z");
+        market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        market.put("ABCUSDT", 1.0, TestData.flatQuarters(t0, 10), null);
+        bybit.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        // ABC 两边都有：只用 Binance（Binance 上没有信号），Bybit 上的强势不算
+        bybit.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
+        // BYO 只在 Bybit：进入 Bybit 独立池，用 Bybit 的盘口影子买入
+        bybit.put("BYOUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("BYOUSDT", 104, 2, 100, t0));
+
+        DiscoveryJob.Report d = discovery.runOnce(t0);
+        assertThat(d.entries()).containsExactly("BUY:BYOUSDT");
+        assertThat(book.position("BYOUSDT").orElseThrow().venue()).isEqualTo(Venue.BYBIT);
+        assertThat(d.pools()).contains("BINANCE=2/COMPLETE", "BYBIT=2/COMPLETE");
+
+        // Monitor 用 Bybit 的盘口管理这个持仓
+        bybit.books.put("BYOUSDT", TestData.book("BYOUSDT", 107.2, 2, 100, t0.plusSeconds(300)));
+        markets.invalidate();
+        monitor.runOnce(t0.plusSeconds(300));
+        assertThat(book.position("BYOUSDT").orElseThrow().protectArmed()).isTrue();
+    }
+
+    @Test
+    void bybitWithoutItsOwnBtcProducesNoSignals() {
+        Instant t0 = Instant.parse("2026-10-17T10:17:00Z");
+        market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        bybit.put("BYOUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("BYOUSDT", 104, 2, 100, t0));
+
+        DiscoveryJob.Report d = discovery.runOnce(t0);
+        assertThat(d.entries()).isEmpty();
+        assertThat(d.early()).isZero();
+        assertThat(d.pools()).contains("BYBIT=1/PARTIAL_DATA");
     }
 }

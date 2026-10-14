@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 
 import com.trendpilot.capital.ReviewResult;
+import com.trendpilot.market.Venue;
 import com.trendpilot.monitor.ExitDecision;
 import com.trendpilot.risk.RiskState;
 
@@ -15,24 +16,24 @@ public final class Messages {
     private Messages() {
     }
 
-    public static String entry(ReviewResult r) {
+    public static String entry(Venue venue, ReviewResult r) {
         String verb = r.action().name().equals("ADD") ? "影子加仓 ADD" : "影子买入 BUY";
         return String.format(Locale.ROOT, """
-                🟢 %s %s
+                🟢 %s %s%s
                 成交均价 %s，金额 %s U（含费 %s U）
                 评分 %.2f，RR %.2f，价差 %.1f bps，滑点 %.1f bps
                 研究缺口：%s""",
-                verb, r.symbol(), price(r.fill().avgPrice()), money(r.fill().notional()), money(r.fill().fee()),
+                verb, r.symbol(), venueTag(venue), price(r.fill().avgPrice()), money(r.fill().notional()), money(r.fill().fee()),
                 r.score(), r.rr(), r.spreadBps(), r.slippageBps(), String.join(", ", r.gaps()));
     }
 
-    public static String exit(ExitDecision d) {
+    public static String exit(Venue venue, ExitDecision d) {
         String icon = d.netPnl().signum() >= 0 ? "🔵" : "🔴";
         return String.format(Locale.ROOT, """
-                %s 影子卖出 SELL %s
+                %s 影子卖出 SELL %s%s
                 原因：%s
                 成交均价 %s，净盈亏 %s U，原始收益 %.2f%%""",
-                icon, d.symbol(), d.reason(), price(d.fill().avgPrice()), money(d.netPnl()), d.rawReturnPct());
+                icon, d.symbol(), venueTag(venue), d.reason(), price(d.fill().avgPrice()), money(d.netPnl()), d.rawReturnPct());
     }
 
     public static String note(String symbol, String note, ExitDecision d) {
@@ -54,6 +55,11 @@ public final class Messages {
 
     public static String failure(String job, String error) {
         return "❗ 任务失败 " + job + "\n" + error;
+    }
+
+    /** Bybit 独立池的标的在消息里标注交易所。 */
+    public static String venueTag(Venue venue) {
+        return venue == Venue.BINANCE ? "" : "（" + venue + "）";
     }
 
     public static String lines(List<String> lines) {

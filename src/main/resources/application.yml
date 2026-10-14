@@ -39,6 +39,8 @@ trendpilot.strategy:
     quote-asset: USDT
     # 稳定币、法币、黄金代币等
     excluded-base-assets: [USDC, FDUSD, TUSD, USDP, DAI, BUSD, USDE, USD1, PYUSD, RLUSD, XUSD, BFUSD, AEUR, EUR, EURI, GBP, TRY, BRL, ARS, JPY, MXN, PLN, RON, UAH, ZAR, PAXG, XAUT]
+    # 官方代币化股票（Bybit xStocks 等）；交易所标记为股票类的也会排除
+    tokenized-stock-base-assets: [AAPLX, AMZNX, COINX, CRCLX, GOOGLX, HOODX, METAX, MSFTX, MSTRX, NVDAX, QQQX, SPYX, TSLAX]
     blocklist: []                 # 人工确认身份有问题的标的
     max-missing-ratio: 0.05       # 缺数据超过 5% 视为扫描不完整，不做新买入
   early:
@@ -107,5 +109,12 @@ trendpilot.strategy:
     loss-window-hours: 24
 
 trendpilot.binance:
+  enabled: true
   base-url: https://api.binance.com
+  max-concurrency: 4
+
+# Bybit 独立池：只覆盖 Binance 没有的标的，用 Bybit 自己的 BTC 基准
+trendpilot.bybit:
+  enabled: true
+  base-url: https://api.bybit.com
   max-concurrency: 4

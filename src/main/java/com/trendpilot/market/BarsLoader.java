@@ -13,14 +13,13 @@ import java.util.concurrent.Future;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 
 /**
  * 按同一时间截面准备 K 线：每个标的只请求 15m K 线，并且只增量拉取缓存里还没有的部分；
  * 1h K 线由 4 根 15m 合成（与交易所 1h K 线口径一致）。
  * 缓存不连续、缺最新一根时整段重拉一次，仍不完整则放入 missing 名单，不伪装成成功。
+ * WebSocket 采集器已经写入的 K 线不会重复请求。每个交易所一个实例（见 {@link Markets}）。
  */
-@Component
 public class BarsLoader {
 
     public static final long QUARTER_MS = 15 * 60_000L;
@@ -68,7 +67,6 @@ public class BarsLoader {
                 }
             }
         }
-        store.prune(asOf);
         return new Result(Map.copyOf(bars), List.copyOf(missing), requests[0]);
     }
 
@@ -80,7 +78,7 @@ public class BarsLoader {
         long windowStart = lastOpen - (WINDOW - 1) * QUARTER_MS;
         int requests = 0;
 
-        Long cached = store.latestOpenTime(symbol);
+        Long cached = store.latestOpenTime(market.venue(), symbol);
         boolean full = cached == null || cached < windowStart;
         if (full) {
             fetch(symbol, null, WINDOW + 1, asOf);
@@ -90,11 +88,11 @@ public class BarsLoader {
             fetch(symbol, cached + QUARTER_MS, Math.min(1000, need), asOf);
             requests++;
         }
-        List<Kline> window = store.range(symbol, windowStart, lastOpen);
+        List<Kline> window = store.range(market.venue(), symbol, windowStart, lastOpen);
         if (!valid(window, lastOpen) && !full) {
             fetch(symbol, null, WINDOW + 1, asOf); // 缓存有缺口：整段重拉一次
             requests++;
-            window = store.range(symbol, windowStart, lastOpen);
+            window = store.range(market.venue(), symbol, windowStart, lastOpen);
         }
         if (!valid(window, lastOpen)) {
             return new Loaded(null, requests);
@@ -107,7 +105,7 @@ public class BarsLoader {
         long t = asOf.toEpochMilli();
         List<Kline> closed = market.klines(symbol, "15m", startTime, limit).stream()
                 .filter(k -> k.closeTime() < t).toList();
-        store.upsert(symbol, closed);
+        store.upsert(market.venue(), symbol, closed);
     }
 
     /** 截面之前最后一根已收盘 15m K 线的开盘时间。 */

@@ -12,9 +12,12 @@ import com.trendpilot.market.MarketDataSource;
 import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.SymbolInfo;
 import com.trendpilot.market.Ticker24h;
+import com.trendpilot.market.Venue;
 
 /** 可变的内存行情，用于端到端测试；统计各类请求次数。 */
 public class FakeMarket implements MarketDataSource {
+
+    private final Venue venue;
 
     public final Map<String, SymbolInfo> symbols = new ConcurrentHashMap<>();
     public final Map<String, Ticker24h> tickers = new ConcurrentHashMap<>();
@@ -24,8 +27,21 @@ public class FakeMarket implements MarketDataSource {
     public final AtomicInteger klineRequests = new AtomicInteger();
     public final AtomicInteger depthRequests = new AtomicInteger();
 
+    public FakeMarket() {
+        this(Venue.BINANCE);
+    }
+
+    public FakeMarket(Venue venue) {
+        this.venue = venue;
+    }
+
+    @Override
+    public Venue venue() {
+        return venue;
+    }
+
     public void put(String symbol, double change24h, List<Kline> q, OrderBook book) {
-        symbols.put(symbol, new SymbolInfo(symbol, symbol.replace("USDT", ""), "USDT", "TRADING", true));
+        symbols.put(symbol, new SymbolInfo(symbol, symbol.replace("USDT", ""), "USDT", true, ""));
         tickers.put(symbol, new Ticker24h(symbol, q.getLast().close(), change24h, 10_000_000));
         quarters.put(symbol, q);
         if (book != null) books.put(symbol, book);

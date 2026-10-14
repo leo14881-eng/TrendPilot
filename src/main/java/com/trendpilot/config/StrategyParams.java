@@ -21,8 +21,8 @@ public record StrategyParams(
         Risk risk,
         double feeRate) {
 
-    public record Universe(String quoteAsset, Set<String> excludedBaseAssets, Set<String> blocklist,
-                           double maxMissingRatio) {
+    public record Universe(String quoteAsset, Set<String> excludedBaseAssets, Set<String> tokenizedStockBaseAssets,
+                           Set<String> blocklist, double maxMissingRatio) {
     }
 
     /** EARLY：六个条件至少命中 minHits 个。收益单位均为百分点。 */
