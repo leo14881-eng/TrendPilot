@@ -182,7 +182,7 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
 
     /** 测试和回测用的默认参数（与 application.yml 一致）。 */
     public static BtcDailyProperties defaults() {
-        return new BtcDailyProperties(true, "btc-v3.1-2026-10-15", "BTCUSDT", 10_000, "2026-11-14",
+        return new BtcDailyProperties(true, "btc-v3.2-2026-10-15", "BTCUSDT", 10_000, "2026-11-14",
                 List.of(3000.0, 3000.0, 4000.0), 0.25, 0.6, 0.5, 0.5, 0.8, 0.3, 0.001, 2, 14, 20, 365,
                 Filters.defaults(), List.of(3.0, 5.0, 8.0, 12.0), Exit.defaults().withMode("FIXED"), "AUTO", V3.defaults());
     }

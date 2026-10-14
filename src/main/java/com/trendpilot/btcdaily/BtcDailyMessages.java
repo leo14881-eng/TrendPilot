@@ -226,9 +226,9 @@ final class BtcDailyMessages {
         }
         sb.append("\n说明：带 + 的三种是被套保护（都会亏着卖），只做回测对比，实盘仍不止损，等你决定。\n");
         if ("V3".equals(live)) {
-            sb.append("\n✅ V3 不比现行差（总盈亏不低、最大回撤不超 1.1 倍、最长被套不多 2 天），影子实盘从下一个计划起改用 V3。回滚：配置 strategy 改为 V2。");
+            sb.append("\n✅ V3 不比现行差（完成至少 10 轮、总盈亏不低、最大回撤不超 1.1 倍、最长被套不多 2 天），影子实盘从下一个计划起改用 V3。回滚：配置 strategy 改为 V2。");
         } else if ("AUTO".equals(props.strategy())) {
-            sb.append("\n⚠️ V3 回测不如现行（总盈亏、最大回撤或最长被套更差），影子实盘仍按 V2，等你决定。");
+            sb.append("\n⚠️ V3 没通过上线条件（完成不到 10 轮，或总盈亏、最大回撤、最长被套更差），影子实盘仍按 V2，等你决定。");
         } else {
             sb.append("\n影子实盘按配置的策略 ").append(live).append('。');
         }

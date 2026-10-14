@@ -188,7 +188,7 @@ trendpilot.research:
 # 改参数时同时改 version（会自动重新回测一次）
 trendpilot.btc-daily:
   enabled: true
-  version: btc-v3.1-2026-10-15   # v3 + 回测对比被套保护（趋势转跌 / 满 10 天 / 跌 8%），实盘仍不止损
+  version: btc-v3.2-2026-10-15   # V3 上线还须回测完成 ≥10 轮；回测对比被套保护，实盘仍不止损
   symbol: BTCUSDT
   cap-usdt: 10000
   cap-until: "2026-11-14"         # 第一个月上限，到期按数据复评
