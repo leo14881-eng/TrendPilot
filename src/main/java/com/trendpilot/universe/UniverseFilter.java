@@ -29,14 +29,16 @@ public class UniverseFilter {
     }
 
     public List<Ticker24h> select(List<SymbolInfo> symbols, List<Ticker24h> tickers) {
-        return select(symbols, tickers, Set.of());
+        return select(symbols, tickers, Set.of(), Set.of());
     }
 
     /**
      * @param alreadyCovered 已由其他交易所覆盖的标的（Bybit 独立池传入 Binance 全集），这些标的不再重复选入；
      *                       BTC 基准除外，每个池都保留自己的 BTC
+     * @param excluded       按研究资料分类排除的标的（CoinGecko 稳定币、代币化股票分类）
      */
-    public List<Ticker24h> select(List<SymbolInfo> symbols, List<Ticker24h> tickers, Set<String> alreadyCovered) {
+    public List<Ticker24h> select(List<SymbolInfo> symbols, List<Ticker24h> tickers, Set<String> alreadyCovered,
+                                  Set<String> excluded) {
         StrategyParams.Universe u = params.universe();
         Map<String, Ticker24h> bySymbol = tickers.stream()
                 .collect(Collectors.toMap(Ticker24h::symbol, Function.identity(), (a, b) -> a));
@@ -46,6 +48,7 @@ public class UniverseFilter {
                 .filter(s -> !u.excludedBaseAssets().contains(s.baseAsset()))
                 .filter(s -> !isTokenizedStock(s))
                 .filter(s -> !u.blocklist().contains(s.symbol()))
+                .filter(s -> !excluded.contains(s.symbol()))
                 .filter(s -> s.symbol().equals(BTC) || !alreadyCovered.contains(s.symbol()))
                 .map(s -> bySymbol.get(s.symbol()))
                 .filter(t -> t != null && t.lastPrice() > 0 && t.quoteVolume() > 0)

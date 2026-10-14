@@ -9,9 +9,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param topEarly       每轮额外研究的前 N 个 EARLY
  * @param topMovers      每轮额外研究的前 N 个价格异动币
  * @param minIntervalMs  两次 CoinGecko 请求的最小间隔
+ * @param excludedCategories 从标的全集中排除的 CoinGecko 分类（稳定币、代币化股票等）
  */
 @ConfigurationProperties(prefix = "trendpilot.research")
 public record ResearchProperties(boolean enabled, String coingeckoBaseUrl, String coingeckoApiKey,
                                  String defillamaBaseUrl, int rotation, int topEarly, int topMovers,
-                                 long minIntervalMs, double lowFloatRatio) {
+                                 long minIntervalMs, double lowFloatRatio, java.util.List<String> excludedCategories) {
 }

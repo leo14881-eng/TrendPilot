@@ -76,6 +76,21 @@ public class CoinGeckoClient {
         return out;
     }
 
+    /** 某个分类下的全部项目 id（分页，每页 250 个）。 */
+    public List<String> categoryCoinIds(String category) {
+        List<String> out = new ArrayList<>();
+        for (int page = 1; page <= 20; page++) {
+            int p = page;
+            JsonNode root = get(() -> http.get()
+                    .uri("/coins/markets?vs_currency=usd&per_page=250&page={p}&category={c}", p, category)
+                    .retrieve().body(JsonNode.class));
+            if (root.isEmpty()) break;
+            root.forEach(m -> out.add(m.path("id").asText()));
+            if (root.size() < 250) break;
+        }
+        return out;
+    }
+
     private static double num(JsonNode n, String field) {
         JsonNode v = n.path(field);
         return v.isNumber() ? v.asDouble() : Double.NaN;

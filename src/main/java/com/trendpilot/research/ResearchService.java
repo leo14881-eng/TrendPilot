@@ -81,6 +81,16 @@ public class ResearchService {
                 log.warn("市值供给资料刷新失败：{}", e.getMessage());
             }
         }
+        if (stale("SELECT MAX(updated_at) FROM coin_category", IDENTITY_TTL, now)) {
+            for (String category : props.excludedCategories()) {
+                try {
+                    saveCategory(category, coinGecko.categoryCoinIds(category), now);
+                    done.add("CATEGORY_" + category);
+                } catch (RuntimeException e) {
+                    log.warn("分类资料刷新失败 {}：{}", category, e.getMessage());
+                }
+            }
+        }
         if (stale("SELECT MAX(updated_at) FROM protocol_value", PROTOCOL_TTL, now)) {
             try {
                 saveProtocols(defiLlama.protocolsByGeckoId(), now);
@@ -112,6 +122,23 @@ public class ResearchService {
         List<CoinGeckoClient.ExchangeTicker> tickers = coinGecko.exchangeTickers(EXCHANGE_IDS.get(venue));
         if (tickers.isEmpty()) throw new ResearchDataException("CoinGecko 没有返回 " + venue + " 交易对");
         saveIdentity(venue, tickers, now);
+    }
+
+    @Transactional
+    public void saveCategory(String category, List<String> coinIds, Instant now) {
+        jdbc.sql("DELETE FROM coin_category WHERE category = :c").param("c", category).update();
+        for (String id : coinIds) {
+            jdbc.sql("INSERT OR IGNORE INTO coin_category(coin_id, category, updated_at) VALUES (:id, :c, :t)")
+                    .param("id", id).param("c", category).param("t", now.toString()).update();
+        }
+    }
+
+    /** 按 CoinGecko 分类应排除的交易对（例如稳定币、代币化股票）；资料没加载时为空，由配置里的名单兜底。 */
+    public Set<String> excludedSymbols(Venue venue) {
+        return jdbc.sql("""
+                SELECT DISTINCT i.symbol FROM coin_identity i JOIN coin_category c ON c.coin_id = i.coin_id
+                WHERE i.venue = :v
+                """).param("v", venue.name()).query(String.class).list().stream().collect(Collectors.toSet());
     }
 
     @Transactional

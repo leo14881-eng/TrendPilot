@@ -271,7 +271,8 @@ public class DiscoveryJob {
 
     private Pool loadPool(VenueMarket m, Set<String> alreadyCovered, Instant now) {
         List<Ticker24h> tickers = m.source().tickers24h();
-        List<Ticker24h> universe = universeFilter.select(m.directory().all(), tickers, alreadyCovered);
+        List<Ticker24h> universe = universeFilter.select(m.directory().all(), tickers, alreadyCovered,
+                research.excludedSymbols(m.venue()));
         List<String> names = new ArrayList<>(universe.stream().map(Ticker24h::symbol).toList());
         if (!names.contains(UniverseFilter.BTC)) {
             names.add(UniverseFilter.BTC);

@@ -44,7 +44,7 @@ class ResearchTest {
     void coinGeckoPaginatesExchangeTickersAndParsesMarkets() {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        var fastProps = new ResearchProperties(true, "https://cg.test", "", "https://llama.test", 25, 10, 10, 0, 0.3);
+        var fastProps = new ResearchProperties(true, "https://cg.test", "", "https://llama.test", 25, 10, 10, 0, 0.3, List.of());
         CoinGeckoClient client = new CoinGeckoClient(fastProps, builder);
         server.expect(requestTo("https://cg.test/exchanges/binance/tickers?page=1")).andRespond(withSuccess("""
                 {"tickers":[{"base":"ABC","target":"USDT","coin_id":"abc"},{"base":"ABC","target":"BTC","coin_id":"abc"}]}""",
@@ -85,5 +85,13 @@ class ResearchTest {
         // 资料超过 3 天没刷新也不能用
         assertThat(research.research(Venue.BINANCE, "ABCUSDT", null, now.plusSeconds(4 * 86400)).identity())
                 .isEqualTo(Identity.DATA_UNAVAILABLE);
+    }
+
+    @Test
+    void categoryExclusionMapsToSymbols() {
+        research.saveIdentity(Venue.BYBIT, List.of(new CoinGeckoClient.ExchangeTicker("LLYB", "USDT", "lly-token"),
+                new CoinGeckoClient.ExchangeTicker("OK", "USDT", "ok")), now);
+        research.saveCategory("tokenized-stock", List.of("lly-token"), now);
+        assertThat(research.excludedSymbols(Venue.BYBIT)).containsExactly("LLYBUSDT");
     }
 }
