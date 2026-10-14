@@ -188,7 +188,7 @@ trendpilot.research:
 # 改参数时同时改 version（会自动重新回测一次）
 trendpilot.btc-daily:
   enabled: true
-  version: btc-v3.2-2026-10-15   # V3 上线还须回测完成 ≥10 轮；回测对比被套保护，实盘仍不止损
+  version: btc-v3.2-2026-10-15-v2   # 影子实盘固定 V2（用户 2026-10-15 决定：V3 回测一年只开 1 仓，证据不足）；V3 上线还须回测完成 ≥10 轮，回测对比照常跑，实盘仍不止损
   symbol: BTCUSDT
   cap-usdt: 10000
   cap-until: "2026-11-14"         # 第一个月上限，到期按数据复评
@@ -205,7 +205,7 @@ trendpilot.btc-daily:
   ema-days: 20
   backtest-days: 365
   # 策略：V2（旧）/ V3（新）/ AUTO（上线回测 V3 不比 V2 差才用 V3，否则仍 V2 并提醒）。回滚：改为 V2 并改 version
-  strategy: AUTO
+  strategy: V2
   v3:
     partial-at-pct: 1.5            # 涨到均价 +1.5% 先卖 1/3
     partial-pct: 33.33

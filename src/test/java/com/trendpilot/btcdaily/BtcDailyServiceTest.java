@@ -46,6 +46,8 @@ class BtcDailyServiceTest {
         r.add("trendpilot.btc-daily.filters.binance-futures-url", () -> "http://127.0.0.1:9");
         r.add("trendpilot.btc-daily.filters.fear-greed-url", () -> "http://127.0.0.1:9");
         r.add("trendpilot.btc-daily.filters.farside-url", () -> "http://127.0.0.1:9/btc/");
+        // 正式配置已固定为 V2；这里仍按 AUTO 测试"按回测结论选策略"的机制
+        r.add("trendpilot.btc-daily.strategy", () -> "AUTO");
     }
 
     @TestConfiguration
