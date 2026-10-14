@@ -31,6 +31,7 @@ class CapitalReviewerTest {
     private final Ticker24h ticker = new Ticker24h("ABCUSDT", 104, 5, 5_000_000);
     private final OrderBook goodBook = TestData.book("ABCUSDT", 104, 2, 100, now);
     private ResearchRecord research = verified(Identity.VERIFIED);
+    private int earlySinceExit = 0;
 
     private static ResearchRecord verified(Identity identity) {
         return new ResearchRecord(Venue.BINANCE, "ABCUSDT", "abc", identity, 1e8, 2e8, 0.5, Double.NaN, Double.NaN,
@@ -40,7 +41,7 @@ class CapitalReviewerTest {
     private ReviewInput input(OrderBook book, RiskState risk, Ticker24h t, BigDecimal firstSeen, Position pos,
                               Instant lastExit, boolean complete) {
         return new ReviewInput("D-1", now.minusSeconds(60), now, complete, strong, t, book, risk, firstSeen, pos, lastExit,
-                research);
+                research, earlySinceExit);
     }
 
     @Test
@@ -103,7 +104,29 @@ class CapitalReviewerTest {
     void reentryWithinCooldownWaits() {
         ReviewResult r = reviewer.review(input(goodBook, okRisk, ticker, null, null, now.minus(Duration.ofMinutes(30)), true));
         assertThat(r.decision()).isEqualTo(Decision.WAIT);
-        assertThat(r.reasons()).contains("REENTRY_COOLDOWN");
+        assertThat(r.reasons()).contains("REENTRY_COOLDOWN", "REENTRY_EVIDENCE_0_OF_2");
+    }
+
+    @Test
+    void reentryNeedsFreshEarlyObservationsAfterExit() {
+        Instant exit = now.minus(Duration.ofHours(3));
+        earlySinceExit = 1;
+        ReviewResult one = reviewer.review(input(goodBook, okRisk, ticker, null, null, exit, true));
+        assertThat(one.decision()).isEqualTo(Decision.WAIT);
+        assertThat(one.reasons()).containsExactly("REENTRY_EVIDENCE_1_OF_2");
+        earlySinceExit = 2;
+        assertThat(reviewer.review(input(goodBook, okRisk, ticker, null, null, exit, true)).decision())
+                .isEqualTo(Decision.BUY);
+    }
+
+    @Test
+    void addRequiresStrongHealth() {
+        Position weak = new Position(Venue.BINANCE, "ABCUSDT", new BigDecimal("10"), new BigDecimal("1001"),
+                new BigDecimal("1000"), 1, new BigDecimal("120"), now.minus(Duration.ofHours(1)), "D-0",
+                now.minus(Duration.ofHours(1)), false, BigDecimal.ZERO, BigDecimal.ZERO, 1, false);
+        ReviewResult r = reviewer.review(input(goodBook, okRisk, ticker, null, weak, null, true));
+        assertThat(r.decision()).isEqualTo(Decision.WAIT);
+        assertThat(r.reasons()).containsExactly("HEALTH_NOT_STRONG");
     }
 
     @Test

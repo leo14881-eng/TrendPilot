@@ -34,7 +34,8 @@ public record StrategyParams(
                          double maxSpreadBps, double depthBandPct, double minDepthUsdt, double maxSlippageBps,
                          double minRr, double chaseThresholdPct, double chaseMinRr, double hot24hPct,
                          double hotRel1hMultiplier, double riskDropPct, double upsideAtrMultiple,
-                         double minUpsidePct, double maxUpsidePct, int reentryCooldownMinutes) {
+                         double minUpsidePct, double maxUpsidePct, int reentryCooldownMinutes,
+                         int reentryMinEarlyObservations) {
     }
 
     public record Capital(double hardCap, double normalPool, double strategicReserve, double tradeSize,

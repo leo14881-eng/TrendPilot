@@ -163,7 +163,9 @@ public abstract class Ledger {
     public BigDecimal touchEarlySeen(String symbol, double price, Instant now) {
         Optional<String[]> row = jdbc.sql("SELECT first_price, last_seen_at FROM early_seen WHERE symbol = :s")
                 .param("s", symbol).query((rs, i) -> new String[]{rs.getString(1), rs.getString(2)}).optional();
-        boolean reset = row.isEmpty() || Duration.between(Instant.parse(row.get()[1]), now).toDays() >= 7;
+        // 7 天没出现过，或首次价记录早于最近一次卖出：首次价重置为这次 EARLY 的价格
+        boolean reset = row.isEmpty() || Duration.between(Instant.parse(row.get()[1]), now).toDays() >= 7
+                || lastExit(symbol).filter(e -> e.isAfter(firstSeenAt(symbol))).isPresent();
         if (reset) {
             jdbc.sql("INSERT OR REPLACE INTO early_seen(symbol, first_price, first_seen_at, last_seen_at) VALUES (:s, :p, :t, :t)")
                     .param("s", symbol).param("p", BigDecimal.valueOf(price).toPlainString()).param("t", now.toString())
@@ -173,6 +175,17 @@ public abstract class Ledger {
         jdbc.sql("UPDATE early_seen SET last_seen_at = :t WHERE symbol = :s").param("t", now.toString())
                 .param("s", symbol).update();
         return new BigDecimal(row.get()[0]);
+    }
+
+    private Instant firstSeenAt(String symbol) {
+        return jdbc.sql("SELECT first_seen_at FROM early_seen WHERE symbol = :s").param("s", symbol)
+                .query(String.class).optional().map(Instant::parse).orElse(Instant.EPOCH);
+    }
+
+    /** 某时刻之后（不含）独立 generation 的 EARLY 观察次数。 */
+    public int earlyObservationsSince(String symbol, Instant since) {
+        return jdbc.sql("SELECT COUNT(DISTINCT generation) FROM signal_log WHERE symbol = :s AND created_at > :t")
+                .param("s", symbol).param("t", since.toString()).query(Integer.class).single();
     }
 
     public Optional<BigDecimal> earlySeenPrice(String symbol) {

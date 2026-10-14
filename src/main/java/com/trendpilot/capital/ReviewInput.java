@@ -17,9 +17,10 @@ import com.trendpilot.signal.EarlySignal;
  * @param position 已有持仓（有则按 ADD 审核），没有为 null
  * @param lastExitAt 最近一次卖出时间，没有为 null
  * @param research 研究结论（身份、供给、价值捕获、缺口）
+ * @param earlySinceExit 最近一次卖出之后独立 generation 的 EARLY 观察次数（含本轮）；没有卖出过时不使用
  */
 public record ReviewInput(String generation, Instant signalAsOf, Instant now, boolean scanComplete,
                           EarlySignal signal, Ticker24h ticker, OrderBook book, RiskState risk,
                           BigDecimal firstSeenPrice, Position position, Instant lastExitAt,
-                          ResearchRecord research) {
+                          ResearchRecord research, int earlySinceExit) {
 }

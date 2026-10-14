@@ -238,9 +238,11 @@ public class DiscoveryJob {
                 Instant signalAsOf = Instant.ofEpochMilli(pool.btc().hourly().getLast().closeTime() + 1);
                 if (s.early()) book.touchEarlySeen(s.symbol(), s.price(), now);
                 Position pos = book.position(s.symbol()).orElse(null);
+                Instant lastExit = book.lastExit(s.symbol()).orElse(null);
+                int earlySinceExit = lastExit == null ? 0 : book.earlyObservationsSince(s.symbol(), lastExit);
                 ReviewInput in = new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
                         books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), pos,
-                        book.lastExit(s.symbol()).orElse(null), researched.get(s.symbol()));
+                        lastExit, researched.get(s.symbol()), earlySinceExit);
                 results.add(reviewer.review(in));
                 venueOf.put(s.symbol(), c.venue());
             }

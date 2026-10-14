@@ -70,6 +70,7 @@ trendpilot.strategy:
     min-upside-pct: 2
     max-upside-pct: 15
     reentry-cooldown-minutes: 60
+    reentry-min-early-observations: 2   # 卖出后至少 2 个独立 generation 重新出现 EARLY，才允许再买
   capital:
     hard-cap: 20000
     normal-pool: 17000

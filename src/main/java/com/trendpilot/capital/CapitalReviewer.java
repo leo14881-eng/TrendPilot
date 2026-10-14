@@ -84,6 +84,10 @@ public class CapitalReviewer {
                 && Duration.between(in.lastExitAt(), in.now()).toMinutes() < r.reentryCooldownMinutes()) {
             wait.add("REENTRY_COOLDOWN");
         }
+        // 再入场要求卖出后的新鲜、独立证据，不按旧信号买回
+        if (action == Action.BUY && in.lastExitAt() != null && in.earlySinceExit() < r.reentryMinEarlyObservations()) {
+            wait.add("REENTRY_EVIDENCE_" + in.earlySinceExit() + "_OF_" + r.reentryMinEarlyObservations());
+        }
         if (action == Action.ADD) {
             wait.addAll(addConditions(in, costsPct));
         }
@@ -102,6 +106,9 @@ public class CapitalReviewer {
             wait.add("MAX_TRANCHES");
             return wait;
         }
+        EarlySignal s = in.signal();
+        boolean strong = s.early() && s.rel1h() > 0 && s.accel() >= 0 && pos.weakStreak() == 0;
+        if (!strong) wait.add("HEALTH_NOT_STRONG");
         double drop = Math.max(a.minDropPct(), a.atrMultiple() * in.signal().atr1hPct()) + costsPct;
         if (pos.tranches() >= 2) drop *= a.thirdTrancheMultiplier();
         double maxPrice = pos.lastTranchePrice().doubleValue() * (1 - drop / 100);
