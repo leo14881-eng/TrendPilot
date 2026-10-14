@@ -86,12 +86,14 @@ public class DiscoveryJob {
     private final JdbcClient jdbc;
     private final StrategyParams params;
     private final SignalTracker tracker;
+    private final com.trendpilot.market.KlineStore klineStore;
 
     public DiscoveryJob(Markets markets, ResearchService research, StreamHub streams, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, RiskRecovery recovery, CapitalReviewer reviewer,
                         CapitalAllocator allocator, ShadowBook book, PortfolioLock lock, Notifier notifier,
                         JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params,
-                        SignalTracker tracker) {
+                        SignalTracker tracker, com.trendpilot.market.KlineStore klineStore) {
         this.tracker = tracker;
+        this.klineStore = klineStore;
         this.markets = markets;
         this.research = research;
         this.streams = streams;
@@ -113,6 +115,27 @@ public class DiscoveryJob {
 
     public record Report(String generation, int universe, int missing, int early, int reviewed, List<String> entries,
                          boolean scanComplete, int klineRequests, String pools, List<String> v1Entries) {
+    }
+
+    /**
+     * 启动后马上恢复 K 线订阅（最近一天有缓存的标的 + 持仓 + 跟踪中的信号），
+     * 不等下一次 :17 的 Discovery，重启后的 K 线缓存不会断一小时。
+     */
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void watchAtStartup() {
+        Instant since = Instant.now().minus(java.time.Duration.ofDays(1));
+        for (VenueMarket m : markets.all()) {
+            try {
+                Set<String> watched = klineStore.recentSymbols(m.venue(), since);
+                book.positions().stream().filter(p -> p.venue() == m.venue()).forEach(p -> watched.add(p.symbol()));
+                v1.positions().stream().filter(p -> p.venue() == m.venue()).forEach(p -> watched.add(p.symbol()));
+                watched.addAll(tracker.trackingSymbols(m.venue()));
+                if (!watched.isEmpty()) streams.watchKlines(m.venue(), watched);
+                log.info("启动时恢复 {} K 线订阅 {} 个", m.venue(), watched.size());
+            } catch (RuntimeException e) {
+                log.warn("启动时恢复 K 线订阅失败 {}：{}", m.venue(), e.getMessage());
+            }
+        }
     }
 
     @Scheduled(cron = "0 17 * * * *", zone = "${trendpilot.zone}")

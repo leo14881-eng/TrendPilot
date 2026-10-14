@@ -4,9 +4,11 @@ TrendPilot 守护。由计划任务 "TrendPilot-Watchdog" 每 2 分钟以普通�
   - 服务没在跑（被关或自己挂了）：Telegram 告知"服务停止"，立即拉起，恢复后告知"已恢复"。
   - 服务卡死（进程在但 /api/health 连续 3 次无响应，或 Monitor 超过 20 分钟没跑）：结束进程并拉起。
   - 连续 3 次拉起失败：停止重试 1 小时并 Telegram 告警，1 小时后再试。
-  - 自动更新正在换版本时（app\updating.flag 不超过 20 分钟）不干预。
+  - 最近 3 次 Monitor 全部失败（进程正常，多半是行情接口问题）：只提醒一次，不重启。
+  - 自动更新正在换版本时（app\updating.flag 不超过 30 分钟）不干预。
 #>
 $ErrorActionPreference = 'Stop'
+$script:MonitorFailing = $false
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $AppDir  = Split-Path -Parent $PSScriptRoot
@@ -40,7 +42,7 @@ function Send-Telegram($text) {
 }
 
 function Get-State {
-    $s = @{ down = $false; downSince = ''; hangCount = 0; startFailures = 0; pausedUntil = '' }
+    $s = @{ down = $false; downSince = ''; hangCount = 0; startFailures = 0; pausedUntil = ''; monitorAlerted = $false }
     if (Test-Path $State) {
         try {
             $j = Get-Content $State -Raw | ConvertFrom-Json
@@ -62,6 +64,7 @@ function Get-ServicePid {
 function Get-Health {
     try {
         $h = Invoke-RestMethod -Uri "$Base/api/health" -TimeoutSec 20
+        $script:MonitorFailing = [bool]$h.monitorFailing
         if ($h.ok) { return 'ok' }
         return 'stale'
     } catch {
@@ -86,7 +89,7 @@ function Start-TrendPilot {
 $mutex = New-Object System.Threading.Mutex($false, 'Local\TrendPilotWatchdog')
 if (-not $mutex.WaitOne(0)) { exit 0 }
 try {
-    if ((Test-Path $Updating) -and ((Get-Item $Updating).LastWriteTime -gt (Get-Date).AddMinutes(-20))) { exit 0 }
+    if ((Test-Path $Updating) -and ((Get-Item $Updating).LastWriteTime -gt (Get-Date).AddMinutes(-30))) { exit 0 }
     $s = Get-State
     if ($s.pausedUntil -and (Get-Date) -lt [datetime]$s.pausedUntil) { exit 0 }
 
@@ -103,6 +106,14 @@ try {
                 Write-Log "已恢复 PID=$procId"
             }
             $s.down = $false; $s.hangCount = 0; $s.startFailures = 0; $s.pausedUntil = ''
+            if ($script:MonitorFailing -and -not $s.monitorAlerted) {
+                Send-Telegram '⚠️ TrendPilot 最近 3 次 Monitor 全部失败（服务进程正常，多半是交易所行情接口出错）。持仓暂时没有被检查，恢复后会再通知。'
+                Write-Log 'Monitor 连续 3 次失败'
+                $s.monitorAlerted = $true
+            } elseif (-not $script:MonitorFailing -and $s.monitorAlerted) {
+                Send-Telegram '✅ TrendPilot Monitor 已恢复正常'
+                $s.monitorAlerted = $false
+            }
             Save-State $s
             exit 0
         }

@@ -26,6 +26,12 @@ public class KlineStore {
                 .query(Long.class).optional().orElse(null);
     }
 
+    /** 最近有 K 线写入的标的（启动时据此恢复 WebSocket 订阅）。 */
+    public java.util.Set<String> recentSymbols(Venue venue, Instant since) {
+        return new java.util.HashSet<>(jdbc.sql("SELECT DISTINCT symbol FROM kline_15m WHERE venue = :v AND open_time >= :t")
+                .param("v", venue.name()).param("t", since.toEpochMilli()).query(String.class).list());
+    }
+
     /** open_time 在 [from, to] 内的 K 线，按时间升序。 */
     public List<Kline> range(Venue venue, String symbol, long from, long to) {
         return jdbc.sql("""

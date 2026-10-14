@@ -3,8 +3,10 @@ TrendPilot 自动更新与守护。由计划任务 "TrendPilot-AutoUpdate" 每 1
 
 每次运行：
   1. 确认守护任务 TrendPilot-Watchdog 已注册（服务停止/卡死的检测与拉起由它每 2 分钟负责）。
-  2. 更新：GitHub main 有新提交时，在源码目录拉取并构建（含全部测试），
-     成功后平滑停机、换上新 jar 和文件、启动、健康检查；健康检查失败自动回滚到上一版。
+  2. 更新：GitHub main 有新提交时，在源码目录拉取。
+     只改了文档（docs/ 或 .md）：只复制文件，不构建、不重启。
+     否则构建（含全部测试），成功后等到 Monitor / Discovery 的空档再平滑停机、换上新 jar 和文件、启动；
+     启动后要等到一次成功的 Monitor 才算更新成功，否则自动回滚到上一版（2 小时后再试这个版本）。
      构建失败则继续跑旧版，同一提交只提醒一次。
   3. 结果通过 Telegram 通知（从本机 config\application-local.yml 读取，不输出其中内容）。
 
@@ -27,6 +29,7 @@ $Version = Join-Path $Bin 'version.txt'
 $Failed  = Join-Path $Bin 'failed-commit.txt'
 $Health  = Join-Path $Bin 'health-failures.txt'
 $Denied  = Join-Path $Bin 'stop-denied.txt'
+$MonFailed = Join-Path $Bin 'monitor-failed-commit.txt'
 $Updating = Join-Path $Bin 'updating.flag'
 $LogFile = Join-Path $AppDir 'logs\auto-update.log'
 
@@ -113,6 +116,33 @@ function Stop-TrendPilot {
     }
 }
 
+# 等到空档：Monitor 每 5 分钟整点跑（:00 :05 ...），Discovery 在 :17。停在 Monitor 之后 2~3 分钟、避开 :15~:21。
+function Wait-QuietWindow {
+    for ($i = 0; $i -lt 48; $i++) {
+        $m = (Get-Date).Minute
+        if ((($m % 5) -eq 2 -or ($m % 5) -eq 3) -and ($m -lt 15 -or $m -gt 21)) { return }
+        Start-Sleep -Seconds 10
+    }
+}
+
+function Get-UtcTime($s) {
+    if (-not $s) { return $null }
+    try { return [DateTimeOffset]::Parse([string]$s).UtcDateTime } catch { return $null }
+}
+
+# 新版本启动后，等到一次成功的 Monitor（最多约 11 分钟，覆盖两次 Monitor）
+function Wait-MonitorOk($sinceUtc) {
+    for ($i = 0; $i -lt 132; $i++) {
+        Start-Sleep -Seconds 5
+        try {
+            $h = Invoke-RestMethod -Uri "$Base/api/health" -TimeoutSec 15
+            $ok = Get-UtcTime $h.lastMonitorOk
+            if ($ok -and $ok -ge $sinceUtc) { return $true }
+        } catch { }
+    }
+    return $false
+}
+
 function Report-StopDenied($what) {
     if (Test-Path $Denied) { return }
     Send-Telegram "❗ $what，但旧进程 PID=$(Get-ServicePid) 是管理员权限启动的，自动更新无法结束它。请在任务管理器里结束这个 java.exe，之后会自动接管。"
@@ -150,9 +180,27 @@ try {
     Invoke-Git @('fetch', '--quiet', 'origin', $Branch) | Out-Null
     $latest = Invoke-Git @('rev-parse', "origin/$Branch")
     if ($latest -eq (Read-Text $Version) -or $latest -eq (Read-Text $Failed)) { exit 0 }
+    # 上次因为 Monitor 没成功而回滚的版本，2 小时后再试（可能只是行情接口临时故障）
+    if ($latest -eq (Read-Text $MonFailed) -and (Get-Item $MonFailed).LastWriteTime -gt (Get-Date).AddHours(-2)) { exit 0 }
     $short = $latest.Substring(0, 7)
     $subject = Invoke-Git @('log', '-1', '--format=%s', $latest)
     Write-Log "发现新提交 ${short}：$subject"
+
+    # ---------- 2b. 只改文档：复制文件，不构建、不重启 ----------
+    $current = Read-Text $Version
+    if ($current -and (Test-Path $Jar)) {
+        $changed = @()
+        try { $changed = @((Invoke-Git @('diff', '--name-only', $current, $latest)) -split "`r?`n" | Where-Object { $_ }) } catch { $changed = @() }
+        $docsOnly = $changed.Count -gt 0 -and -not ($changed | Where-Object { $_ -notmatch '^docs/' -and $_ -notmatch '\.md$' })
+        if ($docsOnly) {
+            Invoke-Git @('checkout', '--quiet', '--force', $latest) | Out-Null
+            & robocopy.exe $SrcDir $AppDir /E /NFL /NDL /NJH /NJS /NP /XD .git .mvn data logs target app /XF application-local.yml | Out-Null
+            Set-Content $Version $latest
+            Write-Log "只更新文档 $short（未重启）"
+            Send-Telegram "📄 TrendPilot 文档已更新到 $short（只改文档，服务没有重启）`n$subject"
+            exit 0
+        }
+    }
 
     # ---------- 3. 构建（含全部测试） ----------
     Invoke-Git @('checkout', '--quiet', '--force', $latest) | Out-Null
@@ -167,7 +215,9 @@ try {
         exit 1
     }
 
-    # ---------- 4. 平滑停机 → 替换 → 启动 → 健康检查（期间守护任务不干预） ----------
+    # ---------- 4. 等空档 → 平滑停机 → 替换 → 启动 → 等一次成功的 Monitor（期间守护任务不干预） ----------
+    Set-Content $Updating (Get-Date)
+    Wait-QuietWindow
     Set-Content $Updating (Get-Date)
     if (-not (Stop-TrendPilot)) {
         Report-StopDenied "新版本 $short 已构建好"
@@ -177,21 +227,25 @@ try {
     Copy-Item $newJar $Jar -Force
     & robocopy.exe $SrcDir $AppDir /E /NFL /NDL /NJH /NJS /NP /XD .git .mvn data logs target app /XF application-local.yml | Out-Null
 
-    if (Start-TrendPilot) {
+    $startedUtc = (Get-Date).ToUniversalTime()
+    $started = Start-TrendPilot
+    $monitorOk = $started -and (Wait-MonitorOk $startedUtc)
+    if ($monitorOk) {
         Set-Content $Version $latest
-        Remove-Item $Failed, $Denied -ErrorAction SilentlyContinue
+        Remove-Item $Failed, $Denied, $MonFailed -ErrorAction SilentlyContinue
         Write-Log "已更新到 $short"
         # 提交说明全文（策略优化提交里写了改了什么、旧值新值、依据数据、回滚方式），去掉署名行
         $body = (Invoke-Git @('log', '-1', '--format=%B', $latest)) -split "`r?`n" |
             Where-Object { $_ -notmatch '^(Co-Authored-By|Claude-Session):' }
         Send-Telegram ("✅ TrendPilot 已自动更新到 $short（已生效）`n" + (($body -join "`n").Trim()))
     } else {
-        Write-Log "新版本 $short 健康检查失败，回滚"
-        Set-Content $Failed $latest
+        $why = if ($started) { '启动后约 11 分钟内没有一次成功的 Monitor' } else { '启动后健康检查失败' }
+        Write-Log "新版本 $short ${why}，回滚"
+        if ($started) { Set-Content $MonFailed $latest } else { Set-Content $Failed $latest }
         Stop-TrendPilot | Out-Null
         if (Test-Path $PrevJar) { Copy-Item $PrevJar $Jar -Force }
         if (Start-TrendPilot) {
-            Send-Telegram "⚠️ TrendPilot 新版本 $short 启动后健康检查失败，已回滚到上一版，运行正常。"
+            Send-Telegram "⚠️ TrendPilot 新版本 $short ${why}，已回滚到上一版，运行正常。"
         } else {
             Send-Telegram "❗ TrendPilot 新版本 $short 启动失败，回滚后上一版也没能启动，详见 logs\console.log"
         }
