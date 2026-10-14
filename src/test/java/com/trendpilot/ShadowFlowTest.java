@@ -71,6 +71,7 @@ class ShadowFlowTest {
     @Autowired FakeMarket market;
     @Autowired @Qualifier("bybitMarket") FakeMarket bybit;
     @Autowired DiscoveryJob discovery;
+    @Autowired com.trendpilot.job.SnapshotJob snapshots;
     @Autowired MonitorJob monitor;
     @Autowired ShadowBook book;
     @Autowired ObservationBook v1Book;
@@ -357,5 +358,17 @@ class ShadowFlowTest {
         String identity = jdbc.sql("SELECT identity FROM research_record WHERE symbol = 'NEWUSDT' ORDER BY id DESC LIMIT 1")
                 .query(String.class).single();
         assertThat(identity).isEqualTo("UNVERIFIED");
+    }
+
+    @Test
+    void dailySnapshotHasStatsAndNoSecrets() throws Exception {
+        Instant t0 = Instant.parse("2026-10-19T10:17:00Z");
+        market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
+        discovery.runOnce(t0);
+        java.nio.file.Path file = snapshots.write(t0);
+        String text = java.nio.file.Files.readString(file);
+        assertThat(text).contains("\"books\"", "\"tracking\"", "\"decisions7d\"", "\"exitReplay\"")
+                .doesNotContainIgnoringCase("token");
     }
 }
