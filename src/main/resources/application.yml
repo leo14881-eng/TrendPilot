@@ -118,3 +118,9 @@ trendpilot.bybit:
   enabled: true
   base-url: https://api.bybit.com
   max-concurrency: 4
+
+# WebSocket：K 线缓存采集 + FastWatch 最优价（REST 负责初始化和补缺）
+trendpilot.stream:
+  enabled: true
+  binance-url: wss://stream.binance.com:9443/stream
+  bybit-url: wss://stream.bybit.com/v5/public/spot

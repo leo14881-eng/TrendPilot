@@ -6,6 +6,8 @@ trendpilot:
     enabled: false
   bybit:
     enabled: false
+  stream:
+    enabled: false
 
 logging:
   file:

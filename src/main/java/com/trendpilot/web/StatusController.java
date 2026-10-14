@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.trendpilot.common.CapitalAuthority;
+import com.trendpilot.market.stream.StreamHub;
 import com.trendpilot.portfolio.ObservationBook;
 import com.trendpilot.portfolio.ShadowBook;
 
@@ -18,10 +19,12 @@ public class StatusController {
     private final ShadowBook book;
     private final ObservationBook v1;
     private final JdbcClient jdbc;
+    private final StreamHub streams;
 
-    public StatusController(ShadowBook book, ObservationBook v1, JdbcClient jdbc) {
+    public StatusController(ShadowBook book, ObservationBook v1, JdbcClient jdbc, StreamHub streams) {
         this.book = book;
         this.v1 = v1;
+        this.streams = streams;
         this.jdbc = jdbc;
     }
 
@@ -32,6 +35,7 @@ public class StatusController {
                 "positions", book.positions(),
                 "v1Positions", v1.positions(),
                 "comparison", List.of(book.stats(), v1.stats()),
+                "websocket", streams.health(),
                 "deployedCost", book.deployedCost(),
                 "realizedPnl", book.realizedPnl(),
                 "recentRuns", rows("SELECT job, generation, started_at, program_status, data_status, note FROM job_run ORDER BY id DESC LIMIT 20"),

@@ -34,6 +34,7 @@ import com.trendpilot.market.SymbolInfo;
 import com.trendpilot.market.Ticker24h;
 import com.trendpilot.market.Venue;
 import com.trendpilot.market.VenueMarket;
+import com.trendpilot.market.stream.StreamHub;
 import com.trendpilot.notify.Messages;
 import com.trendpilot.notify.Notifier;
 import com.trendpilot.observation.V1Tracker;
@@ -58,6 +59,7 @@ public class DiscoveryJob {
     private static final Logger log = LoggerFactory.getLogger(DiscoveryJob.class);
 
     private final Markets markets;
+    private final StreamHub streams;
     private final V1Tracker v1;
     private final UniverseFilter universeFilter;
     private final EarlySignalCalculator signals;
@@ -72,10 +74,11 @@ public class DiscoveryJob {
     private final JdbcClient jdbc;
     private final StrategyParams params;
 
-    public DiscoveryJob(Markets markets, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, CapitalReviewer reviewer,
+    public DiscoveryJob(Markets markets, StreamHub streams, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, CapitalReviewer reviewer,
                         CapitalAllocator allocator, ShadowBook book, PortfolioLock lock, Notifier notifier,
                         JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params) {
         this.markets = markets;
+        this.streams = streams;
         this.v1 = v1;
         this.universeFilter = universeFilter;
         this.signals = signals;
@@ -254,6 +257,7 @@ public class DiscoveryJob {
         if (!names.contains(UniverseFilter.BTC)) {
             names.add(UniverseFilter.BTC);
         }
+        streams.watchKlines(m.venue(), Set.copyOf(names)); // 之后的 15m K 线由 WebSocket 写入缓存
         BarsLoader.Result bars = m.bars().load(names, now);
         SymbolBars btc = bars.bars().get(UniverseFilter.BTC);
         double missingRatio = bars.missing().size() / (double) names.size();
