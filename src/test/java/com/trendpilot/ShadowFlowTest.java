@@ -371,4 +371,24 @@ class ShadowFlowTest {
         assertThat(text).contains("\"books\"", "\"tracking\"", "\"decisions7d\"", "\"exitReplay\"")
                 .doesNotContainIgnoringCase("token");
     }
+
+    @Test
+    void fastConfirmSellsImmediatelyWithoutWaitingForMonitor() {
+        Instant t0 = Instant.parse("2026-10-20T10:17:00Z");
+        market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
+        discovery.runOnce(t0);
+        Instant t1 = t0.plusSeconds(300);
+        market.books.put("ABCUSDT", TestData.book("ABCUSDT", 107.2, 2, 100, t1));
+        markets.invalidate();
+        monitor.runOnce(t1);
+        assertThat(book.positions().getFirst().protectArmed()).isTrue();
+
+        // 1 分钟后（不到下一轮 5 分钟检查）跌破底线：快速确认重新取盘口，立即卖出
+        Instant t2 = t1.plusSeconds(60);
+        market.books.put("ABCUSDT", TestData.book("ABCUSDT", 104.7, 2, 100, t2)); // 盘口缓存里还是旧的 107.2
+        MonitorJob.Report fast = monitor.confirmNow(java.util.Set.of("ABCUSDT"), t2);
+        assertThat(fast.exits()).containsExactly("PROFIT_PROTECTION:ABCUSDT");
+        assertThat(book.positions()).isEmpty();
+    }
 }

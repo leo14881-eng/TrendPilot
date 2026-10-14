@@ -28,6 +28,11 @@ public class DepthCache {
         cache.clear();
     }
 
+    /** 丢弃某个标的的缓存（需要立即用最新盘口确认时）。 */
+    public void invalidate(String symbol) {
+        cache.keySet().removeIf(k -> k.startsWith(symbol + "/"));
+    }
+
     public OrderBook get(String symbol, int limit) {
         String key = symbol + "/" + limit;
         Instant now = Instant.now();

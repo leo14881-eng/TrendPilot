@@ -23,9 +23,10 @@ import com.trendpilot.portfolio.Position;
 import com.trendpilot.portfolio.ShadowBook;
 
 /**
- * FastWatch 快速观察（每 15 秒）：用 WebSocket 最优价观察 V2 持仓的价格、价差和假设的利润保护。
- * formal_writer = false：只写观察表，不改正式组合，也不产生正式 SELL；
- * 即使观察到卖出条件，正式卖出仍由 5 分钟 Monitor 用全数量盘口确认。
+ * FastWatch 快速观察（每 15 秒）：用 WebSocket 最优价观察 V2 持仓的价格、价差和利润保护。
+ * 自己不写正式组合；发现可能跌破保护底线（或已跌到亏损）时，立即调用 Monitor 的快速确认：
+ * 重新取该币全数量盘口，按正式退出规则判断，确认就马上卖出，不等 5 分钟检查。
+ * 同一持仓 60 秒内最多确认一次。
  */
 @Component
 public class FastWatch {
@@ -40,8 +41,14 @@ public class FastWatch {
     private final StrategyParams params;
     /** 每个持仓上一次的观察结论，只在变化时记录。 */
     private final Map<String, String> lastKind = new ConcurrentHashMap<>();
+    /** 每个持仓上一次快速确认的时间。 */
+    private final Map<String, Instant> lastConfirm = new ConcurrentHashMap<>();
+    private final com.trendpilot.job.MonitorJob monitor;
+    static final long CONFIRM_GAP_SECONDS = 60;
 
-    public FastWatch(ShadowBook book, StreamHub hub, JdbcClient jdbc, Notifier notifier, StrategyParams params) {
+    public FastWatch(ShadowBook book, StreamHub hub, JdbcClient jdbc, Notifier notifier, StrategyParams params,
+                     @org.springframework.context.annotation.Lazy com.trendpilot.job.MonitorJob monitor) {
+        this.monitor = monitor;
         this.book = book;
         this.hub = hub;
         this.jdbc = jdbc;
@@ -62,11 +69,21 @@ public class FastWatch {
             hub.watchBooks(v, symbols);
         }
         lastKind.keySet().removeIf(k -> positions.stream().noneMatch(p -> key(p).equals(k)));
+        lastConfirm.keySet().removeIf(k -> positions.stream().noneMatch(p -> key(p).equals(k)));
+        Set<String> confirm = new java.util.HashSet<>();
         for (Position p : positions) {
             StreamHub.Quote q = hub.quote(p.venue(), p.symbol(), MAX_QUOTE_AGE_SECONDS);
             if (q == null || q.bid() <= 0 || q.ask() <= 0) continue; // 没有新鲜价格就不观察
-            observe(p, q.bid(), q.ask(), now);
+            String kind = observe(p, q.bid(), q.ask(), now);
+            if (kind.equals("WOULD_PROTECT_SELL") || kind.equals("GAPPED")) {
+                Instant last = lastConfirm.get(key(p));
+                if (last == null || now.isAfter(last.plusSeconds(CONFIRM_GAP_SECONDS))) {
+                    lastConfirm.put(key(p), now);
+                    confirm.add(p.symbol());
+                }
+            }
         }
+        if (!confirm.isEmpty()) monitor.confirmNow(confirm, now);
     }
 
     /** @return 本次观察结论（HOLD / WOULD_ARM / WOULD_PROTECT_SELL / GAPPED） */
@@ -96,7 +113,7 @@ public class FastWatch {
                     .param("sp", spreadBps).param("n", net).param("r", rawRet).param("t", now.toString()).update();
             if (kind.equals("WOULD_PROTECT_SELL")) {
                 notifier.send("fastwatch:" + key(p) + ":" + now.getEpochSecond() / 3600, String.format(Locale.ROOT,
-                        "👀 FastWatch 观察：V2 %s%s 估算净利 %.2f U 已低于保护底线 %.2f U\n只是观察，正式卖出等 5 分钟持仓检查用全数量盘口确认",
+                        "👀 FastWatch：V2 %s%s 估算净利 %.2f U 已低于保护底线 %.2f U\n正在立即用全数量盘口确认，确认后马上卖出",
                         p.symbol(), Messages.venueTag(p.venue()), net, p.protectFloor().doubleValue()));
             }
         }

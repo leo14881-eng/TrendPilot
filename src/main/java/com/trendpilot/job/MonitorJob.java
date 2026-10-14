@@ -43,6 +43,7 @@ import com.trendpilot.variant.ParallelExits;
 public class MonitorJob {
 
     public static final String JOB = "MONITOR";
+    public static final String FAST_JOB = "MONITOR_FAST";
 
     private static final Logger log = LoggerFactory.getLogger(MonitorJob.class);
 
@@ -104,8 +105,36 @@ public class MonitorJob {
         }
     }
 
+    /**
+     * FastWatch 发现可能跌破保护底线时立即确认：只针对这些持仓，丢掉盘口缓存重新取全数量盘口，
+     * 按与 5 分钟检查完全相同的退出规则判断，确认就立刻卖出，不等下一轮。
+     */
+    public Report confirmNow(java.util.Set<String> symbols, Instant now) {
+        String gen = Generations.of("F", now);
+        try {
+            for (Position p : book.positions()) {
+                if (symbols.contains(p.symbol()) && markets.get(p.venue()) != null) {
+                    markets.get(p.venue()).depth().invalidate(p.symbol());
+                }
+            }
+            Report r = monitor(gen, now, symbols);
+            runs.record(FAST_JOB, gen, now, Instant.now(), "SUCCESS", r.dataStatus(),
+                    "symbols=" + symbols + " exits=" + r.exits());
+            return r;
+        } catch (RuntimeException e) {
+            log.error("快速确认失败 {}", gen, e);
+            runs.record(FAST_JOB, gen, now, Instant.now(), "FAILED", "N/A", String.valueOf(e.getMessage()));
+            return new Report(gen, 0, List.of(), "N/A");
+        }
+    }
+
     private Report monitor(String gen, Instant now) {
-        List<Position> snapshot = book.positions();
+        return monitor(gen, now, null);
+    }
+
+    private Report monitor(String gen, Instant now, java.util.Set<String> only) {
+        List<Position> snapshot = book.positions().stream()
+                .filter(p -> only == null || only.contains(p.symbol())).toList();
         if (snapshot.isEmpty()) {
             return new Report(gen, 0, List.of(), "N/A");
         }
@@ -169,6 +198,7 @@ public class MonitorJob {
         List<String> exits = new ArrayList<>();
         lock.run(() -> {
             for (Position pos : book.positions()) {
+                if (only != null && !only.contains(pos.symbol())) continue;
                 Observed o = observed.get(pos.symbol());
                 if (o == null) {
                     continue; // 抓取之后新开的仓，下轮再看
