@@ -31,15 +31,17 @@ import com.trendpilot.portfolio.Position;
 import com.trendpilot.portfolio.ShadowBook;
 
 /**
- * 每日持仓明细（Markdown）：V2 全部持仓表、当日和累计已实现、资金占用；BTC 每日短线；V1 只给汇总和前后各 5 个。
+ * V2 日报（Markdown）：概览、持仓明细、当天盈利明细（平仓和买入）、资金与风控状态；附 BTC 每日短线和 V1 汇总。
  * 浮动盈亏用 Monitor 最近一次按全数量盘口模拟卖出的可退出净利（已扣手续费和滑点）；现价取最新一根 15m K 线收盘价。
- * 每天 08:40（越南时间）写入 data/holdings/holdings-yyyy-MM-dd.md，也可随时 GET /api/holdings 取当前版本。
+ * 每晚 00:00（越南时间）生成刚结束那一天的日报：写入 data/reports/v2-daily-yyyy-MM-dd.md，并发 Telegram（过长自动分段）。
+ * 随时 GET /api/holdings 取当天到现在的版本，GET /api/v2-daily?day=yyyy-MM-dd 取某天已保存的日报。
  */
 @Component
 public class HoldingsReport {
 
     private static final Logger log = LoggerFactory.getLogger(HoldingsReport.class);
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
 
     private final ShadowBook v2;
     private final ObservationBook v1;
@@ -49,10 +51,13 @@ public class HoldingsReport {
     private final JdbcClient jdbc;
     private final ZoneId zone;
     private final Path dir;
+    private final com.trendpilot.notify.Notifier notifier;
 
     public HoldingsReport(ShadowBook v2, ObservationBook v1, BtcDailyService btc, StrategyParams params, AppState state,
                           JdbcClient jdbc, @Value("${trendpilot.zone}") String zone,
-                          @Value("${trendpilot.data-dir:./data}") String dataDir) {
+                          @Value("${trendpilot.data-dir:./data}") String dataDir,
+                          com.trendpilot.notify.Notifier notifier) {
+        this.notifier = notifier;
         this.v2 = v2;
         this.v1 = v1;
         this.btc = btc;
@@ -60,23 +65,60 @@ public class HoldingsReport {
         this.state = state;
         this.jdbc = jdbc;
         this.zone = ZoneId.of(zone);
-        this.dir = Path.of(dataDir, "holdings");
+        this.dir = Path.of(dataDir, "reports");
     }
 
-    @Scheduled(cron = "0 40 8 * * *", zone = "${trendpilot.zone}")
+    @Scheduled(cron = "0 0 0 * * *", zone = "${trendpilot.zone}")
     public void scheduled() {
+        Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        java.time.LocalDate day = now.minusSeconds(60).atZone(zone).toLocalDate(); // 刚结束的那一天
         try {
-            write(Instant.now().truncatedTo(ChronoUnit.SECONDS));
+            String md = markdown(day, now);
+            write(day, md);
+            notifier.send("v2-daily:" + day, telegram(md));
         } catch (Exception e) {
-            log.warn("持仓明细生成失败：{}", e.getMessage());
+            log.warn("V2 日报生成失败：{}", e.getMessage());
         }
     }
 
-    public Path write(Instant now) throws Exception {
+    public Path write(java.time.LocalDate day, String md) throws Exception {
         Files.createDirectories(dir);
-        Path file = dir.resolve("holdings-" + now.atZone(zone).toLocalDate() + ".md");
-        Files.writeString(file, markdown(now), StandardCharsets.UTF_8);
+        Path file = dir.resolve("v2-daily-" + day + ".md");
+        Files.writeString(file, md, StandardCharsets.UTF_8);
         return file;
+    }
+
+    /** 已保存的某天日报；没有时返回空。 */
+    public Optional<String> saved(java.time.LocalDate day) {
+        Path file = dir.resolve("v2-daily-" + day + ".md");
+        try {
+            return Files.exists(file) ? Optional.of(Files.readString(file, StandardCharsets.UTF_8)) : Optional.empty();
+        } catch (java.io.IOException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Telegram 版：Markdown 表格在 Telegram 里不好看，换成每行一条；分段由 Notifier 负责。
+     * 表格行 "| a | b | c |" 变成 "a · b · c"，分隔行去掉。
+     */
+    static String telegram(String md) {
+        List<String> out = new ArrayList<>();
+        for (String line : md.split("\n")) {
+            if (line.startsWith("|---") || line.startsWith("| |---") || line.matches("^\\|[-:| ]+\\|$")) continue;
+            if (line.startsWith("|")) {
+                String row = String.join(" · ", java.util.Arrays.stream(line.substring(1, line.length() - 1).split("\\|"))
+                        .map(String::trim).filter(c -> !c.isEmpty()).toList());
+                out.add(row);
+            } else if (line.startsWith("## ")) {
+                out.add("【" + line.substring(3).trim() + "】");
+            } else if (line.startsWith("# ")) {
+                out.add("📊 " + line.substring(2).trim());
+            } else {
+                out.add(line);
+            }
+        }
+        return String.join("\n", out).replaceAll("\n{3,}", "\n\n").trim();
     }
 
     /** 一行持仓的展示数据。 */
@@ -86,42 +128,49 @@ public class HoldingsReport {
         }
     }
 
+    /** 当天（越南时间）从 0 点到现在的版本。 */
     public String markdown(Instant now) {
+        return markdown(now.atZone(zone).toLocalDate(), now);
+    }
+
+    /** day 那一天的日报：持仓和资金是 now 时刻的状态，盈利明细统计 day 当天（越南时间 0 点到 24 点，不晚于 now）。 */
+    public String markdown(java.time.LocalDate day, Instant now) {
         ZonedDateTime local = now.atZone(zone);
+        Instant dayStart = day.atStartOfDay(zone).toInstant();
+        Instant dayEnd = day.plusDays(1).atStartOfDay(zone).toInstant();
+        if (dayEnd.isAfter(now)) dayEnd = now.plusSeconds(1);
         List<String> out = new ArrayList<>();
-        out.add("# TrendPilot 持仓明细（影子账本）");
+        out.add("# TrendPilot V2 日报 " + day);
         out.add("");
-        out.add("生成于 " + TIME.format(local) + " 越南时间。浮动盈亏是按全数量盘口模拟卖出、扣掉手续费和滑点后的可退出净利；"
-                + "现价是最新一根 15 分钟 K 线收盘价。全部为模拟记录，没有真实下单。");
+        out.add("生成于 " + TIME.format(local) + " 越南时间。全部为影子模拟记录，没有真实下单。浮动盈亏是按全数量盘口模拟卖出、"
+                + "扣掉手续费和滑点后的可退出净利；现价是最新一根 15 分钟 K 线收盘价。");
         out.add("");
 
-        // ---------- V2 ----------
         List<Row> rows = rows(v2);
         double cost = rows.stream().mapToDouble(Row::cost).sum();
         double net = rows.stream().mapToDouble(Row::net).sum();
         long losers = rows.stream().filter(r -> r.net() < 0).count();
-        out.add("## V2 正式影子组合");
-        out.add("");
-        out.add(String.format(Locale.ROOT, "合计：%d 个仓位，总成本 %s U，浮动净盈亏 %s U（%s），%d 个浮亏、%d 个浮盈。",
-                rows.size(), money(cost), signed(net), pct(cost == 0 ? 0 : net / cost * 100), losers, rows.size() - losers));
-        out.add("");
         double realized = v2.realizedPnl();
-        double today = realizedSince(ShadowBook.BOOK, local.toLocalDate().atStartOfDay(zone).toInstant());
-        int closedToday = sellsSince(ShadowBook.BOOK, local.toLocalDate().atStartOfDay(zone).toInstant());
-        out.add(String.format(Locale.ROOT, "已实现：今天 %s U（平仓 %d 笔），累计 %s U。已实现 + 浮动合计 %s U。",
-                signed(today), closedToday, signed(realized), signed(realized + net)));
+        List<Sell> sells = sells(ShadowBook.BOOK, dayStart, dayEnd);
+        double today = sells.stream().mapToDouble(Sell::pnl).sum();
+        long wins = sells.stream().filter(x -> x.pnl() > 0).count();
+
+        // ---------- 一、概览 ----------
+        out.add("## 一、概览");
         out.add("");
-        String regime = state.get("regime").orElse("?");
-        StrategyParams.Capital c = params.capital();
-        double pool = "STRONG".equals(regime) ? c.normalPool() + c.strategicReserve() : c.normalPool();
-        double limit = Math.min(pool, c.hardCap() * c.deployPct(regime));
-        double free = limit - cost + Math.min(0, realized) + Math.min(0, net);
-        out.add(String.format(Locale.ROOT, "资金：行情 %s，可用上限 %s U（硬顶 %s × %.0f%%%s），已占用 %s U，还可用约 %s U。",
-                regime, money(limit), money(c.hardCap()), c.deployPct(regime) * 100,
-                "STRONG".equals(regime) ? "，含 3000 战略储备" : "，3000 战略储备只在 STRONG 时启用",
-                money(cost), money(Math.max(0, free))));
+        out.add(String.format(Locale.ROOT, "- 当天已实现 %s U（平仓 %d 笔，盈利 %d 笔）；累计已实现 %s U", signed(today), sells.size(),
+                wins, signed(realized)));
+        out.add(String.format(Locale.ROOT, "- 持仓 %d 个，成本 %s U，浮动 %s U（%s），%d 个浮亏、%d 个浮盈", rows.size(), money(cost),
+                signed(net), pct(cost == 0 ? 0 : net / cost * 100), losers, rows.size() - losers));
+        out.add(String.format(Locale.ROOT, "- 已实现 + 浮动合计 %s U", signed(realized + net)));
         out.add("");
-        if (!rows.isEmpty()) {
+
+        // ---------- 二、持仓明细 ----------
+        out.add("## 二、持仓明细");
+        out.add("");
+        if (rows.isEmpty()) {
+            out.add("当前空仓。");
+        } else {
             out.add("| 代码 | 交易所 | 数量 | 成本 | 均价 | 现价 | 浮动盈亏 | 收益率 | 档数 | 持有 | 入场结构 |");
             out.add("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|");
             rows.stream().sorted(Comparator.comparingDouble(Row::pct)).forEach(r -> out.add(String.format(Locale.ROOT,
@@ -130,11 +179,48 @@ public class HoldingsReport {
                     num(r.p().avgEntryPrice().doubleValue()), Double.isNaN(r.price()) ? "-" : num(r.price()),
                     signed(r.net()), pct(r.pct()), r.p().tranches(), hours(r.p().openedAt(), now),
                     structure(ShadowBook.BOOK, r.p()) + (r.p().protectArmed() ? "；利润保护中" : ""))));
-            out.add("");
         }
+        out.add("");
 
+        // ---------- 三、盈利明细 ----------
+        out.add("## 三、盈利明细（当天）");
+        out.add("");
+        if (sells.isEmpty()) {
+            out.add("当天没有平仓。");
+        } else {
+            out.add("| 代码 | 交易所 | 卖出时间 | 持有 | 成本 | 净盈亏 | 收益率 | 卖出原因 |");
+            out.add("|---|---|---|---:|---:|---:|---:|---|");
+            sells.forEach(x -> out.add(String.format(Locale.ROOT, "| %s | %s | %s | %s | %s | %s | %s | %s |",
+                    x.symbol().replace("USDT", ""), x.venue(), HHMM.format(x.at().atZone(zone)),
+                    x.holdMinutes() == null ? "-" : hours(x.at().minusSeconds(x.holdMinutes() * 60L), x.at()),
+                    Double.isNaN(x.cost()) ? "-" : money(x.cost()), signed(x.pnl()),
+                    Double.isNaN(x.cost()) || x.cost() == 0 ? "-" : pct(x.pnl() / x.cost() * 100), exitLabel(x.reason()))));
+        }
+        out.add("");
+        List<String> buys = buys(ShadowBook.BOOK, dayStart, dayEnd);
+        out.add(buys.isEmpty() ? "当天没有买入。" : "当天买入 " + buys.size() + " 笔：" + String.join("，", buys) + "。");
+        out.add("");
+
+        // ---------- 四、资金情况 ----------
+        String regime = state.get("regime").orElse("?");
+        StrategyParams.Capital c = params.capital();
+        boolean strong = "STRONG".equals(regime);
+        double pool = strong ? c.normalPool() + c.strategicReserve() : c.normalPool();
+        double limit = Math.min(pool, c.hardCap() * c.deployPct(regime));
+        double deductions = Math.min(0, realized) + Math.min(0, net);
+        double free = limit - cost + deductions;
+        out.add("## 四、资金情况");
+        out.add("");
+        out.add(String.format(Locale.ROOT, "- 行情状态 %s：可用上限 %s U = min(资金池 %s, 硬顶 %s × %.0f%%)", regime, money(limit),
+                money(pool), money(c.hardCap()), c.deployPct(regime) * 100));
+        out.add(String.format(Locale.ROOT, "- 战略储备 %s U：%s", money(c.strategicReserve()),
+                strong ? "STRONG 行情，已计入资金池" : "只在 STRONG 行情启用，现在未动用"));
+        out.add(String.format(Locale.ROOT, "- 已占用 %s U（%d 个持仓），还可用约 %s U%s", money(cost), rows.size(), money(Math.max(0, free)),
+                deductions < 0 ? String.format(Locale.ROOT, "（已扣累计亏损和浮亏 %s U）", signed(deductions)) : ""));
+        out.add("- 风控：" + riskLine());
+        out.add("");
         // ---------- BTC 每日短线 ----------
-        out.add("## BTC 每日短线（影子）");
+        out.add("## 五、BTC 每日短线（影子）");
         out.add("");
         try {
             Map<String, Object> s = btc.summary(now);
@@ -158,12 +244,12 @@ public class HoldingsReport {
         double v1cost = v1rows.stream().mapToDouble(Row::cost).sum();
         double v1net = v1rows.stream().mapToDouble(Row::net).sum();
         long v1losers = v1rows.stream().filter(r -> r.net() < 0).count();
-        out.add("## V1 宽口径观察（对照用，按参考价记账）");
+        out.add("## 六、V1 宽口径观察（对照用，按参考价记账）");
         out.add("");
-        out.add(String.format(Locale.ROOT, "合计：%d 个仓位，总成本 %s U，浮动净盈亏 %s U（%s），%d 个浮亏、%d 个浮盈。已实现累计 %s U，今天 %s U。",
+        out.add(String.format(Locale.ROOT, "合计：%d 个仓位，总成本 %s U，浮动净盈亏 %s U（%s），%d 个浮亏、%d 个浮盈。已实现累计 %s U，当天 %s U。",
                 v1rows.size(), money(v1cost), signed(v1net), pct(v1cost == 0 ? 0 : v1net / v1cost * 100), v1losers,
                 v1rows.size() - v1losers, signed(v1.realizedPnl()),
-                signed(realizedSince(ObservationBook.BOOK, local.toLocalDate().atStartOfDay(zone).toInstant()))));
+                signed(sells(ObservationBook.BOOK, dayStart, dayEnd).stream().mapToDouble(Sell::pnl).sum())));
         out.add("");
         if (!v1rows.isEmpty()) {
             List<Row> sorted = v1rows.stream().sorted(Comparator.comparingDouble(Row::pct)).toList();
@@ -224,15 +310,54 @@ public class HoldingsReport {
         return String.join(" + ", out);
     }
 
-    private double realizedSince(String book, Instant since) {
-        return jdbc.sql("SELECT pnl_usdt FROM shadow_event WHERE book = :b AND type = 'SELL' AND pnl_usdt IS NOT NULL AND created_at >= :t")
-                .param("b", book).param("t", since.toString()).query(String.class).list().stream()
-                .mapToDouble(Double::parseDouble).sum();
+    /** 一笔平仓。 */
+    record Sell(String symbol, String venue, Instant at, double pnl, double cost, Integer holdMinutes, String reason) {
     }
 
-    private int sellsSince(String book, Instant since) {
-        return jdbc.sql("SELECT COUNT(*) FROM shadow_event WHERE book = :b AND type = 'SELL' AND created_at >= :t")
-                .param("b", book).param("t", since.toString()).query(Integer.class).single();
+    private List<Sell> sells(String book, Instant from, Instant to) {
+        return jdbc.sql("""
+                SELECT symbol, venue, created_at, pnl_usdt, cost_usdt, hold_minutes, reason_code FROM shadow_event
+                WHERE book = :b AND type = 'SELL' AND pnl_usdt IS NOT NULL AND created_at >= :f AND created_at < :t ORDER BY id
+                """).param("b", book).param("f", from.toString()).param("t", to.toString())
+                .query((rs, i) -> new Sell(rs.getString(1), rs.getString(2), Instant.parse(rs.getString(3)),
+                        Double.parseDouble(rs.getString(4)), rs.getString(5) == null ? Double.NaN : Double.parseDouble(rs.getString(5)),
+                        (Integer) rs.getObject(6), rs.getString(7))).list();
+    }
+
+    private List<String> buys(String book, Instant from, Instant to) {
+        return jdbc.sql("""
+                SELECT symbol, type, created_at, notional_usdt FROM shadow_event
+                WHERE book = :b AND type IN ('BUY', 'ADD') AND created_at >= :f AND created_at < :t ORDER BY id
+                """).param("b", book).param("f", from.toString()).param("t", to.toString())
+                .query((rs, i) -> String.format(Locale.ROOT, "%s %s%s", HHMM.format(Instant.parse(rs.getString(3)).atZone(zone)),
+                        rs.getString(1).replace("USDT", ""), "ADD".equals(rs.getString(2)) ? "（加仓）" : "")).list();
+    }
+
+    /** 风控状态：崩盘熔断、恢复期、最近一轮 Discovery 的系统拦截原因。 */
+    private String riskLine() {
+        List<String> parts = new ArrayList<>();
+        state.get("risk:altCrashSince").filter(v -> !v.isBlank())
+                .ifPresent(v -> parts.add("山寨崩盘熔断中（" + TIME.format(Instant.parse(v).atZone(zone)) + " 起），停止新买入和加仓"));
+        if ("true".equals(state.get("risk:recovering").orElse("false"))) parts.add("风险解除后的恢复期（先观察、再半额）");
+        jdbc.sql("""
+                SELECT reasons FROM decision_log WHERE decision = 'SYSTEM_BLOCKED'
+                AND generation = (SELECT generation FROM decision_log ORDER BY id DESC LIMIT 1) LIMIT 1
+                """).query(String.class).optional().filter(r -> !r.isBlank())
+                .ifPresent(r -> parts.add("最近一轮扫描被系统拦截：" + r));
+        return parts.isEmpty() ? "正常，没有熔断、冻结或恢复期" : String.join("；", parts);
+    }
+
+    static String exitLabel(String reason) {
+        if (reason == null) return "-";
+        return switch (reason) {
+            case "PROFIT_PROTECTION" -> "利润保护";
+            case "THESIS_DECAY" -> "上涨逻辑失效";
+            case "TARGET_REVIEW_EXIT" -> "8% 复核卖出";
+            case "HARD_INVALID_NOT_TRADING" -> "停止交易/下架";
+            case "HARD_INVALID_IDENTITY" -> "黑名单";
+            case "HARD_INVALID_LIQUIDITY" -> "流动性异常";
+            default -> reason;
+        };
     }
 
     private static String hours(Instant from, Instant now) {

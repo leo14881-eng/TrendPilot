@@ -214,7 +214,10 @@ class ShadowFlowTest {
         assertThat(d.klineRequests()).isEqualTo(5);
         assertThat(book.positions()).hasSize(1);
         String md = holdings.markdown(t0.plusSeconds(60));
-        assertThat(md).contains("V2 正式影子组合", "合计：1 个仓位", "| ABC | BINANCE |", "评分", "V1 宽口径观察", "BTC 每日短线");
+        assertThat(md).contains("V2 日报", "## 二、持仓明细", "持仓 1 个", "| ABC | BINANCE |", "评分", "## 三、盈利明细",
+                "## 四、资金情况", "V1 宽口径观察", "BTC 每日短线");
+        String tg = com.trendpilot.report.HoldingsReportTestAccess.telegram(md);
+        assertThat(tg).contains("📊 TrendPilot V2 日报", "【二、持仓明细】", "ABC · BINANCE").doesNotContain("|---");
 
         // 同一 generation 再跑不会重复买入（加仓条件不满足），K 线全部命中缓存，交易对信息也走缓存
         DiscoveryJob.Report again = discovery.runOnce(t0);
