@@ -210,19 +210,29 @@ function Set-NoSleep {
     $marker = Join-Path $Bin 'nosleep.txt'
     $today = Get-Date -Format 'yyyy-MM-dd'
     $last = Read-Text $marker
-    if ($last -eq $today -or $last -eq "failed-$today") { return }
+    # v2：加了"合上笔记本盖子不睡眠"，旧标记不算数，升级后当天重新设置一次
+    if ($last -eq "v2-$today" -or $last -eq "failed-$today") { return }
     $failed = @()
     foreach ($setting in 'standby-timeout-ac', 'hibernate-timeout-ac') {
         & powercfg.exe /change $setting 0 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { $failed += $setting }
     }
+    # 合盖动作：0 = 不采取任何操作（接电源和用电池都设），设置后重新激活当前电源计划才生效
+    & powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { $failed += 'lid-ac' }
+    & powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { $failed += 'lid-dc' }
+    & powercfg.exe /setactive SCHEME_CURRENT 2>&1 | Out-Null
     if ($failed.Count -eq 0) {
-        if (-not $last) { Write-Log '已设置接电源时不睡眠、不休眠' }
-        Set-Content $marker $today
+        if ($last -notlike 'v2-*') {
+            Write-Log '已设置接电源时不睡眠、不休眠，合上盖子不睡眠'
+            Send-Telegram '✅ 已设置：合上笔记本盖子、接电源空闲时电脑都不再睡眠，TrendPilot 会一直运行。'
+        }
+        Set-Content $marker "v2-$today"
     } else {
         Write-Log "设置不睡眠失败：$($failed -join ', ')"
         if ($last -notlike 'failed-*') {
-            Send-Telegram "⚠️ 无法关闭电脑自动睡眠（$($failed -join ', ')），电脑睡眠时 TrendPilot 会停止。请在 设置 > 系统 > 电源 里把接通电源时的睡眠改为“从不”。"
+            Send-Telegram "⚠️ 无法关闭电脑自动睡眠（$($failed -join ', ')），电脑睡眠时 TrendPilot 会停止。请在 控制面板 > 电源选项 > 选择关闭盖子的功能 里改为“不采取任何操作”，并把接通电源时的睡眠改为“从不”。"
         }
         Set-Content $marker "failed-$today"
     }
