@@ -74,6 +74,9 @@ class BacktestSmokeTest {
         factors.run(fromQ, data.size);
         assertThat(factors.periods("7 天涨幅（动量）", 0)).isGreaterThan(0);
         assertThat(factors.markdown()).contains("因子检验").contains("只持有 BTC");
+        PumpStudy pump = new PumpStudy(data);
+        pump.run(fromQ, data.size);
+        assertThat(pump.markdown()).contains("追大涨检验");
         TrendStudy trend = new TrendStudy(data);
         trend.run(fromQ, fromQ + 15 * 96, data.size);
         assertThat(trend.results()).isNotEmpty();

@@ -100,9 +100,11 @@ public final class BacktestMain {
             f150.run(fromQ, size);
             FactorStudy f30 = new FactorStudy(data, 30);
             f30.run(fromQ, size);
+            PumpStudy pump = new PumpStudy(data);
+            pump.run(fromQ, size);
             TrendStudy trend = new TrendStudy(data);
             trend.run(fromQ, splitQ, size);
-            String md = "# 信号检验（" + period + "）\n\n" + trend.markdown("前段", "后段") + f150.markdown() + f30.markdown() + edge.markdown();
+            String md = "# 信号检验（" + period + "）\n\n" + pump.markdown() + trend.markdown("前段", "后段") + f150.markdown() + f30.markdown() + edge.markdown();
             Files.writeString(outDir.resolve("report.md"), md);
             System.out.println(md);
             return;
