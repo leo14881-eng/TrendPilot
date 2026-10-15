@@ -22,9 +22,13 @@ public class BtcDailyJob {
     private final BtcDailyService service;
     private final BtcDailyProperties props;
 
-    public BtcDailyJob(BtcDailyService service, BtcDailyProperties props) {
+    private final org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease;
+
+    public BtcDailyJob(BtcDailyService service, BtcDailyProperties props,
+                       org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease) {
         this.service = service;
         this.props = props;
+        this.lease = lease;
     }
 
     @Scheduled(cron = "40 1,16,31,46 * * * *", zone = "${trendpilot.zone}")
@@ -43,6 +47,8 @@ public class BtcDailyJob {
         Thread.ofVirtual().name("btc-daily-startup").start(() -> {
             try {
                 Thread.sleep(STARTUP_DELAY_MS);
+                var l = lease.getIfAvailable();
+                if (l != null && !l.active()) return; // 待命机器不记 BTC 账本
                 service.tick(Instant.now());
                 service.backtestIfNeeded(Instant.now());
             } catch (InterruptedException e) {

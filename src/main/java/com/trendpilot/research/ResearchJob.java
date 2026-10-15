@@ -24,9 +24,13 @@ public class ResearchJob {
     private final ResearchService research;
     private final ResearchProperties props;
 
-    public ResearchJob(ResearchService research, ResearchProperties props) {
+    private final org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease;
+
+    public ResearchJob(ResearchService research, ResearchProperties props,
+                       org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease) {
         this.research = research;
         this.props = props;
+        this.lease = lease;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -39,6 +43,8 @@ public class ResearchJob {
                 Thread.currentThread().interrupt();
                 return;
             }
+            var l = lease.getIfAvailable();
+            if (l != null && !l.active()) return; // 待命机器不请求外部接口
             refresh();
         });
     }

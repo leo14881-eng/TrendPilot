@@ -90,12 +90,24 @@ public class DiscoveryJob {
     private final com.trendpilot.market.KlineStore klineStore;
     private final com.trendpilot.observation.DepthVariantTracker depthVariant;
 
+    private final org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease;
+
+    /** 不允许新开仓（保留其他风险结论）。 */
+    static RiskState blockNew(RiskState r, String reason) {
+        List<String> reasons = new ArrayList<>(r.reasons());
+        reasons.add(reason);
+        return new RiskState(r.regime(), false, 0, r.btc24hPct(), r.btc4hPct(), r.btc1hPct(), r.breadth(),
+                r.recentLossExits(), List.copyOf(reasons));
+    }
+
     public DiscoveryJob(Markets markets, ResearchService research, StreamHub streams, V1Tracker v1, UniverseFilter universeFilter, EarlySignalCalculator signals, SystemRiskAssessor riskAssessor, RiskRecovery recovery, CapitalReviewer reviewer,
                         CapitalAllocator allocator, ShadowBook book, PortfolioLock lock, Notifier notifier,
                         JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params,
                         SignalTracker tracker, com.trendpilot.market.KlineStore klineStore,
+                        org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease,
                         com.trendpilot.observation.DepthVariantTracker depthVariant) {
         this.depthVariant = depthVariant;
+        this.lease = lease;
         this.tracker = tracker;
         this.klineStore = klineStore;
         this.markets = markets;
@@ -249,10 +261,15 @@ public class DiscoveryJob {
         RiskState raw = riskAssessor.assess(main.btc(), btcTicker, main.universe(), lossExits, ev);
         // V1 只受市场类风险（BTC 急跌、流动性、稳定币、数据缺失）限制，不受 V2 的亏损冻结和恢复期限制，
         // 否则 V2 浮亏时 V1 也停止采样，对比数据正好在行情差的时候断档
-        RiskState v1Risk = riskAssessor.assess(main.btc(), btcTicker, main.universe(), 0,
+        RiskState v1Raw = riskAssessor.assess(main.btc(), btcTicker, main.universe(), 0,
                 new MarketEvidence(ev.medianSpreadBps(), ev.stableDeviationPct(), 0, ev.altCrash()));
         if (main.btc() != null) recovery.recordShockIfAny(raw, now);
-        RiskState risk = recovery.apply(raw, gen);
+        RiskState recovered = recovery.apply(raw, gen);
+        // 跨机器保护：确认不了自己持有运行租约时不开新仓（另一台可能已接管）
+        com.trendpilot.lease.ActiveLease l = lease.getIfAvailable();
+        boolean leaseOk = l == null || l.canEnter();
+        RiskState risk = leaseOk ? recovered : blockNew(recovered, "LEASE_UNCONFIRMED");
+        RiskState v1Risk = leaseOk ? v1Raw : blockNew(v1Raw, "LEASE_UNCONFIRMED");
         String prevRegime = state.get("regime").orElse(null);
         if (prevRegime != null && !prevRegime.equals(risk.regime().name())) {
             notifier.send("regime:" + gen, Messages.regime(prevRegime, risk));

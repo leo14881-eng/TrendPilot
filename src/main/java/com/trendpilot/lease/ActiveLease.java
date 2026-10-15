@@ -35,8 +35,10 @@ import jakarta.annotation.PreDestroy;
  *     输的一方取消自己的置顶并待命，所以只会剩一台运行。</li>
  * <li>待命时所有定时任务（扫描、持仓检查、BTC 短线、报告等）都跳过，不记账、不发通知，只继续读租约；
  *     运行的那台停止超过 10 分钟，待命机器自动接管。</li>
- * <li>Telegram 读不到：已经在运行的继续运行，已经待命的继续待命；启动时就读不到按单机运行（目前是影子模式）。
- *     接真实下单后，读不到租约时必须停止新开仓（见 docs/规则说明.md「多实例」）。</li>
+ * <li>Telegram 读不到：已经在运行的继续管理持仓（卖出、记账），但续租超过 8 分钟没成功就停止开新仓
+ *     （{@link #canEnter()}），因为 10 分钟后待命机器可能已经接管；已经待命的继续待命；
+ *     启动时就读不到按单机运行。</li>
+ * <li>判断对方心跳是否过期用本机观察到"心跳变化"的时间，不直接比较两台电脑的时钟，时钟不准也不会提前接管。</li>
  * </ul>
  * Telegram 未配置或 trendpilot.instance.lease-enabled=false 时不启用，本机始终运行。
  */
@@ -77,6 +79,12 @@ public class ActiveLease {
     private volatile boolean decided;
     private volatile String owner;
     private volatile Instant ownerHeartbeat;
+    /** 本机最近一次确认自己持有租约（读到自己的置顶并续租成功，或抢占后确认）的本机时间。 */
+    private volatile Instant lastConfirmed;
+    /** 观察到的对方心跳（Telegram 服务器时间）以及本机第一次看到这个心跳值的本机时间。 */
+    private Instant seenHeartbeat;
+    private Instant seenHeartbeatAt;
+    private volatile boolean entryPausedNotified;
 
     @org.springframework.beans.factory.annotation.Autowired
     public ActiveLease(TelegramProperties props, ObjectMapper json, Notifier notifier,
@@ -153,6 +161,28 @@ public class ActiveLease {
         return board != null;
     }
 
+    /**
+     * 本机现在能否开新仓：运行中，且最近一次确认租约在"接管时间 − 2 分钟"以内。
+     * 确认不了时仍然管理持仓（卖出），只是不开新仓，避免待命机器接管后两台同时开仓。
+     */
+    public boolean canEnter() {
+        return canEnter(Instant.now());
+    }
+
+    boolean canEnter(Instant now) {
+        if (board == null) return true;
+        if (!active || lastConfirmed == null) return false;
+        boolean ok = Duration.between(lastConfirmed, now).compareTo(takeoverAfter.minusMinutes(2)) < 0;
+        if (!ok && !entryPausedNotified) {
+            entryPausedNotified = true;
+            notifier.sendAlways("lease-unconfirmed:" + me + ":" + now, "⚠️ 本机 " + me + " 已 "
+                    + Duration.between(lastConfirmed, now).toMinutes() + " 分钟无法通过 Telegram 确认运行租约："
+                    + "继续管理持仓，但暂停开新仓，确认恢复后自动继续");
+        }
+        if (ok) entryPausedNotified = false;
+        return ok;
+    }
+
     /** 读一次租约并决定本机角色。 */
     synchronized void tick(Instant now) {
         Optional<Pin> pin;
@@ -167,13 +197,14 @@ public class ActiveLease {
         if (holder.isPresent() && holder.get().equals(me)) {
             try {
                 board.edit(pin.get().id(), text(now));
+                lastConfirmed = now;
             } catch (RuntimeException e) {
                 log.warn("续租失败：{}", Notifier.maskText(e.getMessage()));
             }
             become(true, me, now, null);
             return;
         }
-        if (holder.isPresent() && Duration.between(pin.get().at(), now).compareTo(takeoverAfter) < 0) {
+        if (holder.isPresent() && !expired(pin.get(), now)) {
             become(false, holder.get(), pin.get().at(), null);
             return;
         }
@@ -199,6 +230,7 @@ public class ActiveLease {
         }
         Optional<String> winner = after.flatMap(p -> holder(p.text()));
         if (winner.isEmpty() || winner.get().equals(me)) {
+            if (winner.isPresent()) lastConfirmed = now;
             old.filter(p -> oldHolder.isPresent()).ifPresent(p -> quietly(() -> board.unpin(p.id())));
             String why = oldHolder.map(h -> "原运行机器 " + h + " 已 " + Duration.between(old.get().at(), now).toMinutes()
                     + " 分钟没有心跳").orElse(null);
@@ -207,6 +239,19 @@ public class ActiveLease {
             quietly(() -> board.unpin(mine));
             become(false, winner.get(), after.get().at(), null);
         }
+    }
+
+    /**
+     * 对方心跳是否过期：本机看到这个心跳值已经超过接管时间没变化；或者按 Telegram 时间已经过期很久
+     * （超过接管时间再加 5 分钟，留出两台电脑时钟误差），这样刚启动的待命机器不必再干等一个完整的接管时间。
+     */
+    private boolean expired(Pin pin, Instant now) {
+        if (!pin.at().equals(seenHeartbeat)) {
+            seenHeartbeat = pin.at();
+            seenHeartbeatAt = now;
+        }
+        if (Duration.between(seenHeartbeatAt, now).compareTo(takeoverAfter) >= 0) return true;
+        return Duration.between(pin.at(), now).compareTo(takeoverAfter.plusMinutes(5)) >= 0;
     }
 
     private void become(boolean nowActive, String holder, Instant heartbeat, String why) {

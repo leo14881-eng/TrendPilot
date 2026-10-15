@@ -110,9 +110,11 @@ class ActiveLeaseTest {
         ActiveLease a2 = lease(shared, "PC-A");
         ActiveLease b2 = lease(shared, "PC-B");
         a2.tick(shared.clock);
-        b2.tick(shared.clock.plus(Duration.ofMinutes(11))); // A 的租约已过期，B 抢占
-        a2.tick(shared.clock);
-        assertThat(List.of(a2.active(), b2.active())).containsExactlyInAnyOrder(true, false);
+        shared.clock = shared.clock.plus(Duration.ofMinutes(16));
+        b2.tick(shared.clock); // A 的租约按 Telegram 时间已过期很久，B 刚启动就抢占
+        assertThat(b2.active()).isTrue();
+        a2.tick(shared.clock.plusSeconds(30));
+        assertThat(List.of(a2.active(), b2.active())).containsExactly(false, true);
         assertThat(a.active()).isFalse(); // 未 tick 前不算运行
     }
 
@@ -143,5 +145,31 @@ class ActiveLeaseTest {
         assertThat(ActiveLease.holder("🟢 TrendPilot 运行中\n机器：X\n" + ActiveLease.TAG + "DESKTOP-1")).contains("DESKTOP-1");
         assertThat(ActiveLease.holder("别的置顶消息")).isEmpty();
         assertThat(ActiveLease.holder(null)).isEmpty();
+    }
+
+    @Test
+    void clockSkewDoesNotCauseEarlyTakeoverAndUnconfirmedLeasePausesEntries() {
+        FakeChat chat = new FakeChat();
+        ActiveLease a = lease(chat, "PC-A");
+        a.tick(chat.clock);
+        assertThat(a.canEnter(chat.clock)).isTrue();
+
+        // B 的时钟快了 12 分钟：只看时间差会以为 A 过期；按"本机看到心跳是否变化"判断则不会
+        ActiveLease b = lease(chat, "PC-B");
+        Instant bClock = chat.clock.plus(Duration.ofMinutes(12));
+        b.tick(bClock);
+        assertThat(b.active()).isFalse();
+        chat.clock = chat.clock.plusSeconds(120);
+        a.tick(chat.clock);
+        b.tick(bClock.plusSeconds(120));
+        assertThat(b.active()).isFalse();
+
+        // A 连不上 Telegram：继续运行（管理持仓），8 分钟后暂停开新仓
+        chat.down = true;
+        a.tick(chat.clock.plusSeconds(120));
+        assertThat(a.active()).isTrue();
+        assertThat(a.canEnter(chat.clock.plus(Duration.ofMinutes(7)))).isTrue();
+        assertThat(a.canEnter(chat.clock.plus(Duration.ofMinutes(9)))).isFalse();
+        assertThat(b.canEnter(bClock)).isFalse(); // 待命机器不开仓
     }
 }

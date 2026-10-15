@@ -224,6 +224,29 @@ class BtcDailyServiceTest {
     }
 
     @Test
+    void midGapStopsBeforeTheHoleUntilItIsFilled() {
+        LocalDate day = LocalDate.parse("2026-10-15");
+        long start = BtcDailyRules.dayStart(day);
+        List<Kline> daily = new ArrayList<>(BtcDailyRulesTest.daily(day.minusDays(1), 80, 60_000, 2_000));
+        daily.add(new Kline(start, 60_000, 60_000, 60_000, 60_000, 1e9, start + 86_399_999L));
+        market.daily.put("BTCUSDT", daily);
+        market.quarters.put("BTCUSDT", quarters(start - 120 * Q, start, 60_000));
+        service.tick(Instant.ofEpochMilli(start + 60_000));
+
+        // 交易所暂时少了第 2 根：停在缺口前，不跳过
+        List<Kline> q = new ArrayList<>(quarters(start - 120 * Q, start + 4 * Q, 60_000));
+        q.removeIf(k -> k.openTime() == start + Q);
+        market.quarters.put("BTCUSDT", q);
+        service.tick(Instant.ofEpochMilli(start + 4 * Q + 60_000));
+        assertThat(store.state().lastBarOpen()).isEqualTo(start);
+
+        // 补到了：接着处理到最新
+        market.quarters.put("BTCUSDT", quarters(start - 120 * Q, start + 4 * Q, 60_000));
+        service.tick(Instant.ofEpochMilli(start + 4 * Q + 120_000));
+        assertThat(store.state().lastBarOpen()).isEqualTo(start + 3 * Q);
+    }
+
+    @Test
     void contextUsesOnlyPublishedData() {
         LocalDate day = LocalDate.parse("2026-10-15");
         context.save(ContextService.FUNDING, java.util.Map.of(day.minusDays(1), 0.04, day, 0.5));

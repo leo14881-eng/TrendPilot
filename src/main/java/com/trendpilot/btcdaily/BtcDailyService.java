@@ -79,10 +79,21 @@ public class BtcDailyService {
                 backfill(m, sym, last + BarsLoader.QUARTER_MS, lastClosed);
                 bars = klines.range(Venue.BINANCE, sym, last + BarsLoader.QUARTER_MS, lastClosed);
             }
-            if (!bars.isEmpty() && bars.getFirst().openTime() != last + BarsLoader.QUARTER_MS) {
-                log.warn("BTC 每日短线：K 线有缺口，从 {} 接着处理", Instant.ofEpochMilli(bars.getFirst().openTime()));
-            }
             for (Kline bar : bars) {
+                long expectedOpen = last + BarsLoader.QUARTER_MS;
+                if (bar.openTime() != expectedOpen) {
+                    // 中间缺 K 线：停在缺口前，下次补到了再接着处理，不跳过缺口里可能的成交和止盈。
+                    // 只有缺口已经超过 6 小时（补了多次交易所仍没有这段数据）才跳过，并提醒。
+                    if (now.toEpochMilli() - expectedOpen < GAP_GIVE_UP.toMillis()) {
+                        log.warn("BTC 每日短线：{} 起的 K 线缺失，停在缺口前，下次补齐后继续", Instant.ofEpochMilli(expectedOpen));
+                        break;
+                    }
+                    log.warn("BTC 每日短线：交易所缺 {} 到 {} 的 K 线，跳过", Instant.ofEpochMilli(expectedOpen),
+                            Instant.ofEpochMilli(bar.openTime()));
+                    notifier.send("btc-daily-gap:" + expectedOpen, "⚠️ BTC 每日短线：交易所缺少 "
+                            + Instant.ofEpochMilli(expectedOpen) + " 到 " + Instant.ofEpochMilli(bar.openTime())
+                            + " 的 K 线（补了 6 小时仍没有），这段时间的成交无法判断，已跳过");
+                }
                 LocalDate day = BtcDailyRules.dayOf(bar.openTime());
                 DailyPlan plan = store.plan(day).orElse(null);
                 if (plan == null) {
@@ -110,6 +121,7 @@ public class BtcDailyService {
         if (!fills.isEmpty()) log.info("BTC 每日短线成交 {} 笔", fills.size());
     }
 
+    static final java.time.Duration GAP_GIVE_UP = java.time.Duration.ofHours(6);
     static final int BACKFILL_LIMIT = 1000;      // 每次请求约 10 天的 15m K 线
     static final int BACKFILL_MAX_REQUESTS = 4;
 
