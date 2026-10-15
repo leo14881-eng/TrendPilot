@@ -195,7 +195,7 @@ public final class FactorStudy {
 
     private static Map<String, Double> costMap(List<String> uni, double[] cost) {
         Map<String, Double> m = new LinkedHashMap<>();
-        for (int i = 0; i < uni.size(); i++) m.put(uni.get(i), cost[i]);
+        for (int i = 0; i < uni.size(); i++) m.put(uni.get(i), Double.isNaN(cost[i]) ? 0.35 : cost[i]);
         return m;
     }
 
@@ -206,6 +206,7 @@ public final class FactorStudy {
         for (String s : now) if (!prev.contains(s)) c += w * cost.getOrDefault(s, 0.35);
         double wp = prev.isEmpty() ? 0 : 1.0 / prev.size();
         for (String s : prev) if (!now.contains(s)) c += wp * cost.getOrDefault(s, 0.35);
+        if (Double.isNaN(c)) c = 0.35;
         return c;
     }
 

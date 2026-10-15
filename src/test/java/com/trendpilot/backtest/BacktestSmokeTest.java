@@ -74,6 +74,10 @@ class BacktestSmokeTest {
         factors.run(fromQ, data.size);
         assertThat(factors.periods("7 天涨幅（动量）", 0)).isGreaterThan(0);
         assertThat(factors.markdown()).contains("因子检验").contains("只持有 BTC");
+        TrendStudy trend = new TrendStudy(data);
+        trend.run(fromQ, fromQ + 15 * 96, data.size);
+        assertThat(trend.results()).isNotEmpty();
+        assertThat(trend.results().get(0).returnPct()).isNotNaN();
         Nav nav = new Nav(data, params.capital().hardCap());
         double[] curve = nav.curve(sims.get(0), fromQ / 4, data.size / 4);
         assertThat(curve[0]).isEqualTo(1.0);
