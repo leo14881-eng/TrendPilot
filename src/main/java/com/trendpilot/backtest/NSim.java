@@ -102,7 +102,8 @@ public final class NSim extends Sim {
             double imp = impact(x, s, q);
             x.path.bar(s.high[q], s.low[q]);
             double o = s.open[q], l = s.low[q], h = s.high[q], c = s.close[q];
-            boolean realtime = p.stopMode().equals("REALTIME");
+            String mode = mode(x);
+            boolean realtime = mode.equals("REALTIME");
             // 开盘
             if (realtime && o <= x.stop) {
                 sellAll(x, q, o, imp, stopReason(x));
@@ -144,7 +145,7 @@ public final class NSim extends Sim {
                 continue;
             }
             if (p.exitMode().equals("B0") && protectCross(x, imp, h, c, q)) continue;
-            if (p.stopMode().equals("CONFIRM") && c <= x.stop) {
+            if (mode.equals("CONFIRM") && c <= x.stop) {
                 sellAll(x, q, c, imp, stopReason(x));
                 continue;
             }
@@ -161,7 +162,7 @@ public final class NSim extends Sim {
 
     /** 整点收盘：1h 收盘止损、L2 时间止损、L3 论点失效。@return 是否卖出 */
     private boolean hourly(Pos x, int q, double c, double imp, double netC) {
-        if (p.stopMode().equals("HOUR") && c <= x.stop) {
+        if (mode(x).equals("HOUR") && c <= x.stop) {
             sellAll(x, q, c, imp, stopReason(x));
             return true;
         }
@@ -197,6 +198,12 @@ public final class NSim extends Sim {
     private double floor(Pos x, double peak) {
         return ExitPolicy.protectionFloor(BigDecimal.valueOf(x.cost), BigDecimal.valueOf(peak), BigDecimal.valueOf(x.floor),
                 params.exit()).doubleValue();
+    }
+
+    /** 止损触发方式；不设价格止损（OFF）时，保本和跟踪止损仍按 15m 收盘确认。 */
+    private String mode(Pos x) {
+        if (!p.stopMode().equals("OFF")) return p.stopMode();
+        return x.breakeven || x.partial ? "CONFIRM" : "OFF";
     }
 
     private String stopReason(Pos x) {
@@ -344,7 +351,8 @@ public final class NSim extends Sim {
             double cost = size * (1 + fee);
             double qty = size / fill;
             double stop = p.stopMode().equals("OFF") ? 0 : fill * (1 - d / 100);
-            double stopRisk = stop <= 0 ? cost : cost - qty * stop * (1 - imp) * (1 - fee);
+            // 不设价格止损（消融）时按名义 R 计入组合风险，否则一笔就会占满上限
+            double stopRisk = stop <= 0 ? p.riskUnit() * riskMult : cost - qty * stop * (1 - imp) * (1 - fee);
             if (cost > available) continue;
             if (openRisk + stopRisk > p.portfolioRiskR() * p.riskUnit()) continue;
             Pos x = new Pos();
@@ -442,8 +450,8 @@ public final class NSim extends Sim {
         } else {
             newStop = p.stopMode().equals("OFF") ? 0 : (totCost / totQty) * (1 - x.stopPct / 100);
         }
-        double before = x.breakeven ? 0 : Math.max(0, x.cost - x.qty * x.stop * (1 - posImp) * (1 - fee));
-        double after = Math.max(0, totCost - totQty * newStop * (1 - posImp) * (1 - fee));
+        double before = x.breakeven ? 0 : x.stop <= 0 ? x.risk : Math.max(0, x.cost - x.qty * x.stop * (1 - posImp) * (1 - fee));
+        double after = newStop <= 0 ? x.risk : Math.max(0, totCost - totQty * newStop * (1 - posImp) * (1 - fee));
         if (openRisk - before + after > p.portfolioRiskR() * p.riskUnit()) return new double[]{0, 0};
         x.qty = totQty;
         x.cost = totCost;
@@ -465,6 +473,10 @@ public final class NSim extends Sim {
         double sum = 0;
         for (Pos x : positions.values()) {
             if (x.breakeven) continue;
+            if (x.stop <= 0) {
+                sum += x.risk;
+                continue;
+            }
             Series s = data.get(x.symbol);
             double imp = impact(x, s, Math.max(1, q));
             sum += Math.max(0, x.cost - x.qty * x.stop * (1 - imp) * (1 - fee));
