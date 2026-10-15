@@ -69,6 +69,10 @@ public final class PrePumpStudy {
     /** 大涨事件数，和事前 24h 出现过各迹象的数量。 */
     private int pumps;
     private final int[] caught;
+    /** 事前 24h 出现过任意一种迹象（9 种合并去重）的大涨数。 */
+    private int caughtAny;
+    private final List<String> tradeLog = new ArrayList<>();
+    private final List<String> eventLog = new ArrayList<>();
 
     public PrePumpStudy(MarketData data) {
         this.data = data;
@@ -94,7 +98,17 @@ public final class PrePumpStudy {
                 // 抓到率：每个币每天看一次，之后 24h 涨过 20% 算一次大涨（不含对照组）
                 if (q % DAY == DAY - 1 && maxUp >= 20) {
                     pumps++;
-                    for (int k = 1; k < signs.size(); k++) if (q - lastHit[k] <= DAY) caught[k]++;
+                    boolean any = false;
+                    StringBuilder ev = new StringBuilder(sym).append(',').append(Instant.ofEpochMilli(data.time(q + 1))).append(',')
+                            .append(open).append(',').append(String.format(Locale.ROOT, "%.3f", maxUp));
+                    for (int k = 1; k < signs.size(); k++) {
+                        boolean seen = q - lastHit[k] <= DAY;
+                        if (seen) caught[k]++;
+                        any |= seen;
+                        ev.append(',').append(seen ? 1 : 0);
+                    }
+                    if (any) caughtAny++;
+                    eventLog.add(ev.toString());
                 }
                 var t = data.ticker(sym, q);
                 if (t == null) continue;
@@ -121,7 +135,14 @@ public final class PrePumpStudy {
                         r[3 + j] = (px * (1 - imp) * (1 - PumpStudy.FEE) / entry - 1) * 100;
                         r[3 + exits.size() + j] = (px / open - 1) * 100;
                     }
-                    if (ok && !Double.isNaN(maxUp)) rows.get(k).add(r);
+                    if (ok && !Double.isNaN(maxUp)) {
+                        rows.get(k).add(r);
+                        StringBuilder line = new StringBuilder().append(k).append(',').append(sym).append(',')
+                                .append(Instant.ofEpochMilli(data.time(q + 1))).append(',').append(open).append(',')
+                                .append(String.format(Locale.ROOT, "%.3f,%.3f", imp * 100, maxUp));
+                        for (int j = 0; j < exits.size(); j++) line.append(String.format(Locale.ROOT, ",%.4f,%.4f", r[3 + j], r[3 + exits.size() + j]));
+                        tradeLog.add(line.toString());
+                    }
                 }
             }
         }
@@ -191,6 +212,20 @@ public final class PrePumpStudy {
         return PumpStudy.fromHigh(s, q, n);
     }
 
+    /** 交易明细和大涨事件明细。 */
+    public void writeCsv(java.nio.file.Path dir) throws java.io.IOException {
+        StringBuilder h = new StringBuilder("# 迹象编号: ");
+        for (int k = 0; k < signs.size(); k++) h.append(k).append('=').append(signs.get(k).name()).append("; ");
+        h.append("\n# 卖法编号: ");
+        for (int j = 0; j < exits.size(); j++) h.append(j).append('=').append(exits.get(j).name()).append("; ");
+        h.append("\nsign,symbol,entry_time_utc,entry_open,impact_pct,max_up_24h_pct");
+        for (int j = 0; j < exits.size(); j++) h.append(",net_").append(j).append(",gross_").append(j);
+        Csv.writeGz(dir.resolve("prepump-trades.csv.gz"), h.toString(), tradeLog);
+        StringBuilder e = new StringBuilder("# 每个币每天 UTC 23:45 收盘看一次，之后 24h 最高涨 ≥20% 记一次大涨；sign_k=1 表示事前 24 小时内出现过第 k 种迹象\nsymbol,entry_time_utc,entry_open,max_up_24h_pct");
+        for (int k = 1; k < signs.size(); k++) e.append(",sign_").append(k);
+        Csv.writeGz(dir.resolve("prepump-events.csv.gz"), e.toString(), eventLog);
+    }
+
     int count(int sign) {
         return rows.get(sign).size();
     }
@@ -199,7 +234,8 @@ public final class PrePumpStudy {
         StringBuilder b = new StringBuilder("## 大涨前埋伏检验（整点检查迹象；下一根 15 分钟开盘买入；同一币同一迹象 24 小时只算一次；不含 BTC/ETH）\n\n");
         b.append("「之后 24h 涨到 +10% / +20%」= 买入后 24 小时内最高价达到的比例，和第一行「随便买」比，高出越多说明迹象越有用。")
                 .append("「抓到率」= 所有 24 小时内涨过 20% 的大涨里，事前 24 小时内出现过这个迹象的比例。净收益扣来回手续费和 1,000U 冲击。\n\n");
-        b.append(String.format(Locale.ROOT, "大涨事件（某币某天之后 24h 内最高涨 ≥20%%）共 %d 次。%n%n", pumps));
+        b.append(String.format(Locale.ROOT, "大涨事件（某币某天之后 24h 内最高涨 ≥20%%）共 %d 次；事前 24 小时内出现过 9 种迹象中任意一种的（合并去重）%d 次，合并抓到率 %.0f%%。%n%n",
+                pumps, caughtAny, pumps == 0 ? 0 : caughtAny * 100.0 / pumps));
         b.append("| 迹象 | 笔数 | 每天平均笔数 | 之后 24h 涨到 +10% | 涨到 +20% | 抓到率 |");
         for (PumpStudy.Exit e : exits) b.append(' ').append(e.name()).append(" 净% |");
         b.append(" 最好卖法不算成本% |\n|---|---|---|---|---|---|");
@@ -227,7 +263,7 @@ public final class PrePumpStudy {
             int gcol = 3 + exits.size() + best;
             b.append(String.format(Locale.ROOT, " %.2f |%n", rs.stream().mapToDouble(r -> r[gcol]).average().orElse(0)));
         }
-        b.append("\n### 每种迹象最好卖法的可信区间和按年份（每笔净收益%）\n\n| 迹象 | 卖法 | 每笔平均 | 95% 区间（按天） | 赚钱比例 | 按年份 |\n|---|---|---|---|---|---|\n");
+        b.append("\n### 每种迹象最好卖法的可信区间和按年份（每笔净收益%）\n\n| 迹象 | 卖法 | 每笔平均 | 95% 区间（围绕每笔平均，按天聚类） | 赚钱比例 | 按年份 |\n|---|---|---|---|---|---|\n");
         for (int k = 0; k < signs.size(); k++) {
             List<double[]> rs = rows.get(k);
             if (rs.isEmpty()) continue;
@@ -243,7 +279,7 @@ public final class PrePumpStudy {
             }
             int col = 3 + best;
             List<double[]> pairs = rs.stream().map(r -> new double[]{r[col], r[0]}).toList();
-            double[] ci = PumpStudy.dayCi(pairs);
+            double[] ci = PumpStudy.clusterCi(pairs);
             double win = rs.stream().filter(r -> r[col] > 0).count() * 100.0 / rs.size();
             StringBuilder yr = new StringBuilder();
             rs.stream().mapToInt(r -> (int) r[1]).distinct().sorted().forEach(y -> {

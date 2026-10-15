@@ -106,6 +106,8 @@ public final class FactorStudy {
     /** [因子][持有期] → 每期：净收益%、超额%、带 BTC 趋势过滤的净收益%、年份。 */
     private final Map<String, List<double[]>[]> rows = new LinkedHashMap<>();
     private final List<double[]>[] pool;
+    /** 全池等权每期明细（核对用）：[持有期] → 每期 CSV 一行。 */
+    private final List<String>[] poolLog;
     private final List<double[]>[] btc;
 
     @SuppressWarnings("unchecked")
@@ -113,9 +115,11 @@ public final class FactorStudy {
         this.data = data;
         this.poolSize = poolSize;
         pool = new List[HOLD_HOURS.length];
+        poolLog = new List[HOLD_HOURS.length];
         btc = new List[HOLD_HOURS.length];
         for (int h = 0; h < HOLD_HOURS.length; h++) {
             pool[h] = new ArrayList<>();
+            poolLog[h] = new ArrayList<>();
             btc[h] = new ArrayList<>();
         }
     }
@@ -153,7 +157,12 @@ public final class FactorStudy {
                 double poolMean = sum / n;
                 // 全池等权：每期换手按进出的币计
                 java.util.Set<String> curPool = new java.util.HashSet<>(uni);
-                pool[h].add(row(poolMean - turnoverCost(uni, prevPool, cost), 0, btcUp, year));
+                double poolTc = turnoverCost(uni, prevPool, cost);
+                pool[h].add(row(poolMean - poolTc, 0, btcUp, year));
+                int entered = 0;
+                for (String s0 : uni) if (!prevPool.contains(s0)) entered++;
+                poolLog[h].add(String.format(Locale.ROOT, "%s,%d,%d,%d,%.4f,%.4f,%.4f", Instant.ofEpochMilli(data.time(q)), uni.size(), n, entered,
+                        poolMean, poolTc, poolMean - poolTc));
                 prevPool = curPool;
                 double bf = forward(MarketData.BTC, q, step);
                 if (!Double.isNaN(bf)) btc[h].add(row(bf - (prevHold.isEmpty() ? 0.2 : 0), bf - poolMean, btcUp, year));
@@ -228,6 +237,17 @@ public final class FactorStudy {
         if (s == null || !s.has(q)) return Double.NaN;
         double exit = s.lastClose(q + n, n);
         return Double.isNaN(exit) ? Double.NaN : (exit / s.close[q] - 1) * 100;
+    }
+
+    /**
+     * 全池等权每期明细：期初时间、池内币数、有收益数据的币数、新进池的币数、等权毛收益%、换手成本%、净收益%。
+     * 每期期初按等权重新分配（等于每期再平衡一次）；累计净值 = 各期 (1 + 净收益%) 连乘。
+     */
+    public void writePoolCsv(java.nio.file.Path dir) throws java.io.IOException {
+        for (int h = 0; h < HOLD_HOURS.length; h++) {
+            java.nio.file.Files.writeString(dir.resolve("pool-" + poolSize + "-" + HOLD_HOURS[h] + "h.csv"),
+                    "start_utc,coins,coins_with_return,new_coins,gross_pct,turnover_cost_pct,net_pct\n" + String.join("\n", poolLog[h]) + "\n");
+        }
     }
 
     /** BTC 收盘价在过去 days 天日收盘均线上方。 */

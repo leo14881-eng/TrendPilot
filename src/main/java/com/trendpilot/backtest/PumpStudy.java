@@ -60,6 +60,8 @@ public final class PumpStudy {
     private final List<double[]>[][] rows;
     private final List<Trigger> triggers = triggers();
     private final List<Exit> exits = exits();
+    /** 每次触发一行的交易明细（CSV）。 */
+    private final List<String> log = new ArrayList<>();
 
     @SuppressWarnings("unchecked")
     public PumpStudy(MarketData data) {
@@ -112,6 +114,9 @@ public final class PumpStudy {
                     if (!hit) continue;
                     lastHit[k] = q;
                     double entry = s.open[q + 1] * (1 + imp) * (1 + FEE);
+                    StringBuilder line = new StringBuilder().append(k).append(',').append(sym).append(',')
+                            .append(Instant.ofEpochMilli(data.time(q + 1))).append(',').append(s.open[q + 1]).append(',')
+                            .append(String.format(Locale.ROOT, "%.3f", imp * 100));
                     for (int j = 0; j < exits.size(); j++) {
                         double exitPx = exit(s, q + 1, exits.get(j), s.open[q + 1], toQ);
                         if (Double.isNaN(exitPx)) continue;
@@ -119,7 +124,9 @@ public final class PumpStudy {
                         double gross = (exitPx / s.open[q + 1] - 1) * 100;
                         double low = (exitPx * (1 - LOW_FEE) / (s.open[q + 1] * (1 + LOW_FEE)) - 1) * 100;
                         rows[k][j].add(new double[]{net, day, year, gross, low});
+                        line.append(',').append(exitPx).append(String.format(Locale.ROOT, ",%.4f,%.4f,%.4f", net, gross, low));
                     }
+                    log.add(line.toString());
                 }
             }
         }
@@ -171,23 +178,26 @@ public final class PumpStudy {
         return Double.isNaN(hi) ? Double.NaN : (s.close[q] / hi - 1) * 100;
     }
 
-    static double[] dayCi(List<double[]> rs) {
-        Map<Integer, double[]> by = new LinkedHashMap<>();
-        for (double[] r : rs) {
-            double[] a = by.computeIfAbsent((int) r[1], k -> new double[2]);
-            a[0] += r[0];
-            a[1]++;
-        }
-        double[] m = by.values().stream().mapToDouble(a -> a[0] / a[1]).toArray();
-        if (m.length < 2) return new double[]{Double.NaN, Double.NaN, Double.NaN};
-        double mean = Arrays.stream(m).average().orElse(0);
-        double se = Math.sqrt(Arrays.stream(m).map(x -> (x - mean) * (x - mean)).sum() / (m.length - 1) / m.length);
-        return new double[]{mean, mean - 1.96 * se, mean + 1.96 * se};
+    /**
+     * 按笔平均和它的 95% 区间（同一天的交易互相相关，按天聚类算标准误，区间围绕按笔平均）。
+     * rs 每行 {收益%, 天}。返回 {按笔平均, 下限, 上限, 天数}。
+     */
+    static double[] clusterCi(List<double[]> rs) {
+        int n = rs.size();
+        if (n < 2) return new double[]{Double.NaN, Double.NaN, Double.NaN, 0};
+        double mean = rs.stream().mapToDouble(r -> r[0]).average().orElse(0);
+        Map<Integer, Double> resid = new LinkedHashMap<>();
+        for (double[] r : rs) resid.merge((int) r[1], r[0] - mean, Double::sum);
+        int days = resid.size();
+        if (days < 2) return new double[]{mean, Double.NaN, Double.NaN, days};
+        double ss = resid.values().stream().mapToDouble(e -> e * e).sum();
+        double se = Math.sqrt(ss * days / (days - 1.0)) / n;
+        return new double[]{mean, mean - 1.96 * se, mean + 1.96 * se, days};
     }
 
     public String markdown() {
         StringBuilder b = new StringBuilder("## 追大涨检验（前 150 个币；触发后下一根 15 分钟开盘买入；同一币同一条件 24 小时只算一次）\n\n");
-        b.append("净收益已扣来回手续费和 1,000U 冲击（大涨时实际滑点可能更大，结果偏乐观）。区间按天汇总；全在 0 以上才算能赚。\n");
+        b.append("净收益已扣来回手续费和 1,000U 冲击（大涨时实际滑点可能更大，结果偏乐观）。95% 区间围绕「每笔平均」，同一天的交易按天聚类算误差；区间全在 0 以上才算能赚。\n");
         b.append("「不算成本」= 不扣任何费用，看买点本身；「低成本」= 每边 0.075%（BNB 抵扣）且无滑点，假设挂单全部成交。\n\n");
         for (int k = 0; k < triggers.size(); k++) {
             b.append("### ").append(triggers.get(k).name()).append("\n\n");
@@ -196,7 +206,7 @@ public final class PumpStudy {
                 List<double[]> rs = rows[k][j];
                 if (rs.isEmpty()) continue;
                 double[] v = rs.stream().mapToDouble(r -> r[0]).toArray();
-                double[] ci = dayCi(rs);
+                double[] ci = clusterCi(rs);
                 double[] sorted = v.clone();
                 Arrays.sort(sorted);
                 double win = Arrays.stream(v).filter(x -> x > 0).count() * 100.0 / v.length;
@@ -216,6 +226,17 @@ public final class PumpStudy {
             b.append('\n');
         }
         return b.toString();
+    }
+
+    /** 交易明细：每次触发一行，含各卖法的卖出价、净收益、不算成本、低成本收益（%）。 */
+    public void writeCsv(java.nio.file.Path file) throws java.io.IOException {
+        StringBuilder h = new StringBuilder("# 触发编号: ");
+        for (int k = 0; k < triggers.size(); k++) h.append(k).append('=').append(triggers.get(k).name()).append("; ");
+        h.append("\n# 卖法编号: ");
+        for (int j = 0; j < exits.size(); j++) h.append(j).append('=').append(exits.get(j).name()).append("; ");
+        h.append("\ntrigger,symbol,entry_time_utc,entry_open,impact_pct");
+        for (int j = 0; j < exits.size(); j++) h.append(",exit_px_").append(j).append(",net_").append(j).append(",gross_").append(j).append(",low_").append(j);
+        Csv.writeGz(file, h.toString(), log);
     }
 
     int count(int trigger, int exit) {
