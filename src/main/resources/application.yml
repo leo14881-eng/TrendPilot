@@ -150,7 +150,7 @@ trendpilot.tracking:
   decide-min-samples: 100
   decide-min-symbols: 20
   decide-min-weeks: 4
-  parallel-rules: []      # 候选退出规则影子并行，例如 [S1_L15, T1_T48_G0]；离线分析选出后再加
+  parallel-rules: [S1_L8, S1_L12, S2_k6, T1_T24_g0, T2_T24_L210, M1_D3]   # 候选退出规则影子并行：只记录对比，不影响正式买卖
 
 trendpilot.binance:
   enabled: true
