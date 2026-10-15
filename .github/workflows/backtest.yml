@@ -9,6 +9,10 @@ on:
         description: 起始月 结束月 最后一天 开始交易 验证期开始 线程数（留空用默认）
         required: false
         default: ''
+      main:
+        description: 入口类（BacktestMain，或 StockRulesStudy = 美股规则套到币圈日线）
+        required: false
+        default: BacktestMain
 
 permissions:
   contents: write
@@ -28,8 +32,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: backtest-data
-          key: backtest-data-v1-${{ inputs.args }}-${{ github.run_id }}
+          key: backtest-data-v1-${{ inputs.main }}-${{ inputs.args }}-${{ github.run_id }}
           restore-keys: |
+            backtest-data-v1-${{ inputs.main }}-${{ inputs.args }}-
             backtest-data-v1-${{ inputs.args }}-
             backtest-data-v1-
       - name: 编译
@@ -37,7 +42,7 @@ jobs:
           sh ./mvnw -B -q -DskipTests package
           sh ./mvnw -B -q dependency:build-classpath -Dmdep.outputFile=cp.txt
       - name: 回测
-        run: java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.BacktestMain backtest-data backtest-out ${{ inputs.args }}
+        run: java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.${{ inputs.main }} backtest-data backtest-out ${{ inputs.args }}
       - name: 结果推到 backtest-results 分支
         run: |
           RUN=results/$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}

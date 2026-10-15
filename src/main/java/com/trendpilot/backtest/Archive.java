@@ -29,7 +29,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * 币安公开数据站（data.binance.vision）的 15m K 线压缩包：月度包 + 当月的日度包。
+ * 币安公开数据站（data.binance.vision）的 K 线压缩包（默认 15m，也可以取 1d）：月度包 + 当月的日度包。
  * 不是交易接口、不占 API 限流；只下载一次，存在本地目录，之后直接读。
  * 2025 年起现货包的时间戳是微秒，读入时统一换成毫秒。
  */
@@ -41,13 +41,28 @@ public final class Archive {
     private static final Pattern NEXT = Pattern.compile("<NextMarker>([^<]+)</NextMarker>");
 
     private final Path dir;
+    /** K 线周期，例如 15m、1d。 */
+    private final String interval;
+    /** 一根 K 线的毫秒数，也是 Series 网格的步长。 */
+    private final long step;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20))
             .followRedirects(HttpClient.Redirect.NORMAL).build();
     /** 同时最多这么多个下载，对公开数据站保持克制。 */
     private final Semaphore gate = new Semaphore(16);
 
     public Archive(Path dir) {
+        this(dir, "15m");
+    }
+
+    public Archive(Path dir, String interval) {
         this.dir = dir;
+        this.interval = interval;
+        this.step = switch (interval) {
+            case "15m" -> Series.Q;
+            case "1h" -> Series.H;
+            case "1d" -> 24 * Series.H;
+            default -> throw new IllegalArgumentException("不支持的周期 " + interval);
+        };
     }
 
     /** 数据站上所有以 USDT 计价的现货交易对（含已下架的）。结果缓存到 symbols.txt。 */
@@ -102,12 +117,12 @@ public final class Archive {
         System.out.println("下载完成：" + symbols.size() + " 个交易对，新下载 " + fetched.get() + " 个包");
     }
 
-    static String monthlyPath(String s, YearMonth m) {
-        return "data/spot/monthly/klines/" + s + "/15m/" + s + "-15m-" + m + ".zip";
+    String monthlyPath(String s, YearMonth m) {
+        return "data/spot/monthly/klines/" + s + "/" + interval + "/" + s + "-" + interval + "-" + m + ".zip";
     }
 
-    static String dailyPath(String s, LocalDate d) {
-        return "data/spot/daily/klines/" + s + "/15m/" + s + "-15m-" + d + ".zip";
+    String dailyPath(String s, LocalDate d) {
+        return "data/spot/daily/klines/" + s + "/" + interval + "/" + s + "-" + interval + "-" + d + ".zip";
     }
 
     /** @return 是否新下载了；已有或不存在都返回 false（不存在记一个 .none 标记，不重复请求）。 */
@@ -158,26 +173,26 @@ public final class Archive {
     public Series load(String symbol, long start, int size, YearMonth from, YearMonth to, LocalDate lastDay) throws IOException {
         Series s = new Series(symbol, start, size);
         boolean any = false;
-        for (YearMonth m = from; !m.isAfter(to); m = m.plusMonths(1)) any |= read(dir.resolve(monthlyPath(symbol, m)), s);
+        for (YearMonth m = from; !m.isAfter(to); m = m.plusMonths(1)) any |= read(dir.resolve(monthlyPath(symbol, m)), s, step);
         if (lastDay != null) {
             for (LocalDate d = lastDay.withDayOfMonth(1); !d.isAfter(lastDay); d = d.plusDays(1)) {
-                any |= read(dir.resolve(dailyPath(symbol, d)), s);
+                any |= read(dir.resolve(dailyPath(symbol, d)), s, step);
             }
         }
         return any ? s : null;
     }
 
-    static boolean read(Path zip, Series s) throws IOException {
+    static boolean read(Path zip, Series s, long step) throws IOException {
         if (!Files.exists(zip)) return false;
         try (InputStream in = Files.newInputStream(zip); ZipInputStream z = new ZipInputStream(in)) {
             ZipEntry e = z.getNextEntry();
             if (e == null) return false;
-            return parse(new BufferedReader(new InputStreamReader(z, StandardCharsets.US_ASCII)), s);
+            return parse(new BufferedReader(new InputStreamReader(z, StandardCharsets.US_ASCII)), s, step);
         }
     }
 
-    /** CSV：open_time, open, high, low, close, volume, close_time, quote_volume, ... 可能带表头。 */
-    static boolean parse(BufferedReader r, Series s) throws IOException {
+    /** CSV：open_time, open, high, low, close, volume, close_time, quote_volume, ... 可能带表头。step 是网格步长（毫秒）。 */
+    static boolean parse(BufferedReader r, Series s, long step) throws IOException {
         boolean any = false;
         String line;
         while ((line = r.readLine()) != null) {
@@ -186,8 +201,8 @@ public final class Archive {
             long t = Long.parseLong(f[0]);
             if (t > 100_000_000_000_000L) t /= 1000; // 微秒 → 毫秒
             long off = t - s.start;
-            if (off < 0 || off % Series.Q != 0) continue;
-            int i = (int) (off / Series.Q);
+            if (off < 0 || off % step != 0) continue;
+            int i = (int) (off / step);
             double c = Double.parseDouble(f[4]);
             if (!(c > 0)) continue;
             s.set(i, Double.parseDouble(f[1]), Double.parseDouble(f[2]), Double.parseDouble(f[3]), c,

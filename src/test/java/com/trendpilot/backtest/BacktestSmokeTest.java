@@ -107,7 +107,7 @@ class BacktestSmokeTest {
         Series s = new Series("BTCUSDT", 1_759_276_800_000L, 10);
         String csv = "1759276800000000,114048.94,114308.00,114048.93,114156.18,117.9,1759277699999999,13467553.5,26048,75,8572232,0\n"
                 + "1759277700000,114156.17,114177.93,113966.67,114021.86,120.2,1759278599999,13710429.8,30447,47,5464744,0\n";
-        assertThat(Archive.parse(new java.io.BufferedReader(new java.io.StringReader(csv)), s)).isTrue();
+        assertThat(Archive.parse(new java.io.BufferedReader(new java.io.StringReader(csv)), s, Series.Q)).isTrue();
         assertThat(s.close[0]).isEqualTo(114156.18f);
         assertThat(s.close[1]).isEqualTo(114021.86f);
         assertThat(s.has(2)).isFalse();
