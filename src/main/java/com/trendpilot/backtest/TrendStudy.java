@@ -23,6 +23,8 @@ public final class TrendStudy {
 
     private final MarketData data;
     private final List<Result> results = new ArrayList<>();
+    /** BTC 各方案逐日净值（核对用）：方案名 → 每天 {q, 净值, 是否持有}。 */
+    private final Map<String, List<double[]>> btcDays = new LinkedHashMap<>();
 
     public TrendStudy(MarketData data) {
         this.data = data;
@@ -63,10 +65,11 @@ public final class TrendStudy {
                 any |= in[k];
             }
             nav *= 1 + dayRet;
-            days.add(new double[]{q, nav});
+            days.add(new double[]{q, nav, in[0] ? 1 : 0});
             if (any) inDays++;
             n++;
         }
+        if (legs == 1 && asset[1].equals(MarketData.BTC)) btcDays.put(ma == 0 ? "hold" : "ma" + ma, days);
         double[] full = stats(days, start, toQ);
         double[] calib = stats(days, start, splitQ);
         double[] valid = stats(days, splitQ, toQ);
@@ -112,6 +115,13 @@ public final class TrendStudy {
 
     /** q 时刻收盘价在过去 days 天（每天同一时刻）收盘价均线上方。 */
     static boolean above(Series s, int q, int days) {
+        double m = ma(s, q, days);
+        double c = s.lastClose(q, 8);
+        return !Double.isNaN(m) && !Double.isNaN(c) && c > m;
+    }
+
+    /** 过去 days 天（含今天，每天同一时刻）收盘价的平均；有效天数不到 80% 返回 NaN。 */
+    static double ma(Series s, int q, int days) {
         double sum = 0;
         int k = 0;
         for (int d = 0; d < days; d++) {
@@ -123,8 +133,33 @@ public final class TrendStudy {
                 k++;
             }
         }
-        double c = s.lastClose(q, 8);
-        return k >= days * 0.8 && !Double.isNaN(c) && c > sum / k;
+        return k >= days * 0.8 ? sum / k : Double.NaN;
+    }
+
+    /**
+     * BTC 逐日明细：日期（UTC 0 点那根 15 分钟 K 线收盘时判断）、收盘价、各均线、各方案是否持有和净值。
+     * 第 d 行的持有状态决定从这一刻到下一行这一刻的收益；换仓那天扣 0.15%。
+     */
+    public void writeBtcCsv(java.nio.file.Path file) throws java.io.IOException {
+        Series s = data.get(MarketData.BTC);
+        List<String> names = new ArrayList<>(btcDays.keySet());
+        if (names.isEmpty()) return;
+        StringBuilder h = new StringBuilder("date_utc,btc_close");
+        for (int m : MA_DAYS) h.append(",ma").append(m);
+        for (String n : names) h.append(",in_").append(n).append(",nav_").append(n);
+        List<String> lines = new ArrayList<>();
+        List<double[]> first = btcDays.get(names.get(0));
+        for (int i = 0; i < first.size(); i++) {
+            int q = (int) first.get(i)[0];
+            StringBuilder l = new StringBuilder(Instant.ofEpochMilli(data.time(q)).toString().substring(0, 10)).append(',').append(s.lastClose(q, 8));
+            for (int m : MA_DAYS) l.append(String.format(Locale.ROOT, ",%.2f", ma(s, q, m)));
+            for (String n : names) {
+                double[] d = btcDays.get(n).get(i);
+                l.append(',').append((int) d[2]).append(String.format(Locale.ROOT, ",%.6f", d[1]));
+            }
+            lines.add(l.toString());
+        }
+        java.nio.file.Files.writeString(file, h + "\n" + String.join("\n", lines) + "\n");
     }
 
     public List<Result> results() {

@@ -108,6 +108,10 @@ public final class BacktestMain {
             trend.run(fromQ, splitQ, size);
             String md = "# 信号检验（" + period + "）\n\n" + pre.markdown() + pump.markdown() + trend.markdown("前段", "后段") + f150.markdown() + f30.markdown() + edge.markdown();
             Files.writeString(outDir.resolve("report.md"), md);
+            pre.writeCsv(outDir);
+            pump.writeCsv(outDir.resolve("pump-trades.csv.gz"));
+            trend.writeBtcCsv(outDir.resolve("trend-btc-daily.csv"));
+            f150.writePoolCsv(outDir);
             System.out.println(md);
             return;
         }

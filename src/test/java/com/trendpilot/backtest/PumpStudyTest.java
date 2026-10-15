@@ -2,6 +2,8 @@ package com.trendpilot.backtest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 class PumpStudyTest {
@@ -33,5 +35,16 @@ class PumpStudyTest {
         Series s = series(new double[][]{{100, 101, 99, 100}, {100, 103, 99, 102}, {102, 110, 101, 108}});
         double px = PumpStudy.exit(s, 0, new PumpStudy.Exit("h", 2, 0, 0, 0), 100, 3);
         assertThat(px).isEqualTo(102.0);
+    }
+
+    @Test
+    void clusterCiIsCenteredOnPerTradeMean() {
+        // 第 1 天 3 笔 +1%，第 2 天 1 笔 -3%：按笔平均 0，按天平均 -1；区间必须围绕按笔平均
+        List<double[]> rs = List.of(new double[]{1, 1}, new double[]{1, 1}, new double[]{1, 1}, new double[]{-3, 2});
+        double[] ci = PumpStudy.clusterCi(rs);
+        assertThat(ci[0]).isEqualTo(0.0);
+        assertThat(ci[1]).isLessThan(0.0);
+        assertThat(ci[2]).isGreaterThan(0.0);
+        assertThat(ci[3]).isEqualTo(2.0);
     }
 }
