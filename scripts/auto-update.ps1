@@ -333,7 +333,7 @@ try {
         # 提交说明全文（策略优化提交里写了改了什么、旧值新值、依据数据、回滚方式），去掉署名行
         $body = (Invoke-Git @('log', '-1', '--format=%B', $latest)) -split "`r?`n" |
             Where-Object { $_ -notmatch '^(Co-Authored-By|Claude-Session):' }
-        Send-Telegram ("✅ TrendPilot 已自动更新到 $short（已生效）`n" + (($body -join "`n").Trim()))
+        Send-Telegram ("✅ TrendPilot 已更新到 $short，运行正常`n本次改善：" + (($body -join "`n").Trim()))
     } else {
         $why = if ($started) { '启动后约 11 分钟内没有一次成功的 Monitor' } else { '启动后健康检查失败' }
         Write-Log "新版本 $short ${why}，回滚"
