@@ -18,7 +18,8 @@ import com.trendpilot.signal.EarlySignal;
 /**
  * 五分钟持仓管理的退出顺序：
  * <ol>
- * <li>硬失效（下架/停止交易/黑名单/严重流动性异常）：允许亏损退出。下架、黑名单立即执行；
+ * <li>硬失效（下架/停止交易/黑名单/严重流动性异常）：允许亏损退出。黑名单立即执行；
+ *     "不在交易"要持续 30 分钟（维护、临时暂停、接口异常不触发）；
  *     流动性异常要在两个独立的 Monitor 轮次（相隔至少 4 分钟、不超过 15 分钟）都成立才执行，
  *     避免盘口瞬间被抽空就亏损卖出</li>
  * <li>持久利润保护：可退出净利跌破底线但仍 &gt; 0 时卖出；跳空后净利 ≤ 0 只记录，不亏损卖出</li>
@@ -36,6 +37,9 @@ public class ExitPolicy {
 
     static final java.time.Duration STRIKE_MIN_GAP = java.time.Duration.ofMinutes(4);
     static final java.time.Duration STRIKE_MAX_GAP = java.time.Duration.ofMinutes(15);
+    /** "不在交易"要持续这么久才按下架卖出（维护、临时暂停、接口异常不会触发卖出）。 */
+    static final java.time.Duration NOT_TRADING_CONFIRM = java.time.Duration.ofMinutes(30);
+    private final java.util.Map<String, java.time.Instant> notTradingSince = new java.util.concurrent.ConcurrentHashMap<>();
 
     private final StrategyParams params;
     /** 每个持仓第一次观察到流动性异常的时间（进程内；重启后重新计数，偏保守）。 */
@@ -60,17 +64,32 @@ public class ExitPolicy {
 
         // 1. 硬失效
         String hard = null;
-        if (info == null || !info.trading()) hard = "HARD_INVALID_NOT_TRADING";
-        else if (params.universe().blocklist().contains(pos.symbol())) hard = "HARD_INVALID_IDENTITY";
+        boolean anomaly = false;
+        if (info == null || !info.trading()) {
+            // 交易所维护（Binance BREAK/HALT）、接口返回异常都会显示"不在交易"：持续 30 分钟以上才按下架处理
+            if (notTradingConfirmed(pos, book.fetchedAt(), notes)) {
+                return new ExitDecision(pos.symbol(), true, "HARD_INVALID_NOT_TRADING", pos, notes, net, rawRet, fill);
+            }
+            return new ExitDecision(pos.symbol(), false, "HOLD", pos, notes, net, rawRet, fill);
+        }
+        notTradingSince.remove(key(pos));
+        if (params.universe().blocklist().contains(pos.symbol())) hard = "HARD_INVALID_IDENTITY";
         else if (book.spreadBps() > e.hardMaxSpreadBps() || !fill.complete()
                 || fill.slippageBps() > e.hardMaxSlippageBps()
                 || book.bidDepthWithin(params.review().depthBandPct()) < e.hardMinBidDepthUsdt()) {
+            anomaly = true;
             hard = liquidityConfirmed(pos, book.fetchedAt(), notes) ? "HARD_INVALID_LIQUIDITY" : null;
         } else {
             liquidityStrike.remove(key(pos));
         }
         if (hard != null) {
             return new ExitDecision(pos.symbol(), true, hard, pos, notes, net, rawRet, fill);
+        }
+        if (anomaly) {
+            // 盘口异常（价差过大、不够卖完、滑点过大、深度不足）但还没确认：这份盘口算出的净利不可信，
+            // 不用它更新利润保护、最高净利或论点计数，等下一轮正常盘口
+            notes.add("ABNORMAL_BOOK_HOLD");
+            return new ExitDecision(pos.symbol(), false, "HOLD", pos, notes, net, rawRet, fill);
         }
 
         // 2. 持久利润保护
@@ -154,6 +173,20 @@ public class ExitPolicy {
         }
         liquidityStrike.put(key(pos), now);
         notes.add("LIQUIDITY_STRIKE_1");
+        return false;
+    }
+
+    private boolean notTradingConfirmed(Position pos, java.time.Instant now, List<String> notes) {
+        java.time.Instant first = notTradingSince.putIfAbsent(key(pos), now);
+        if (first == null) {
+            notes.add("NOT_TRADING_PENDING");
+            return false;
+        }
+        if (!now.isBefore(first.plus(NOT_TRADING_CONFIRM))) {
+            notTradingSince.remove(key(pos));
+            return true;
+        }
+        notes.add("NOT_TRADING_PENDING");
         return false;
     }
 

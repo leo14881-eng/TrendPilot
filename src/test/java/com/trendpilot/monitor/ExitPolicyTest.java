@@ -77,9 +77,19 @@ class ExitPolicyTest {
     }
 
     @Test
-    void hardInvalidSellsEvenAtLoss() {
+    void hardInvalidSellsEvenAtLossButOnlyAfterThirtyMinutes() {
         SymbolInfo halted = new SymbolInfo("ABCUSDT", "ABC", "USDT", false, "");
-        ExitDecision d = policy.evaluate(bought(), halted, book(95), neutral);
+        // 维护或接口异常：第一次看到"不在交易"只记录，不卖，也不改持仓状态
+        ExitDecision pending = policy.evaluate(bought(), halted, book(95), neutral);
+        assertThat(pending.sell()).isFalse();
+        assertThat(pending.notes()).contains("NOT_TRADING_PENDING");
+        assertThat(policy.evaluate(bought(), halted, TestData.book("ABCUSDT", 95, 1, 1000, now.plusSeconds(1500)), neutral)
+                .sell()).isFalse();
+        // 恢复交易后重新计时
+        policy.evaluate(bought(), trading, TestData.book("ABCUSDT", 95, 1, 1000, now.plusSeconds(1600)), neutral);
+        assertThat(policy.evaluate(bought(), halted, TestData.book("ABCUSDT", 95, 1, 1000, now.plusSeconds(1900)), neutral)
+                .sell()).isFalse();
+        ExitDecision d = policy.evaluate(bought(), halted, TestData.book("ABCUSDT", 95, 1, 1000, now.plusSeconds(1900 + 1800)), neutral);
         assertThat(d.sell()).isTrue();
         assertThat(d.reason()).isEqualTo("HARD_INVALID_NOT_TRADING");
         assertThat(d.netPnl().signum()).isNegative();
@@ -169,5 +179,15 @@ class ExitPolicyTest {
 
     private static EarlySignal signal(double rel1h, double rel4h, double accel, double ret15m) {
         return new EarlySignal("ABCUSDT", 100, rel1h, rel4h, accel, 1, 1, ret15m, 1, List.of(), false, 0);
+    }
+
+    @Test
+    void partialBookDoesNotTouchProtectionOrHealth() {
+        ExitDecision armed = policy.evaluate(bought(), trading, book(106), neutral);
+        // 买盘深度只有 1000，盘口不够卖完：只持有，不更新最高净利和保护底线
+        Position p = armed.updated();
+        ExitDecision d = policy.evaluate(p, trading, TestData.book("ABCUSDT", 104, 1, 1, now.plusSeconds(300)), neutral);
+        assertThat(d.sell()).isFalse();
+        assertThat(d.updated()).isEqualTo(p);
     }
 }
