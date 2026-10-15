@@ -171,6 +171,15 @@ public final class BacktestMain {
                 System.out.println("完成 B0-旧利润保护：" + s.trades().size() + " 笔");
                 return new Report.Run(s, null, "B0");
             }));
+            // 到期离场：持有满 N 小时还没进入利润保护就卖（影子实验 T1_T24 的回测版）
+            for (int hrs : new int[]{4, 8, 24}) {
+                fs.add(pool.submit(() -> {
+                    Sim s = new B0Sim("B0-" + hrs + "小时到期卖", data, regimes, tape, params, fromQ, size).timeExit(hrs);
+                    s.run();
+                    System.out.println("完成 B0-" + hrs + "小时到期卖：" + s.trades().size() + " 笔");
+                    return new Report.Run(s, null, "B0");
+                }));
+            }
             fs.add(pool.submit(() -> {
                 Sim s = new B0Sim("B0-冻结修复", data, regimes, tape, params, fromQ, size, true);
                 s.run();

@@ -58,6 +58,13 @@ public final class B0Sim extends Sim {
     /** 冻结修复（设计文档 7.7 第 2 条）：深度浮亏只在第一次跌破线后的窗口内计一次，之后不再计入。 */
     private final boolean freezeFix;
     private final Map<String, Integer> underwaterSince = new HashMap<>();
+    /** 到期离场：持有满这么多小时、利润保护还没启动，就按市价卖（0 = 不用）。 */
+    private int timeExitHours;
+
+    B0Sim timeExit(int hours) {
+        this.timeExitHours = hours;
+        return this;
+    }
 
     public B0Sim(String name, MarketData data, Regimes regimes, SignalTape tape, StrategyParams params, int fromQ, int toQ) {
         this(name, data, regimes, tape, params, fromQ, toQ, false);
@@ -90,6 +97,13 @@ public final class B0Sim extends Sim {
             Path path = paths.get(pos.symbol());
             path.bar(s.high[q], s.low[q]);
             double[] pts = {s.open[q], s.low[q], s.high[q], s.close[q]};
+            if (timeExitHours > 0 && !pos.protectArmed()
+                    && java.time.Duration.between(pos.openedAt(), now(q)).toMinutes() >= timeExitHours * 60L) {
+                double imp = Costs.impactBps(vol) / 10_000;
+                double proceeds = pos.qty().doubleValue() * s.open[q] * (1 - imp) * (1 - params.feeRate());
+                close(pos, q, null, proceeds - pos.costBasis().doubleValue(), "TIME_EXIT");
+                continue;
+            }
             Position cur = pos;
             double prev = s.open[q];
             for (int k = 0; k < pts.length; k++) {

@@ -54,6 +54,7 @@ class BacktestSmokeTest {
         int fromQ = 10 * 96;
         List<Sim> sims = List.of(new B0Sim("B0", data, regimes, tape, params, fromQ, data.size),
                 new B0Sim("B0-冻结修复", data, regimes, tape, params, fromQ, data.size, true),
+                new B0Sim("B0-4小时到期卖", data, regimes, tape, params, fromQ, data.size).timeExit(4),
                 new NSim(V2nParams.base().with("N-论点失效直接卖", b -> b.set("decayMode", "SELL")), data, regimes, tape, params, fromQ, data.size),
                 new NSim(V2nParams.base(), data, regimes, tape, params, fromQ, data.size),
                 new NSim(V2nParams.base().with("N-无山寨门", b -> b.set("altGate", false).set("trendGate", false)),
