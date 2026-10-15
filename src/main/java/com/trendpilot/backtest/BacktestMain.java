@@ -101,6 +101,15 @@ public final class BacktestMain {
                 System.out.println("完成 B0：" + s.trades().size() + " 笔");
                 return new Report.Run(s, null, "B0");
             }));
+            // 2026-10-14 之前的利润保护：底线 = max(本金 0.35%, 最高净利 − 本金 2%)，没有 60% 锁定
+            StrategyParams oldProtect = loadParams(Map.of("trendpilot.strategy.exit.protect-giveback-pct", 2,
+                    "trendpilot.strategy.exit.protect-lock-ratio", 0));
+            fs.add(pool.submit(() -> {
+                Sim s = new B0Sim("B0-旧利润保护", data, regimes, tape, oldProtect, fromQ, size);
+                s.run();
+                System.out.println("完成 B0-旧利润保护：" + s.trades().size() + " 笔");
+                return new Report.Run(s, null, "B0");
+            }));
             for (Map.Entry<V2nParams, String> e : ex.all().entrySet()) {
                 fs.add(pool.submit(() -> {
                     Sim s = new NSim(e.getKey(), data, regimes, tape, params, fromQ, size);
@@ -137,7 +146,13 @@ public final class BacktestMain {
 
     /** 读线上同一份 application.yml 里的策略参数。 */
     static StrategyParams loadParams() throws IOException {
-        List<PropertySource<?>> sources = new YamlPropertySourceLoader().load("application", new ClassPathResource("application.yml"));
+        return loadParams(Map.of());
+    }
+
+    /** overrides 用 trendpilot.strategy.* 的完整键名覆盖个别参数（例如旧版利润保护）。 */
+    static StrategyParams loadParams(Map<String, Object> overrides) throws IOException {
+        List<PropertySource<?>> sources = new ArrayList<>(new YamlPropertySourceLoader().load("application", new ClassPathResource("application.yml")));
+        if (!overrides.isEmpty()) sources.add(0, new org.springframework.core.env.MapPropertySource("override", overrides));
         Binder binder = new Binder(ConfigurationPropertySources.from(sources));
         return binder.bind("trendpilot.strategy", StrategyParams.class).get();
     }

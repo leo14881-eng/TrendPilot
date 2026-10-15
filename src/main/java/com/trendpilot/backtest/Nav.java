@@ -133,6 +133,20 @@ public final class Nav {
         return new double[]{m, m - 1.96 * se, m + 1.96 * se};
     }
 
+    /** 每种行情里方案净值的小时收益合计是否高于同仓位持币；返回 [行情] = 差值%（NaN = 该段没有这种行情）。 */
+    public double[] regimeEdge(double[] curve, double[] matched, int a, Regimes regimes) {
+        double[] diff = new double[7];
+        boolean[] seen = new boolean[7];
+        for (int i = 1; i < curve.length; i++) {
+            int r = regimes.at((a + i - 1) * 4);
+            if (r <= 0) continue;
+            seen[r] = true;
+            diff[r] += (curve[i] / curve[i - 1] - 1 - (matched[i] / matched[i - 1] - 1)) * 100;
+        }
+        for (int r = 0; r < 7; r++) if (!seen[r]) diff[r] = Double.NaN;
+        return diff;
+    }
+
     public double capital() {
         return capital;
     }

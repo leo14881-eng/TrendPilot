@@ -78,6 +78,15 @@ class BacktestSmokeTest {
     }
 
     @Test
+    void oldProtectionOverrideBinds() throws Exception {
+        StrategyParams old = BacktestMain.loadParams(java.util.Map.of("trendpilot.strategy.exit.protect-giveback-pct", 2,
+                "trendpilot.strategy.exit.protect-lock-ratio", 0));
+        assertThat(old.exit().protectGivebackPct()).isEqualTo(2.0);
+        assertThat(old.exit().protectLockRatio()).isEqualTo(0.0);
+        assertThat(BacktestMain.loadParams().exit().protectLockRatio()).isEqualTo(0.6);
+    }
+
+    @Test
     void archiveParsesMicrosecondTimestamps() throws Exception {
         Series s = new Series("BTCUSDT", 1_759_276_800_000L, 10);
         String csv = "1759276800000000,114048.94,114308.00,114048.93,114156.18,117.9,1759277699999999,13467553.5,26048,75,8572232,0\n"

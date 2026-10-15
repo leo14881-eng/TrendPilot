@@ -165,6 +165,13 @@ public final class Report {
             Nav.Row row = nav.row(best, nav.curve(rb.sim(), a, z), rb.sim().deployed(), a, nav.matched(rb.sim(), a, z));
             if (row.returnPct() <= 0) fails.add("验证期净值没有跑赢现金");
             if (!(row.diffLow() > 0)) fails.add("验证期每日收益没有稳定跑赢同仓位持币（差值 95% 区间下限 " + f(row.diffLow()) + "%）");
+            int fa = fromQ / 4;
+            double[] fc = nav.curve(rb.sim(), fa, z), fm = nav.matched(rb.sim(), fa, z);
+            if (fc[fc.length - 1] <= fm[fm.length - 1]) fails.add("全年净值没有跑赢同仓位持币");
+            double[] re = nav.regimeEdge(fc, fm, fa, regimes);
+            int wins = 0;
+            for (int r = 1; r <= 6; r++) if (re[r] > 0) wins++;
+            if (wins < 4) fails.add("只有 " + wins + " 种行情跑赢同仓位持币（要求至少 4 种）");
         }
 
         line("");
@@ -182,7 +189,7 @@ public final class Report {
         line("SELECTED=" + best);
         line("PASSED=" + fails.isEmpty());
 
-        List<String> main = new ArrayList<>(List.of("B0", "N"));
+        List<String> main = new ArrayList<>(List.of("B0", "B0-旧利润保护", "N"));
         if (!main.contains(best)) main.add(best);
         line("");
         line("## 总体对比");
@@ -205,7 +212,7 @@ public final class Report {
         line(edge);
         if (data != null) {
             line("## 卖出后的走势（7.6 第 1、2 项：论点失效该不该卖、利润保护截断了多少）");
-            afterExit(List.of("B0", "N", "N-现行利润保护", "N-论点失效亏损不卖"));
+            afterExit(List.of("B0", "B0-旧利润保护", "N", "N-现行利润保护", "N-论点失效亏损不卖"));
         }
         line("");
         line("## 六种行情（验证期）");
@@ -250,6 +257,23 @@ public final class Report {
         line("### " + title);
         line("");
         md.append(Nav.table(rows));
+        line("");
+        StringBuilder h = new StringBuilder("各行情里比同仓位持币多赚（净值百分点）：\n\n| 方案 |");
+        StringBuilder sep = new StringBuilder("|---|");
+        for (int r = 1; r <= 6; r++) {
+            h.append(' ').append(Regimes.NAMES[r]).append(" |");
+            sep.append("---:|");
+        }
+        line(h.toString());
+        line(sep.toString());
+        for (String n : names) {
+            Run r = runs.get(n);
+            if (r == null) continue;
+            double[] re = nav.regimeEdge(nav.curve(r.sim(), a, z), nav.matched(r.sim(), a, z), a, regimes);
+            StringBuilder row = new StringBuilder("| " + n + " |");
+            for (int k = 1; k <= 6; k++) row.append(' ').append(f(re[k])).append(" |");
+            line(row.toString());
+        }
     }
 
     /** 每种卖出原因：卖出后 24h / 72h 收盘相对卖出价、72h 内最高涨幅、之后又涨过 2R 的比例。 */
