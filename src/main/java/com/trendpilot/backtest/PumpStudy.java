@@ -18,6 +18,8 @@ import java.util.Map;
 public final class PumpStudy {
 
     static final double FEE = 0.001;
+    /** 低成本情形：币安用 BNB 抵扣后的费率，挂单成交不付冲击（假设挂单都能成交，偏乐观）。 */
+    static final double LOW_FEE = 0.00075;
 
     record Trigger(String name, Cond cond) {
     }
@@ -54,7 +56,7 @@ public final class PumpStudy {
     }
 
     private final MarketData data;
-    /** [触发][卖法] → 每笔：净收益%、天、年份。 */
+    /** [触发][卖法] → 每笔：净收益%、天、年份、不算成本收益%、低成本收益%。 */
     private final List<double[]>[][] rows;
     private final List<Trigger> triggers = triggers();
     private final List<Exit> exits = exits();
@@ -114,7 +116,9 @@ public final class PumpStudy {
                         double exitPx = exit(s, q + 1, exits.get(j), s.open[q + 1], toQ);
                         if (Double.isNaN(exitPx)) continue;
                         double net = (exitPx * (1 - imp) * (1 - FEE) / entry - 1) * 100;
-                        rows[k][j].add(new double[]{net, day, year});
+                        double gross = (exitPx / s.open[q + 1] - 1) * 100;
+                        double low = (exitPx * (1 - LOW_FEE) / (s.open[q + 1] * (1 + LOW_FEE)) - 1) * 100;
+                        rows[k][j].add(new double[]{net, day, year, gross, low});
                     }
                 }
             }
@@ -183,10 +187,11 @@ public final class PumpStudy {
 
     public String markdown() {
         StringBuilder b = new StringBuilder("## 追大涨检验（前 150 个币；触发后下一根 15 分钟开盘买入；同一币同一条件 24 小时只算一次）\n\n");
-        b.append("净收益已扣来回手续费和 1,000U 冲击（大涨时实际滑点可能更大，结果偏乐观）。区间按天汇总；全在 0 以上才算能赚。\n\n");
+        b.append("净收益已扣来回手续费和 1,000U 冲击（大涨时实际滑点可能更大，结果偏乐观）。区间按天汇总；全在 0 以上才算能赚。\n");
+        b.append("「不算成本」= 不扣任何费用，看买点本身；「低成本」= 每边 0.075%（BNB 抵扣）且无滑点，假设挂单全部成交。\n\n");
         for (int k = 0; k < triggers.size(); k++) {
             b.append("### ").append(triggers.get(k).name()).append("\n\n");
-            b.append("| 卖法 | 笔数 | 每笔平均净收益% | 95% 区间 | 中位数% | 赚钱比例 | 平均赚% | 平均亏% | 1000U 每笔 | 按年份每笔平均% |\n|---|---|---|---|---|---|---|---|---|---|\n");
+            b.append("| 卖法 | 笔数 | 每笔平均净收益% | 95% 区间 | 中位数% | 赚钱比例 | 平均赚% | 平均亏% | 1000U 每笔 | 不算成本每笔% | 低成本每笔% | 按年份每笔平均% |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n");
             for (int j = 0; j < exits.size(); j++) {
                 List<double[]> rs = rows[k][j];
                 if (rs.isEmpty()) continue;
@@ -198,13 +203,15 @@ public final class PumpStudy {
                 double avgW = Arrays.stream(v).filter(x -> x > 0).average().orElse(0);
                 double avgL = Arrays.stream(v).filter(x -> x <= 0).average().orElse(0);
                 double mean = Arrays.stream(v).average().orElse(0);
+                double gross = rs.stream().mapToDouble(r -> r[3]).average().orElse(0);
+                double low = rs.stream().mapToDouble(r -> r[4]).average().orElse(0);
                 StringBuilder yr = new StringBuilder();
                 rs.stream().mapToInt(r -> (int) r[2]).distinct().sorted().forEach(y -> {
                     double m = rs.stream().filter(r -> r[2] == y).mapToDouble(r -> r[0]).average().orElse(0);
                     yr.append(y).append(": ").append(String.format(Locale.ROOT, "%.2f", m)).append("；");
                 });
-                b.append(String.format(Locale.ROOT, "| %s | %d | %.2f | %.2f ~ %.2f | %.2f | %.0f%% | %.2f | %.2f | %.1f U | %s |%n",
-                        exits.get(j).name(), v.length, mean, ci[1], ci[2], sorted[sorted.length / 2], win, avgW, avgL, mean * 10, yr));
+                b.append(String.format(Locale.ROOT, "| %s | %d | %.2f | %.2f ~ %.2f | %.2f | %.0f%% | %.2f | %.2f | %.1f U | %.2f | %.2f | %s |%n",
+                        exits.get(j).name(), v.length, mean, ci[1], ci[2], sorted[sorted.length / 2], win, avgW, avgL, mean * 10, gross, low, yr));
             }
             b.append('\n');
         }
