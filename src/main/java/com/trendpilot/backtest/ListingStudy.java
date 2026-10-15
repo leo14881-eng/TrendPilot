@@ -122,12 +122,18 @@ public final class ListingStudy {
     }
 
     private String get(String url) throws IOException, InterruptedException {
-        for (int attempt = 1; attempt <= 4; attempt++) {
+        for (int attempt = 1; attempt <= 3; attempt++) {
             HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(30))
-                    .header("Accept", "application/json").header("User-Agent", "Mozilla/5.0 (research backtest)").build(), HttpResponse.BodyHandlers.ofString());
+                    .header("Accept", "application/json, text/plain, */*")
+                    .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
+                    .header("Origin", "https://upbit.com")
+                    .header("Referer", "https://upbit.com/service_center/notice")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36")
+                    .build(), HttpResponse.BodyHandlers.ofString());
             if (r.statusCode() == 200) return r.body();
             if (r.statusCode() == 404) return null;
-            System.out.println("Upbit 接口 HTTP " + r.statusCode() + "，重试");
+            String body = r.body() == null ? "" : r.body();
+            System.out.println("Upbit 接口 HTTP " + r.statusCode() + "：" + body.substring(0, Math.min(200, body.length())).replace('\n', ' '));
             Thread.sleep(2000L << attempt);
         }
         return null;
