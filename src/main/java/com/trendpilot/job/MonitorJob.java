@@ -152,6 +152,17 @@ public class MonitorJob {
         }
     }
 
+    private final SkipAlerts skipAlerts = new SkipAlerts();
+
+    /** 异常的根本原因，一行内说清（例如 HTTP 429、超时）。 */
+    static String cause(Throwable ex) {
+        Throwable t = ex;
+        while (t.getCause() != null && t.getCause() != t) t = t.getCause();
+        String msg = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+        msg = msg.replaceAll("\\s+", " ").strip();
+        return msg.length() > 120 ? msg.substring(0, 120) + "…" : msg;
+    }
+
     private Report monitor(String gen, Instant now) {
         return monitor(gen, now, null, Map.of());
     }
@@ -168,6 +179,7 @@ public class MonitorJob {
         // 按持仓隔离：某个持仓缺数据只跳过它本身，其他持仓照常管理。
         Map<String, Observed> observed = new LinkedHashMap<>();
         List<String> missing = new ArrayList<>();
+        Map<String, String> why = new LinkedHashMap<>();
         List<String> delisted = new ArrayList<>();
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             Map<Position, Future<SymbolInfo>> infos = new LinkedHashMap<>();
@@ -176,6 +188,7 @@ public class MonitorJob {
                 VenueMarket m = markets.get(p.venue());
                 if (m == null) {
                     missing.add(p.symbol());
+                    why.put(p.symbol(), p.venue() + " 交易所未启用");
                     continue;
                 }
                 infos.put(p, pool.submit(() -> m.directory().get(p.symbol())));
@@ -189,13 +202,16 @@ public class MonitorJob {
                     info = infos.get(p).get();
                 } catch (Exception ex) {
                     missing.add(p.symbol()); // 交易状态未知：不能判断是否下架，本持仓跳过
+                    why.put(p.symbol(), p.venue() + " 交易状态：" + cause(ex));
                     continue;
                 }
                 OrderBook ob;
+                String bookErr = "盘口数据异常";
                 try {
                     ob = books.get(p).get();
                 } catch (Exception ex) {
                     ob = null;
+                    bookErr = cause(ex);
                 }
                 if (ob != null && ob.sane()) {
                     observed.put(p.symbol(), new Observed(info, ob, System.nanoTime())); // 下架但还有盘口：硬失效按盘口卖出
@@ -204,13 +220,15 @@ public class MonitorJob {
                     markDelistedUnpriced(gen, now, p);
                 } else {
                     missing.add(p.symbol());
+                    why.put(p.symbol(), p.venue() + " 盘口：" + bookErr);
                 }
             }
         }
-        if (!missing.isEmpty()) {
-            log.warn("Monitor 本轮跳过缺数据的持仓：{}", missing);
-            notifier.send("monitor-skip:" + String.join(",", missing) + ":" + now.truncatedTo(ChronoUnit.HOURS),
-                    "⚠️ Monitor 本轮跳过 " + String.join("、", missing) + "：盘口或交易状态拿不到，其他持仓照常管理");
+        if (!missing.isEmpty()) log.warn("Monitor 本轮跳过缺数据的持仓：{}", why);
+        // 告警只看 5 分钟全量轮次（FastWatch 只核对个别币，只记日志）：开始跳过时提醒，持续中 6 小时提醒一次，恢复时提醒一次
+        if (only == null) {
+            String alert = skipAlerts.onRound(missing.isEmpty() ? Map.of() : why, now);
+            if (alert != null) notifier.send("monitor-skip:" + now.toEpochMilli(), alert);
         }
 
         // 信号指标（可选）：K 线走本地缓存，只有新收盘的 15m K 线才请求；每个交易所用自己的 BTC 基准；

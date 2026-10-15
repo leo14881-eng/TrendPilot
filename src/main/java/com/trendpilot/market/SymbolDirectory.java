@@ -15,12 +15,16 @@ import java.util.stream.Collectors;
  * <p>
  * 防误判：交易所返回空表、或比上一份少 20% 以上（维护、接口格式变化、半截响应），视为请求失败，
  * 不替换缓存——否则一份坏数据会让所有持仓看起来都"下架"。失败结果记 30 秒，同一轮不重复请求。
+ * 刷新失败时，6 小时内最近一次正常的列表继续可用（交易状态很少变化，下架会提前公告），
+ * 免得一次接口失败让所有持仓都因"交易状态拿不到"失去管理；超过 6 小时才报错。
  */
 public class SymbolDirectory {
 
     static final Duration TTL = Duration.ofMinutes(30);
     static final Duration ERROR_TTL = Duration.ofSeconds(30);
     static final double MIN_RATIO = 0.8;
+    static final Duration STALE_MAX = Duration.ofHours(6);
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(SymbolDirectory.class);
 
     private final MarketDataSource market;
     private final Clock clock;
@@ -59,7 +63,10 @@ public class SymbolDirectory {
     private synchronized Snapshot snapshot() {
         Instant now = clock.instant();
         if (cached == null || Duration.between(cached.fetchedAt(), now).compareTo(TTL) > 0) {
-            if (error != null && Duration.between(errorAt, now).compareTo(ERROR_TTL) < 0) throw error;
+            if (error != null && Duration.between(errorAt, now).compareTo(ERROR_TTL) < 0) {
+                if (usable(lastGood, now)) return lastGood;
+                throw error;
+            }
             try {
                 List<SymbolInfo> all = market.symbols().stream()
                         .filter(i -> i.symbol() != null && !i.symbol().isBlank()).toList();
@@ -76,9 +83,17 @@ public class SymbolDirectory {
                 cached = null;
                 error = e;
                 errorAt = now;
+                if (usable(lastGood, now)) {
+                    log.warn("交易对列表刷新失败，继续用 {} 的列表：{}", lastGood.fetchedAt(), e.getMessage());
+                    return lastGood;
+                }
                 throw e;
             }
         }
         return cached;
+    }
+
+    private static boolean usable(Snapshot s, Instant now) {
+        return s != null && Duration.between(s.fetchedAt(), now).compareTo(STALE_MAX) <= 0;
     }
 }

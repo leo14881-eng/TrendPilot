@@ -54,13 +54,29 @@ class SymbolDirectoryTest {
         src.next = symbols(100);
         assertThat(dir.get("S1USDT").trading()).isTrue();
 
-        // 30 分钟后一份只剩一半的列表（维护或半截响应）：拒绝，持仓不会因此被当成下架
+        // 30 分钟后一份只剩一半的列表（维护或半截响应）：拒绝，继续用上一份正常列表，持仓不会因此被当成下架
         clock.now = clock.now.plusSeconds(31 * 60);
         src.next = symbols(50);
-        assertThatThrownBy(() -> dir.get("S1USDT")).hasMessageContaining("骤降");
+        assertThat(dir.get("S70USDT")).isNotNull();
         clock.now = clock.now.plusSeconds(31);
         src.next = symbols(95);
         assertThat(dir.get("S99USDT")).isNull(); // 正常的少量下架照常反映
         assertThat(dir.get("S1USDT")).isNotNull();
+    }
+
+    @Test
+    void refreshFailureFallsBackToRecentGoodListThenFailsAfterSixHours() {
+        Source src = new Source();
+        MutableClock clock = new MutableClock();
+        SymbolDirectory dir = new SymbolDirectory(src, clock);
+        src.next = symbols(100);
+        assertThat(dir.get("S1USDT")).isNotNull();
+        // 接口坏了：5 小时内都继续用最近一次正常的列表
+        src.next = List.of();
+        clock.now = clock.now.plusSeconds(5 * 3600);
+        assertThat(dir.get("S1USDT")).isNotNull();
+        // 超过 6 小时还拿不到：报错，不能无限期用旧状态
+        clock.now = clock.now.plusSeconds(3600 + 60);
+        assertThatThrownBy(() -> dir.get("S1USDT")).isInstanceOf(MarketDataException.class);
     }
 }
