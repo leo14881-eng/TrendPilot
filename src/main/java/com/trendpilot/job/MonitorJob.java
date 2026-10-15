@@ -22,6 +22,8 @@ import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.SymbolBars;
 import com.trendpilot.market.SymbolInfo;
 import com.trendpilot.market.Venue;
+import com.trendpilot.market.BookTicker;
+import com.trendpilot.market.stream.StreamHub;
 import com.trendpilot.market.VenueMarket;
 import com.trendpilot.monitor.ExitDecision;
 import com.trendpilot.monitor.ExitPolicy;
@@ -37,7 +39,7 @@ import com.trendpilot.variant.ParallelExits;
 
 /**
  * Monitor（每 5 分钟）：对每个持仓拉新鲜盘口和 K 线，按退出顺序判定。
- * 任何持仓的交易状态或盘口拿不到时，本轮整体停止，不用旧数据做决定。
+ * 某个持仓的交易状态或盘口拿不到时，改用最优买价（WebSocket 或批量 bookTicker）做保守的利润保护判断，其他持仓照常管理。
  */
 @Component
 public class MonitorJob {
@@ -60,12 +62,14 @@ public class MonitorJob {
     private final AppState state;
     private final ParallelExits parallel;
     private final com.trendpilot.observation.DepthVariantTracker depthVariant;
+    private final StreamHub hub;
 
     public MonitorJob(Markets markets, V1Tracker v1, EarlySignalCalculator signals,
                       ExitPolicy exitPolicy, ShadowBook book, PortfolioLock lock, Notifier notifier, JobRuns runs,
                       AppState state, ParallelExits parallel,
-                      com.trendpilot.observation.DepthVariantTracker depthVariant) {
+                      com.trendpilot.observation.DepthVariantTracker depthVariant, StreamHub hub) {
         this.depthVariant = depthVariant;
+        this.hub = hub;
         this.parallel = parallel;
         this.markets = markets;
         this.v1 = v1;
@@ -154,6 +158,26 @@ public class MonitorJob {
 
     private final SkipAlerts skipAlerts = new SkipAlerts();
 
+    /** 最优买价兜底：WebSocket 60 秒内的报价优先（不占 REST），否则用批量 bookTicker（30 秒缓存）。都没有返回 null。 */
+    private Double fallbackBid(Position p) {
+        try {
+            StreamHub.Quote q = hub.quote(p.venue(), p.symbol(), 60);
+            if (q != null && q.bid() > 0) return q.bid();
+        } catch (RuntimeException e) {
+            log.debug("WebSocket 报价不可用 {}：{}", p.symbol(), e.toString());
+        }
+        VenueMarket m = markets.get(p.venue());
+        if (m == null) return null;
+        try {
+            for (BookTicker t : m.tickers().bookTickers()) {
+                if (t.symbol().equals(p.symbol())) return t.bid() > 0 ? t.bid() : null;
+            }
+        } catch (RuntimeException e) {
+            log.warn("Monitor {} bookTicker 兜底也失败：{}", p.symbol(), cause(e));
+        }
+        return null;
+    }
+
     /** 异常的根本原因，一行内说清（例如 HTTP 429、超时）。 */
     static String cause(Throwable ex) {
         Throwable t = ex;
@@ -224,7 +248,20 @@ public class MonitorJob {
                 }
             }
         }
-        if (!missing.isEmpty()) log.warn("Monitor 本轮跳过缺数据的持仓：{}", why);
+        // 兜底：盘口或交易状态拿不到时，用最优买价（先 WebSocket，再批量 bookTicker，一次请求覆盖全部币）做保守的利润保护判断，
+        // 不让持仓因为一个接口失败就错过止盈
+        Map<String, Double> degraded = new LinkedHashMap<>();
+        for (Position p : snapshot) {
+            if (!missing.contains(p.symbol())) continue;
+            Double bid = fallbackBid(p);
+            if (bid == null) {
+                why.merge(p.symbol(), "，最优买价也拿不到，本轮无法判断", String::concat);
+            } else {
+                degraded.put(p.symbol(), bid);
+                why.merge(p.symbol(), "，已改用最优买价做利润保护判断", String::concat);
+            }
+        }
+        if (!missing.isEmpty()) log.warn("Monitor 本轮缺完整数据的持仓：{}", why);
         // 告警只看 5 分钟全量轮次（FastWatch 只核对个别币，只记日志）：开始跳过时提醒，持续中 6 小时提醒一次，恢复时提醒一次
         if (only == null) {
             String alert = skipAlerts.onRound(missing.isEmpty() ? Map.of() : why, now);
@@ -254,11 +291,22 @@ public class MonitorJob {
                         ? current.withProtection(true, current.protectFloor(), hint) : current;
                 Observed o = observed.get(pos.symbol());
                 if (o == null) {
-                    continue; // 抓取之后新开的仓，下轮再看
+                    Double bid = degraded.get(pos.symbol());
+                    if (bid != null) {
+                        try {
+                            applyDegraded(gen, now, pos, exitPolicy.evaluateDegraded(pos, bid, Instant.now()), exits);
+                        } catch (RuntimeException e) {
+                            log.error("Monitor {} 降级判断出错：{}", pos.symbol(), e.toString(), e);
+                        }
+                    }
+                    continue; // 没有降级价格：抓取之后新开的仓，或者真的什么都拿不到
                 }
                 // 盘口是锁外抓的；等锁太久（被别的任务占着）这份盘口已经旧了，不用它做卖出判断
                 if (System.nanoTime() - o.fetchedNanos() > MAX_BOOK_AGE.toNanos()) {
-                    log.warn("Monitor {} 盘口已超过 {} 秒，本轮不判断", pos.symbol(), MAX_BOOK_AGE.toSeconds());
+                    Double bid = fallbackBid(pos);
+                    log.warn("Monitor {} 盘口已超过 {} 秒，{}", pos.symbol(), MAX_BOOK_AGE.toSeconds(),
+                            bid == null ? "本轮不判断" : "改用最优买价做利润保护判断");
+                    if (bid != null) applyDegraded(gen, now, pos, exitPolicy.evaluateDegraded(pos, bid, Instant.now()), exits);
                     continue;
                 }
                 try {
@@ -297,6 +345,20 @@ public class MonitorJob {
         lock.run(() -> book.note(pos, "DELISTED_UNPRICED", gen, now));
         notifier.send("note:DELISTED_UNPRICED:" + flag, "⚠️ V2 " + pos.symbol() + Messages.venueTag(pos.venue())
                 + " 已停止交易且拿不到盘口：无法模拟卖出，持仓冻结在账上，浮亏按最后一次标记计入");
+    }
+
+    /** 降级判断的结果：卖出照常记账；不卖时只更新持仓状态（启动保护、底线），不喂给对比账本，避免折价净利污染对比。 */
+    private void applyDegraded(String gen, Instant now, Position pos, ExitDecision d, List<String> exits) {
+        if (d.sell()) {
+            apply(gen, now, pos, d, exits, Double.NaN);
+            return;
+        }
+        String posKey = pos.symbol() + ":" + pos.openedAt();
+        for (String note : d.notes()) {
+            book.note(pos, note, gen, now);
+            notifier.send("note:" + note + ":" + posKey + ":" + gen, Messages.note(pos.symbol(), note, d));
+        }
+        book.update(d.updated(), d.netPnl(), now);
     }
 
     private void apply(String gen, Instant now, Position pos, ExitDecision d, List<String> exits, double atrPct) {

@@ -150,6 +150,37 @@ public class ExitPolicy {
      * 保护底线 = max(本金 × 最低比例, 最高净利 − 本金 × 回吐比例, 最高净利 × 锁定比例)，只上调。
      * FastWatch 用同一公式按实时最高净利估算底线。
      */
+    /** 拿不到全数量盘口时的保守折价：按最优买价再低 1% 模拟卖出（覆盖没看到的深度和滑点）。 */
+    public static final double DEGRADED_HAIRCUT = 0.01;
+
+    /**
+     * 降级判断：盘口或交易状态拿不到，但有最优买价（WebSocket 或批量 bookTicker）。只做利润保护，
+     * 不做论点失效、硬失效这些需要完整数据的判断；最高净利不用降级价格更新。
+     * 按最优买价 × (1 − 1%) 再扣手续费算净利，跌破保护底线且仍有净利就卖，宁可早卖不错过止盈。
+     */
+    public ExitDecision evaluateDegraded(Position pos, double bestBid, java.time.Instant at) {
+        StrategyParams.Exit e = params.exit();
+        OrderBook ref = OrderBook.reference(pos.symbol(), bestBid * (1 - DEGRADED_HAIRCUT), at);
+        Fill fill = ExecutionSimulator.sell(ref, pos.qty(), params.feeRate());
+        BigDecimal net = fill.netProceeds().subtract(pos.costBasis());
+        double rawRet = BigDecimal.valueOf(bestBid).divide(pos.avgEntryPrice(), MC).doubleValue() * 100 - 100;
+        List<String> notes = new ArrayList<>();
+        Position p = pos;
+        if (!p.protectArmed() && rawRet >= e.protectArmPct() && net.signum() > 0) {
+            p = p.withProtection(true, BigDecimal.ZERO, BigDecimal.ZERO);
+            notes.add("PROTECT_ARM");
+        }
+        if (p.protectArmed()) {
+            BigDecimal floor = protectionFloor(p.costBasis(), p.peakNet(), p.protectFloor(), e);
+            p = p.withProtection(true, floor, p.peakNet());
+            if (net.signum() > 0 && net.compareTo(floor) < 0) {
+                notes.add("DEGRADED_QUOTE");
+                return new ExitDecision(pos.symbol(), true, "PROFIT_PROTECTION", p, notes, net, rawRet, fill);
+            }
+        }
+        return new ExitDecision(pos.symbol(), false, "HOLD", p, notes, net, rawRet, fill);
+    }
+
     public static BigDecimal protectionFloor(BigDecimal principal, BigDecimal peak, BigDecimal current,
                                              StrategyParams.Exit e) {
         BigDecimal minFloor = pct(principal, e.protectMinFloorPct());

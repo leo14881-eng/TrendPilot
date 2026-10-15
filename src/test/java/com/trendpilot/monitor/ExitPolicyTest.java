@@ -177,6 +177,30 @@ class ExitPolicyTest {
         assertThat(d.sell()).isFalse();
     }
 
+    @Test
+    void degradedQuoteStillSellsWhenNetFallsBelowProtectionFloor() {
+        ExitDecision up = policy.evaluate(bought(), trading, book(103), neutral);
+        Position armed = up.updated();
+        double floor = armed.protectFloor().doubleValue();
+        // 最优买价 103：按 103 × 0.99 再扣 0.1% 手续费，净利约 17.7，低于底线约 18 → 卖
+        ExitDecision d = policy.evaluateDegraded(armed, 103, now);
+        assertThat(d.sell()).isTrue();
+        assertThat(d.reason()).isEqualTo("PROFIT_PROTECTION");
+        assertThat(d.notes()).contains("DEGRADED_QUOTE");
+        assertThat(d.netPnl().doubleValue()).isLessThan(floor).isGreaterThan(0);
+        // 最高净利不用降级价格更新
+        assertThat(d.updated().peakNet()).isEqualByComparingTo(armed.peakNet());
+    }
+
+    @Test
+    void degradedQuoteHoldsWithoutProfitAndArmsWhenHighEnough() {
+        assertThat(policy.evaluateDegraded(bought(), 99, now).sell()).isFalse();
+        ExitDecision arm = policy.evaluateDegraded(bought(), 104, now);
+        assertThat(arm.sell()).isFalse();
+        assertThat(arm.notes()).containsExactly("PROTECT_ARM");
+        assertThat(arm.updated().protectArmed()).isTrue();
+    }
+
     private static EarlySignal signal(double rel1h, double rel4h, double accel, double ret15m) {
         return new EarlySignal("ABCUSDT", 100, rel1h, rel4h, accel, 1, 1, ret15m, 1, List.of(), false, 0);
     }

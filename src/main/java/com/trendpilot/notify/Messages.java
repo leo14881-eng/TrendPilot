@@ -43,6 +43,7 @@ public final class Messages {
             case "PROTECT_ARM" -> "启动利润保护";
             case "PROTECTION_GAPPED" -> "价格跳空穿透保护窗口，当前已无净利，按规则不亏损卖出";
             case "LOSS_RECOVERY" -> "信号连续走弱但仍亏损，进入 LOSS_RECOVERY 观察";
+            case "DEGRADED_QUOTE" -> "盘口拿不到，按最优买价再低 1% 保守模拟卖出";
             default -> note;
         };
         return String.format(Locale.ROOT, "🟡 V2 %s %s\n当前可退出净利 %s U，原始收益 %.2f%%",
