@@ -22,6 +22,8 @@ import java.time.Instant;
  */
 public final class InstanceLock {
 
+    static final long LOCK_POSITION = Long.MAX_VALUE - 1;
+
     private static FileChannel channel;
     private static FileLock lock;
 
@@ -51,7 +53,8 @@ public final class InstanceLock {
         Path file = dataDir.resolve(".instance.lock");
         try {
             FileChannel ch = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-            FileLock l = ch.tryLock();
+            // 只锁文件末尾之外的一个字节：Windows 的文件锁是强制锁，锁整个文件会让别的程序（和测试）读不了里面的机器名
+            FileLock l = ch.tryLock(LOCK_POSITION, 1, false);
             if (l == null) {
                 ch.close();
                 throw new IllegalStateException("另一个 TrendPilot 已在使用数据目录 " + dataDir.toAbsolutePath()

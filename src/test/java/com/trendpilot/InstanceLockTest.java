@@ -24,14 +24,14 @@ class InstanceLockTest {
             assertThat(Files.readString(dir.resolve(".instance.lock"))).contains("/pid ");
             // 别的进程再锁同一个文件拿不到（同一 JVM 里表现为 OverlappingFileLockException）
             try (FileChannel other = FileChannel.open(dir.resolve(".instance.lock"), StandardOpenOption.WRITE)) {
-                assertThatThrownBy(other::tryLock).isInstanceOf(OverlappingFileLockException.class);
+                assertThatThrownBy(() -> other.tryLock(InstanceLock.LOCK_POSITION, 1, false)).isInstanceOf(OverlappingFileLockException.class);
             }
             InstanceLock.acquire(dir); // 同一进程重复调用不报错
         } finally {
             InstanceLock.release();
         }
         try (FileChannel again = FileChannel.open(dir.resolve(".instance.lock"), StandardOpenOption.WRITE)) {
-            assertThat(again.tryLock()).isNotNull();
+            assertThat(again.tryLock(InstanceLock.LOCK_POSITION, 1, false)).isNotNull();
         }
     }
 }

@@ -29,6 +29,8 @@ public class BybitClient implements MarketDataSource {
     private final PublicRest rest;
     private JsonNode tickersBody;
     private long tickersAt;
+    private RuntimeException tickersError;
+    private long tickersErrorAt;
 
     public BybitClient(BybitProperties props, RestClient.Builder builder) {
         this.http = builder.baseUrl(props.baseUrl()).build();
@@ -80,11 +82,22 @@ public class BybitClient implements MarketDataSource {
         return out;
     }
 
-    /** 24h 行情和最优买卖价来自同一个接口：20 秒内复用同一次响应，只请求一次。 */
+    /**
+     * 24h 行情和最优买卖价来自同一个接口：20 秒内复用同一次响应，只请求一次。
+     * 失败（已含重试）也记住 60 秒：同一轮里第二个调用方直接拿到同一个错误，不再重复请求。
+     */
     private synchronized JsonNode spotTickers() {
         long now = System.currentTimeMillis();
+        if (tickersError != null && now - tickersErrorAt < 60_000) throw tickersError;
         if (tickersBody == null || now - tickersAt > 20_000) {
-            tickersBody = call(() -> http.get().uri("/v5/market/tickers?category=spot"), "tickers");
+            try {
+                tickersBody = call(() -> http.get().uri("/v5/market/tickers?category=spot"), "tickers");
+            } catch (RuntimeException e) {
+                tickersError = e;
+                tickersErrorAt = now;
+                throw e;
+            }
+            tickersError = null;
             tickersAt = now;
         }
         return tickersBody;
