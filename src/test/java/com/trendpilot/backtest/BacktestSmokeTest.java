@@ -77,6 +77,9 @@ class BacktestSmokeTest {
         PumpStudy pump = new PumpStudy(data);
         pump.run(fromQ, data.size);
         assertThat(pump.markdown()).contains("追大涨检验");
+        PrePumpStudy pre = new PrePumpStudy(data);
+        pre.run(fromQ, data.size);
+        assertThat(pre.markdown()).contains("大涨前埋伏检验");
         TrendStudy trend = new TrendStudy(data);
         trend.run(fromQ, fromQ + 15 * 96, data.size);
         assertThat(trend.results()).isNotEmpty();
