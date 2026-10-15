@@ -30,7 +30,9 @@ import java.util.regex.Pattern;
 public final class SeasonStudy {
 
     static final double FEE = 0.001;
-    static final int TOP = 100;
+    /** 每天按成交额取前 150（单币趋势检验用 150，山寨季指标只用前 100）。 */
+    static final int TOP = 150;
+    static final int INDEX_TOP = 100;
     static final int BASKET = 50;
     static final int PICKS = 10;
     static final int REBALANCE_DAYS = 7;
@@ -48,6 +50,11 @@ public final class SeasonStudy {
     // 每天的指标
     double[] altIdx, altBtc, breadth, asi, btcClose;
     int[][] top;
+
+    /** 第 d 天成交额前 n 的山寨。 */
+    int[] top(int d, int n) {
+        return top[d].length <= n ? top[d] : Arrays.copyOf(top[d], n);
+    }
     boolean[][] regime;
     static final String[] REGIMES = {"一直持有", "山寨/BTC 比值和山寨指数都在 50 日均线上方", "广度：≥60% 的山寨在自己 50 日均线上方开启，≤40% 结束",
             "山寨季指数：前 50 山寨里 ≥75% 的 90 天涨幅跑赢 BTC 开启，<50% 结束"};
@@ -222,7 +229,7 @@ public final class SeasonStudy {
             if (d > 0 && top[d - 1].length > 0) {
                 double s = 0;
                 int k = 0;
-                for (int i : top[d - 1]) {
+                for (int i : top(d - 1, INDEX_TOP)) {
                     double r = ret(i, d, 1);
                     if (!Double.isNaN(r)) {
                         s += r;
@@ -235,7 +242,7 @@ public final class SeasonStudy {
             altBtc[d] = idx / btcClose[d];
             if (top[d].length >= 20) {
                 int above = 0, k = 0;
-                for (int i : top[d]) {
+                for (int i : top(d, INDEX_TOP)) {
                     double m = sma(i, d, 50);
                     if (Double.isNaN(m)) continue;
                     k++;
@@ -365,7 +372,7 @@ public final class SeasonStudy {
     /** 在第 d 天收盘时挑持仓（只用 d 及以前的数据）。 */
     Map<Integer, Double> pick(int h, int d) {
         Map<Integer, Double> t = new HashMap<>();
-        int[] u = top[d];
+        int[] u = top(d, INDEX_TOP);
         if (h == 0) {
             int n = Math.min(BASKET, u.length);
             for (int j = 0; j < n; j++) t.put(u[j], 1.0 / n);
@@ -435,7 +442,7 @@ public final class SeasonStudy {
     }
 
     public void writeCsv(Path dir) throws IOException {
-        StringBuilder h = new StringBuilder("date,btc_close,alt_index,alt_btc,breadth,altseason_index,top100_count,r1,r2,r3");
+        StringBuilder h = new StringBuilder("date,btc_close,alt_index,alt_btc,breadth,altseason_index,pool_count,r1,r2,r3");
         for (Result r : results) h.append(",nav_").append(results.indexOf(r));
         List<String> lines = new ArrayList<>();
         for (int d = 0; d < days; d++) {

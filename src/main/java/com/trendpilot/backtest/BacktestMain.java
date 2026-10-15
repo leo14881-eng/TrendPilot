@@ -68,15 +68,29 @@ public final class BacktestMain {
             symbols.add(s);
         }
         System.out.println("USDT 交易对 " + all.size() + " 个，排除稳定币/法币/股票 " + excluded.size() + " 个");
+        if (args.length > 8 && args[8].equals("listing")) {
+            // 候选 B：Upbit 上币公告 → Binance 买入（1 分钟 K 线，不下载 15 分钟数据）
+            ListingStudy ls = new ListingStudy(dataDir.resolve("listing"));
+            ls.fetchUpbit();
+            ls.run(new HashSet<>(all), tradeFrom, lastDay != null ? lastDay : to.atEndOfMonth());
+            String md = "# 上币公告检验\n\n" + ls.markdown();
+            Files.writeString(outDir.resolve("report.md"), md);
+            ls.writeCsv(outDir);
+            System.out.println(md);
+            return;
+        }
         if (args.length > 8 && args[8].equals("season")) {
             // 山寨季轮动：只用日线，不下载 15 分钟数据
             SeasonStudy st = SeasonStudy.load(dataDir, symbols, from, to, lastDay);
             st.prepare(excluded);
             int fromDay = Math.max(st.dayOf(tradeFrom), 0);
             st.run(fromDay);
-            String md = "# 山寨季轮动检验\n\n" + st.markdown(fromDay);
+            TsMomStudy ts = new TsMomStudy(st);
+            ts.run(fromDay);
+            String md = "# 山寨季轮动 + 单币趋势持有检验\n\n" + ts.markdown(fromDay) + st.markdown(fromDay);
             Files.writeString(outDir.resolve("report.md"), md);
             st.writeCsv(outDir);
+            ts.writeCsv(outDir);
             System.out.println(md);
             return;
         }
