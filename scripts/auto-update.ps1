@@ -188,6 +188,23 @@ function Invoke-Git([string[]]$GitArgs) {
 }
 
 # 接电源时不睡眠、不休眠：电脑睡着服务就停了。普通用户可以改当前电源计划；每天检查一次（防止被改回去），失败只提醒一次。
+# GitHub Actions 在 Windows 上跑测试的结果（公开仓库，匿名接口，每小时 60 次额度，只在有新提交时才查）。
+# 返回 success / failure / pending / unknown（查不到或这个提交没有 CI 记录）。
+function Get-CiState($sha) {
+    try {
+        $m = [regex]::Match($RepoUrl, 'github\.com[/:]([^/]+)/([^/.]+)')
+        $api = "https://api.github.com/repos/$($m.Groups[1].Value)/$($m.Groups[2].Value)/commits/$sha/check-runs"
+        $r = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'TrendPilot-AutoUpdate'; 'Accept' = 'application/vnd.github+json' } -TimeoutSec 20
+        $win = @($r.check_runs | Where-Object { $_.name -like '*windows*' })
+        if ($win.Count -eq 0) { return 'unknown' }
+        if (@($win | Where-Object { $_.status -ne 'completed' }).Count -gt 0) { return 'pending' }
+        if (@($win | Where-Object { $_.conclusion -ne 'success' }).Count -gt 0) { return 'failure' }
+        return 'success'
+    } catch {
+        return 'unknown'
+    }
+}
+
 function Set-NoSleep {
     $ErrorActionPreference = 'Continue'   # powercfg 写 stderr 时不要直接抛出
     $marker = Join-Path $Bin 'nosleep.txt'
@@ -258,6 +275,21 @@ try {
             Send-Telegram "📄 TrendPilot 文档已更新到 $short（只改文档，服务没有重启）`n$subject"
             exit 0
         }
+    }
+
+    # ---------- 2c. 合并前的 Windows CI 必须通过 ----------
+    # 失败：不安装、记下并提醒；还在跑：下次再看；查不到（网络、没有 CI 记录）：照常本机构建，本机测试仍是第二道关。
+    $ci = Get-CiState $latest
+    if ($ci -eq 'pending') {
+        $commitTime = [datetime](Invoke-Git @('log', '-1', '--format=%cI', $latest))
+        if ($commitTime -gt (Get-Date).AddMinutes(-40)) { Write-Log "等待 $short 的 Windows CI 结果"; exit 0 }
+        Write-Log "$short 的 Windows CI 超过 40 分钟没有结果，改为本机构建测试"
+    }
+    if ($ci -eq 'failure') {
+        Set-Content $Failed $latest
+        Write-Log "$short 的 Windows CI 失败，不安装，继续运行旧版"
+        Send-Telegram "⚠️ TrendPilot 新版本 $short 在 Windows CI 上测试失败，没有安装，继续运行旧版。`n$subject"
+        exit 1
     }
 
     # ---------- 3. 构建（含全部测试） ----------
