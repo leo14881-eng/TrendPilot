@@ -1,14 +1,14 @@
 # V2 规则一年回测（docs/V2交易规则重设计.md 第 7 节）。手动触发，不影响线上服务。
-# 数据来自币安公开数据站 data.binance.vision（K 线压缩包，不走 API、不占限流），结果推到 backtest-results 分支。
+# 数据来自币安公开数据站 data.binance.vision（K 线压缩包，不走 API、不占限流），下载后缓存，结果推到 backtest-results 分支。
 name: Backtest
 
 on:
   workflow_dispatch:
     inputs:
       args:
-        description: 回测参数
+        description: 起始月 结束月 最后一天 开始交易 验证期开始 线程数（留空用默认）
         required: false
-        default: probe
+        default: ''
 
 permissions:
   contents: write
@@ -19,9 +19,42 @@ jobs:
     timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
-      - name: Probe data.binance.vision
-        if: inputs.args == 'probe'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: K 线缓存
+        uses: actions/cache@v4
+        with:
+          path: backtest-data
+          key: backtest-data-v1-${{ inputs.args }}-${{ github.run_id }}
+          restore-keys: |
+            backtest-data-v1-${{ inputs.args }}-
+            backtest-data-v1-
+      - name: 编译
         run: |
-          curl -sS -o /tmp/b.zip -w "%{http_code} %{size_download}\n" https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-10.zip
-          unzip -p /tmp/b.zip | head -3
-          curl -sS "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix=data/spot/monthly/klines/" | head -c 1500
+          sh ./mvnw -B -q -DskipTests package
+          sh ./mvnw -B -q dependency:build-classpath -Dmdep.outputFile=cp.txt
+      - name: 回测
+        run: java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.BacktestMain backtest-data backtest-out ${{ inputs.args }}
+      - name: 结果推到 backtest-results 分支
+        run: |
+          RUN=results/$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          if git fetch -q origin backtest-results; then
+            git worktree add -q /tmp/res FETCH_HEAD
+            cd /tmp/res && git checkout -q -B backtest-results
+          else
+            git worktree add -q --detach /tmp/res
+            cd /tmp/res && git checkout -q --orphan backtest-results && git rm -rqf .
+          fi
+          mkdir -p "$RUN" && cp "$GITHUB_WORKSPACE"/backtest-out/* "$RUN"/
+          git add -A && git commit -qm "回测结果 $RUN" && git push -q origin backtest-results
+          echo "结果目录：$RUN"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backtest-out
+          path: backtest-out/
