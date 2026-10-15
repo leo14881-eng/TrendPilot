@@ -70,6 +70,10 @@ class BacktestSmokeTest {
         edge.run(fromQ, data.size);
         assertThat(edge.count(EdgeStudy.ALL, 0)).isGreaterThan(0);
         assertThat(edge.count(EdgeStudy.ALL, 0)).isGreaterThanOrEqualTo(edge.count(0, 0) + edge.count(3, 0) + edge.count(4, 0));
+        FactorStudy factors = new FactorStudy(data, 30);
+        factors.run(fromQ, data.size);
+        assertThat(factors.periods("7 天涨幅（动量）", 0)).isGreaterThan(0);
+        assertThat(factors.markdown()).contains("因子检验").contains("只持有 BTC");
         Nav nav = new Nav(data, params.capital().hardCap());
         double[] curve = nav.curve(sims.get(0), fromQ / 4, data.size / 4);
         assertThat(curve[0]).isEqualTo(1.0);

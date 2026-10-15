@@ -96,7 +96,11 @@ public final class BacktestMain {
             // 只做信号检验（长历史时不跑买卖模拟，省内存和时间）
             EdgeStudy edge = new EdgeStudy(data, regimes, tape, params.review().minScore());
             edge.run(fromQ, size);
-            String md = "# 信号检验（" + period + "）\n\n" + edge.markdown();
+            FactorStudy f150 = new FactorStudy(data, 150);
+            f150.run(fromQ, size);
+            FactorStudy f30 = new FactorStudy(data, 30);
+            f30.run(fromQ, size);
+            String md = "# 信号检验（" + period + "）\n\n" + f150.markdown() + f30.markdown() + edge.markdown();
             Files.writeString(outDir.resolve("report.md"), md);
             System.out.println(md);
             return;

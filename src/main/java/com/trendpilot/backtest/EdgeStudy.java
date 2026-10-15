@@ -30,6 +30,8 @@ public final class EdgeStudy {
             "候选：72h 超跌（跌幅前 10%）", "候选：ETH",
             "回调 P2：7d 前 20% 且 24h 跌 ≥6%", "回调 P3：7d 前 30% 且 24h 跌 ≥3%", "回调 P4：P1 且山寨 24h 中位数 > −2%",
             "回调 P5：30d 前 20% 且 24h 跌 ≥3%", "回调 P6：7d 前 20% 且 72h 跌 ≥5%", "回调 P1 首次（同币 72h 内只算一次）",
+            "EARLY≥8 且 1h 比 BTC 强 <3%", "EARLY≥8 且 1h 比 BTC 强 3~5%", "EARLY≥8 且 1h 比 BTC 强 >5%",
+            "EARLY≥8 且同币 24h 内已出现过（重复信号）",
             "标的池全部（基准）"};
     static final int ALL = GROUPS.length - 1;
 
@@ -104,6 +106,8 @@ public final class EdgeStudy {
                         Integer prev = lastEarly.get(sym);
                         if (prev == null || q - prev > MarketData.DAY) groups.add(1);
                         if (altGood) groups.add(2);
+                        groups.add(s.rel1h() < 3 ? 20 : s.rel1h() <= 5 ? 21 : 22);
+                        if (prev != null && q - prev <= MarketData.DAY) groups.add(23);
                     } else if (s.score() >= 6) {
                         groups.add(3);
                     } else {
