@@ -134,6 +134,9 @@ public class CoinGeckoClient {
                 rateLimitedUntilMs = clock.getAsLong() + delay;
                 nextAllowedMs = rateLimitedUntilMs;
                 log.info("CoinGecko 限流（429，第 {} 次），{} 秒后重试", attempt, delay / 1000);
+            } catch (HttpClientErrorException e) {
+                // 其他 4xx（参数错、未授权、不存在）重试也不会成功
+                throw new ResearchDataException("CoinGecko 拒绝请求 " + e.getStatusCode().value() + "：" + e.getMessage(), e);
             } catch (RestClientException e) {
                 last = e;
                 long delay = Math.min(props.maxBackoffMs(), 10_000L << (attempt - 1));

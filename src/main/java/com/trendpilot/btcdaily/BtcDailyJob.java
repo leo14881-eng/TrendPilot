@@ -24,8 +24,13 @@ public class BtcDailyJob {
 
     private final org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease;
 
+    public static final String JOB = "BTC_DAILY";
+    private final com.trendpilot.job.JobRuns runs;
+
     public BtcDailyJob(BtcDailyService service, BtcDailyProperties props,
-                       org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease) {
+                       org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease,
+                       com.trendpilot.job.JobRuns runs) {
+        this.runs = runs;
         this.service = service;
         this.props = props;
         this.lease = lease;
@@ -34,10 +39,14 @@ public class BtcDailyJob {
     @Scheduled(cron = "40 1,16,31,46 * * * *", zone = "${trendpilot.zone}")
     public void scheduled() {
         if (!props.enabled()) return;
+        Instant started = Instant.now();
         try {
-            service.tick(Instant.now());
+            service.tick(started);
+            runs.record(JOB, null, started, Instant.now(), "SUCCESS", "N/A", null);
         } catch (Exception e) {
             log.warn("BTC 每日短线检查失败：{}", e.getMessage());
+            // 记失败：连续 3 次失败或 45 分钟没成功，每 5 分钟的自检会发 Telegram
+            runs.record(JOB, null, started, Instant.now(), "FAILED", "N/A", String.valueOf(e.getMessage()));
         }
     }
 

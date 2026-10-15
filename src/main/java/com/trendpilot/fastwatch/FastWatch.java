@@ -45,6 +45,8 @@ public class FastWatch {
     private final Map<String, Instant> lastConfirm = new ConcurrentHashMap<>();
     /** 两次 Monitor 之间看到的最高可退出净利（已启动保护的持仓）。 */
     private final Map<String, BigDecimal> peakSeen = new ConcurrentHashMap<>();
+    /** 每个持仓上一次观察到的净利和时间，用来确认最高净利是持续的。 */
+    private final Map<String, double[]> lastNet = new ConcurrentHashMap<>();
     private final com.trendpilot.job.MonitorJob monitor;
     static final long CONFIRM_GAP_SECONDS = 60;
 
@@ -73,11 +75,12 @@ public class FastWatch {
         lastKind.keySet().removeIf(k -> positions.stream().noneMatch(p -> key(p).equals(k)));
         lastConfirm.keySet().removeIf(k -> positions.stream().noneMatch(p -> key(p).equals(k)));
         peakSeen.keySet().removeIf(k -> positions.stream().noneMatch(p -> key(p).equals(k)));
+        lastNet.keySet().removeIf(k -> positions.stream().noneMatch(p -> key(p).equals(k)));
         Map<String, BigDecimal> hints = new java.util.HashMap<>();
         Set<String> confirm = new java.util.HashSet<>();
         for (Position p : positions) {
             StreamHub.Quote q = hub.quote(p.venue(), p.symbol(), MAX_QUOTE_AGE_SECONDS);
-            if (q == null || q.bid() <= 0 || q.ask() <= 0) continue; // 没有新鲜价格就不观察
+            if (q == null || q.bid() <= 0 || q.ask() <= 0 || q.bid() > q.ask()) continue; // 没有新鲜、合理的价格就不观察
             String kind = observe(p, q.bid(), q.ask(), now);
             if (kind.equals("WOULD_PROTECT_SELL") || kind.equals("GAPPED")) {
                 Instant last = lastConfirm.get(key(p));
@@ -105,7 +108,12 @@ public class FastWatch {
         String kind = "HOLD";
         // 底线按实时最高净利估算（与 Monitor 同一公式），避免两次检查之间的新高没被计入
         BigDecimal peak = p.peakNet().max(BigDecimal.valueOf(net));
-        if (p.protectArmed()) peakSeen.merge(key(p), peak, BigDecimal::max);
+        // 交给 Monitor 的最高净利只认"持续"的价格：取相隔至少 15 秒的两次观察中较低的一次，
+        // 单条异常报价（插针）不会把保护底线永久抬高
+        double[] prevObs = lastNet.put(key(p), new double[] {net, now.toEpochMilli()});
+        if (p.protectArmed() && prevObs != null && now.toEpochMilli() - (long) prevObs[1] >= 15_000) {
+            peakSeen.merge(key(p), BigDecimal.valueOf(Math.min(net, prevObs[0])).max(p.peakNet()), BigDecimal::max);
+        }
         peak = peak.max(peakSeen.getOrDefault(key(p), BigDecimal.ZERO));
         double floor = com.trendpilot.monitor.ExitPolicy.protectionFloor(p.costBasis(), peak, p.protectFloor(), e)
                 .doubleValue();

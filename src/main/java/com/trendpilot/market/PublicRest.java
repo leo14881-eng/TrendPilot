@@ -18,9 +18,12 @@ import com.fasterxml.jackson.databind.JsonNode;
  * 公开行情 REST 请求，每个交易所一个统一限速器：
  * <ul>
  * <li>全局最多 maxConcurrency 个并发，且相邻两次请求至少间隔 minGapMs（排队发出）；</li>
- * <li>429 / 418 / 交易所限流码：读 Retry-After（没有则 2s、4s、8s… 封顶 2 分钟），期间该交易所全部请求暂停；
- *     暂停超过 30 秒时本次直接失败（标记缺失），不让任务长时间卡住；</li>
- * <li>5xx 和网络错误有界重试；418（封禁）和其他 4xx（如 Bybit 地区限制 403）立即失败。</li>
+ * <li>429 / 交易所限流码：读 Retry-After（没有则 2s、4s、8s… 封顶 2 分钟），期间该交易所全部请求暂停；</li>
+ * <li>418（IP 被封禁，可能几分钟到几天）：按 Retry-After 全额暂停，不设上限（没有 Retry-After 按 10 分钟），
+ *     封禁期间继续请求只会延长封禁；</li>
+ * <li>暂停超过 30 秒时本次直接失败（标记缺失），不让任务长时间卡住；</li>
+ * <li>5xx 和网络错误有界重试；连续失败 5 次（交易所整体不可用）熔断 60 秒，期间请求直接失败，
+ *     不会对几百个标的逐个重试；其他 4xx（如 Bybit 地区限制 403）立即失败。</li>
  * </ul>
  */
 final class PublicRest {
@@ -30,12 +33,16 @@ final class PublicRest {
 
     private static final long MAX_PAUSE_MS = 120_000;
     private static final long MAX_WAIT_MS = 30_000;
+    private static final long BAN_DEFAULT_MS = 600_000;
+    static final int BREAKER_FAILURES = 5;
+    static final long BREAKER_MS = 60_000;
 
     private final String name;
     private final Semaphore permits;
     private final long minGapMs;
     private long nextSlotMs;
     private volatile long pausedUntilMs;
+    private int consecutiveFailures;
 
     PublicRest(String name, int maxConcurrency, long minGapMs) {
         this.name = name;
@@ -62,6 +69,24 @@ final class PublicRest {
         pausedUntilMs = Math.max(pausedUntilMs, System.currentTimeMillis() + Math.min(MAX_PAUSE_MS, ms));
     }
 
+    /** 不设上限的暂停（418 封禁）。 */
+    private void ban(long ms) {
+        pausedUntilMs = Math.max(pausedUntilMs, System.currentTimeMillis() + ms);
+    }
+
+    private synchronized void succeeded() {
+        consecutiveFailures = 0;
+    }
+
+    /** 网络错误或 5xx：连续失败太多次说明交易所整体不可用，熔断一段时间。 */
+    private synchronized void failed(String what) {
+        if (++consecutiveFailures >= BREAKER_FAILURES) {
+            consecutiveFailures = 0;
+            pause(BREAKER_MS);
+            log.warn("{} 连续失败 {} 次，熔断 {} 秒：{}", name, BREAKER_FAILURES, BREAKER_MS / 1000, what);
+        }
+    }
+
     private static long retryAfterMs(HttpStatusCodeException e, long fallback) {
         String v = e.getResponseHeaders() == null ? null : e.getResponseHeaders().getFirst("Retry-After");
         try {
@@ -83,7 +108,9 @@ final class PublicRest {
                 awaitSlot(what);
                 permits.acquire();
                 try {
-                    return check.apply(request.get().retrieve().body(JsonNode.class));
+                    JsonNode body = check.apply(request.get().retrieve().body(JsonNode.class));
+                    succeeded();
+                    return body;
                 } finally {
                     permits.release();
                 }
@@ -92,16 +119,24 @@ final class PublicRest {
                 throw new MarketDataException("请求被中断：" + name + " " + what, e);
             } catch (HttpStatusCodeException e) {
                 HttpStatusCode code = e.getStatusCode();
-                if (code.value() == 429 || code.value() == 418) {
+                if (code.value() == 418) {
+                    long ms = retryAfterMs(e, BAN_DEFAULT_MS);
+                    ban(ms);
+                    log.error("{} IP 被封禁（418），全部请求暂停 {} 秒：{}", name, ms / 1000, what);
+                    throw new MarketDataException(name + " IP 被封禁 418：" + what, e);
+                }
+                if (code.value() == 429) {
                     long ms = retryAfterMs(e, 2_000L << (attempt - 1));
                     pause(ms);
-                    log.warn("{} 限流 {}，全部请求暂停 {} 秒：{}", name, code.value(), Math.min(MAX_PAUSE_MS, ms) / 1000, what);
-                }
-                if (code.value() == 418 || (code.is4xxClientError() && code.value() != 429)) {
+                    log.warn("{} 限流 429，全部请求暂停 {} 秒：{}", name, Math.min(MAX_PAUSE_MS, ms) / 1000, what);
+                } else if (code.is4xxClientError()) {
                     throw new MarketDataException(name + " 拒绝请求 " + code.value() + "：" + what, e);
+                } else {
+                    failed(what);
                 }
                 last = e;
             } catch (ResourceAccessException e) {
+                failed(what);
                 last = e;
             } catch (RetryableException e) {
                 last = e;

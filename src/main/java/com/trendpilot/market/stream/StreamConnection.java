@@ -43,6 +43,7 @@ final class StreamConnection {
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
 
     private volatile WebSocket socket;
+    private CompletableFuture<?> sendTail = CompletableFuture.completedFuture(null);
     private volatile boolean closed;
     private volatile long connectedAtMs;
     private volatile long lastMessageMs;
@@ -65,13 +66,15 @@ final class StreamConnection {
     void connect() {
         reconnectPending.set(false);
         if (closed) return;
-        http.newWebSocketBuilder().buildAsync(uri, new Listener()).whenComplete((ws, err) -> {
+        // 握手卡住（TCP 连上但不回应）也要在 30 秒内放弃并按退避重连，不能一直停在"连接中"
+        http.newWebSocketBuilder().buildAsync(uri, new Listener()).orTimeout(30, TimeUnit.SECONDS).whenComplete((ws, err) -> {
             if (err != null) {
                 log.warn("{} WebSocket 连接失败：{}", name, err.getMessage());
                 scheduleReconnect();
                 return;
             }
             socket = ws;
+            sendTail = CompletableFuture.completedFuture(null);
             connectedAtMs = System.currentTimeMillis();
             lastMessageMs = connectedAtMs;
             log.info("{} WebSocket 已连接", name);
@@ -107,11 +110,20 @@ final class StreamConnection {
         return connectedAtMs;
     }
 
-    void send(String text) {
+    /**
+     * 发送（订阅、ping）：Java WebSocket 上一条没发完时再发会直接失败，所以一条接一条串起来发。
+     * 发送失败说明连接已坏或订阅可能丢了：断开重连，重连后会重新订阅全部。
+     */
+    synchronized void send(String text) {
         WebSocket ws = socket;
-        if (ws != null) {
-            ws.sendText(text, true);
-        }
+        if (ws == null) return;
+        sendTail = sendTail.thenCompose(x -> ws.sendText(text, true)).handle((r, err) -> {
+            if (err != null && ws == socket) {
+                log.warn("{} WebSocket 发送失败，重连并重新订阅：{}", name, err.getMessage());
+                scheduler.execute(this::reconnect);
+            }
+            return null;
+        });
     }
 
     /** 分批发送订阅消息，每批间隔 gapMs，避免超过交易所的消息频率限制。 */

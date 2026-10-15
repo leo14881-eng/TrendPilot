@@ -91,6 +91,8 @@ public class DiscoveryJob {
     private final com.trendpilot.observation.DepthVariantTracker depthVariant;
 
     private final org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease;
+    /** 锁外抓的盘口进入审核时最多这么旧。 */
+    static final java.time.Duration MAX_BOOK_AGE = java.time.Duration.ofSeconds(90);
 
     /** 不允许新开仓（保留其他风险结论）。 */
     static RiskState blockNew(RiskState r, String reason) {
@@ -281,7 +283,8 @@ public class DiscoveryJob {
         List<Candidate> candidates = bySymbol.values().stream()
                 .filter(c -> (c.signal().early() && c.signal().score() >= params.review().minScore()) || held.contains(c.signal().symbol()))
                 .toList();
-        Map<String, OrderBook> books = fetchBooks(candidates);
+        Map<String, OrderBook> fetchedBooks = fetchBooks(candidates);
+        long booksFetchedNanos = System.nanoTime();
 
         // 研究：轮转 + 前 N 个 EARLY + 前 N 个价格异动；所有 EARLY 和候选都要有身份结论（只读本地资料）
         List<ResearchService.Target> universeTargets = pools.stream().flatMap(p -> p.universe().stream()
@@ -308,6 +311,10 @@ public class DiscoveryJob {
         List<SignalTracker.EntryInput> trackEntries = new ArrayList<>();
         Map<String, SignalTracker.SignalInput> trackSignals = new LinkedHashMap<>();
         lock.run(() -> {
+            // 盘口是锁外抓的：研究资料或等锁耗时太久，盘口已经不代表现在能成交的价格，本轮不用它买入（记为缺盘口）
+            Map<String, OrderBook> books = System.nanoTime() - booksFetchedNanos > MAX_BOOK_AGE.toNanos()
+                    ? Map.of() : fetchedBooks;
+            if (books.isEmpty() && !fetchedBooks.isEmpty()) log.warn("Discovery 盘口已超过 {} 秒，本轮不买入", MAX_BOOK_AGE.toSeconds());
             List<ReviewResult> results = new ArrayList<>();
             List<ReviewResult> relaxed = new ArrayList<>();
             Map<String, Venue> venueOf = new LinkedHashMap<>();

@@ -53,11 +53,20 @@ public class HealthJob {
     static final int API_LIMITED_PER_HOUR = 3;
     static final int API_ERRORS_PER_HOUR = 5;
 
+    private final com.trendpilot.market.stream.StreamHub hub;
+    private final boolean streamEnabled;
+    private final boolean btcEnabled;
+
     public HealthJob(JobRuns runs, Notifier notifier, ShadowBook book, ObservationBook v1, AppState state,
                      @Value("${trendpilot.zone}") String zone, TrackingReport tracking, JdbcClient jdbc, ApiStats api,
                      @Value("${trendpilot.data-dir:./data}") String dataDir,
-                     com.trendpilot.portfolio.DepthVariantBook depthVariant) {
+                     com.trendpilot.portfolio.DepthVariantBook depthVariant,
+                     com.trendpilot.market.stream.StreamHub hub, com.trendpilot.market.stream.StreamProperties streamProps,
+                     com.trendpilot.btcdaily.BtcDailyProperties btcProps) {
         this.depthVariant = depthVariant;
+        this.hub = hub;
+        this.streamEnabled = streamProps.enabled();
+        this.btcEnabled = btcProps.enabled();
         this.tracking = tracking;
         this.jdbc = jdbc;
         this.api = api;
@@ -74,7 +83,8 @@ public class HealthJob {
     public record Problem(String key, String text) {
     }
 
-    @Scheduled(cron = "0 7,37 * * * *", zone = "${trendpilot.zone}")
+    /** 每 5 分钟检查一次（同一组异常只提醒一次，恢复时再提醒），发现问题最多晚 5 分钟。 */
+    @Scheduled(cron = "30 */5 * * * *", zone = "${trendpilot.zone}")
     public void check() {
         check(Instant.now().truncatedTo(ChronoUnit.SECONDS));
     }
@@ -99,7 +109,8 @@ public class HealthJob {
         List<Problem> out = new ArrayList<>();
         stale(out, MonitorJob.JOB, startup, now, Duration.ofMinutes(15));
         stale(out, DiscoveryJob.JOB, startup, now, Duration.ofMinutes(90));
-        for (String job : List.of(MonitorJob.JOB, DiscoveryJob.JOB)) {
+        if (btcEnabled) stale(out, com.trendpilot.btcdaily.BtcDailyJob.JOB, startup, now, Duration.ofMinutes(45));
+        for (String job : List.of(MonitorJob.JOB, DiscoveryJob.JOB, com.trendpilot.btcdaily.BtcDailyJob.JOB)) {
             List<String> recent = jdbc.sql("""
                     SELECT program_status FROM job_run WHERE job = :j AND started_at <= :now
                     ORDER BY started_at DESC LIMIT 3
@@ -112,6 +123,16 @@ public class HealthJob {
             long minutes = Duration.between(e.getValue(), now).toMinutes();
             if (minutes > KLINE_STALE.toMinutes()) {
                 out.add(new Problem("kline:" + e.getKey(), e.getKey() + " K 线 " + minutes + " 分钟没有更新（实时行情可能断了）"));
+            }
+        }
+        // FastWatch 靠 WebSocket 最优价：持仓超过 3 分钟没有新报价，快速保护就失效了
+        if (streamEnabled && startup != null && Duration.between(startup, now).toMinutes() >= 5) {
+            List<String> noQuote = book.positions().stream()
+                    .filter(p -> hub.quote(p.venue(), p.symbol(), 180) == null)
+                    .map(Position::symbol).sorted().toList();
+            if (!noQuote.isEmpty()) {
+                out.add(new Problem("quotes:" + String.join(",", noQuote),
+                        String.join("、", noQuote) + " 超过 3 分钟没有实时报价（FastWatch 快速保护暂时失效，5 分钟一次的持仓检查照常）"));
             }
         }
         api.since(Duration.ofHours(1), now).forEach((host, c) -> {

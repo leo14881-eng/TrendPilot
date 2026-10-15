@@ -152,8 +152,18 @@ public class ResearchService {
         saveIdentity(venue, tickers, now);
     }
 
+    /**
+     * 替换某个分类的币列表。新列表比已存的少一半以上（分页没取全、接口异常）时拒绝替换并保留旧的，
+     * 否则稳定币、代币化股票会突然不再被排除。
+     */
     @Transactional
     public void saveCategory(String category, List<String> coinIds, Instant now) {
+        int stored = jdbc.sql("SELECT COUNT(*) FROM coin_category WHERE category = :c").param("c", category)
+                .query(Integer.class).single();
+        if (stored >= 10 && coinIds.size() < stored * 0.5) {
+            throw new ResearchDataException("CoinGecko 分类 " + category + " 从 " + stored + " 个骤降到 " + coinIds.size()
+                    + " 个，视为异常数据，保留旧列表");
+        }
         jdbc.sql("DELETE FROM coin_category WHERE category = :c").param("c", category).update();
         for (String id : coinIds) {
             jdbc.sql("INSERT OR IGNORE INTO coin_category(coin_id, category, updated_at) VALUES (:id, :c, :t)")
