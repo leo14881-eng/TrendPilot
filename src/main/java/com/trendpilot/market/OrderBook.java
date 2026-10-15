@@ -26,6 +26,12 @@ public record OrderBook(String symbol, List<Level> bids, List<Level> asks, Insta
         return !bids.isEmpty() && !asks.isEmpty();
     }
 
+    /** 可以用来做判断：两边都有挂单，价格和数量为正，买一不高于卖一（不是交叉盘口）。 */
+    public boolean sane() {
+        return usable() && bestBid().signum() > 0 && bestAsk().compareTo(bestBid()) >= 0
+                && bids.getFirst().qty().signum() > 0 && asks.getFirst().qty().signum() > 0;
+    }
+
     public BigDecimal bestBid() {
         return bids.getFirst().price();
     }

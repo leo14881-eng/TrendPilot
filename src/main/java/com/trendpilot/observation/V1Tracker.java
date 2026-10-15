@@ -22,6 +22,7 @@ import com.trendpilot.market.ExecutionSimulator.Fill;
 import com.trendpilot.market.Markets;
 import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.SymbolBars;
+import com.trendpilot.market.SymbolInfo;
 import com.trendpilot.market.Ticker24h;
 import com.trendpilot.market.Venue;
 import com.trendpilot.market.VenueMarket;
@@ -112,38 +113,61 @@ public class V1Tracker {
         return book.positions();
     }
 
-    /** Monitor 每 5 分钟调用：按退出顺序管理全部 V1 观察。@return 本轮退出的标的 */
-    public List<String> manage(String gen, Instant now) {
-        List<Position> positions = book.positions();
-        if (positions.isEmpty()) return List.of();
-        Map<Venue, List<Position>> byVenue = positions.stream().collect(Collectors.groupingBy(Position::venue,
+    /** 一个交易所本轮的行情输入（锁外抓取）。 */
+    public record VenueInputs(Map<String, Ticker24h> prices, BarsLoader.Result bars, Map<String, SymbolInfo> infos) {
+    }
+
+    /** 抓取管理 V1 持仓需要的行情（联网，在组合锁外调用）。某个交易所失败只跳过它。 */
+    public Map<Venue, VenueInputs> fetch(Instant now) {
+        Map<Venue, VenueInputs> out = new EnumMap<>(Venue.class);
+        Map<Venue, List<Position>> byVenue = book.positions().stream().collect(Collectors.groupingBy(Position::venue,
                 () -> new EnumMap<>(Venue.class), Collectors.toList()));
-        List<String> exits = new ArrayList<>();
-        List<Map.Entry<Double, String>> lines = new ArrayList<>();
-        BigDecimal total = BigDecimal.ZERO;
         for (var e : byVenue.entrySet()) {
             VenueMarket m = markets.get(e.getKey());
             if (m == null) continue;
-            Map<String, Ticker24h> prices;
             try {
-                prices = m.tickers().tickers24h().stream()
+                Map<String, Ticker24h> prices = m.tickers().tickers24h().stream()
                         .collect(Collectors.toMap(Ticker24h::symbol, Function.identity(), (a, b) -> a));
+                List<String> names = new ArrayList<>(e.getValue().stream().map(Position::symbol).toList());
+                names.add(UniverseFilter.BTC);
+                BarsLoader.Result bars = m.bars().load(names, now);
+                Map<String, SymbolInfo> infos = new java.util.HashMap<>();
+                for (Position pos : e.getValue()) {
+                    SymbolInfo info = m.directory().get(pos.symbol());
+                    if (info != null) infos.put(pos.symbol(), info);
+                }
+                out.put(e.getKey(), new VenueInputs(prices, bars, infos));
             } catch (RuntimeException ex) {
                 log.warn("V1 本轮跳过 {}：行情获取失败 {}", e.getKey(), ex.getMessage()); // 不用旧价格做决定
-                continue;
             }
-            List<String> names = new ArrayList<>(e.getValue().stream().map(Position::symbol).toList());
-            names.add(UniverseFilter.BTC);
-            BarsLoader.Result bars = m.bars().load(names, now);
-            SymbolBars btc = bars.bars().get(UniverseFilter.BTC);
-            for (Position pos : e.getValue()) {
-                Ticker24h t = prices.get(pos.symbol());
-                if (t == null || t.lastPrice() <= 0) continue; // 价格缺失：本轮不判断
-                SymbolBars b = bars.bars().get(pos.symbol());
+        }
+        return out;
+    }
+
+    /** Monitor 每 5 分钟调用：按退出顺序管理全部 V1 观察。@return 本轮退出的标的 */
+    public List<String> manage(String gen, Instant now) {
+        return manage(gen, now, fetch(now));
+    }
+
+    /** 只用已抓好的输入做判断和记账（不联网，在组合锁内调用）。 */
+    public List<String> manage(String gen, Instant now, Map<Venue, VenueInputs> inputs) {
+        List<Position> positions = book.positions();
+        if (positions.isEmpty()) return List.of();
+        List<String> exits = new ArrayList<>();
+        List<Map.Entry<Double, String>> lines = new ArrayList<>();
+        BigDecimal total = BigDecimal.ZERO;
+        for (Position pos : positions) {
+            VenueInputs in = inputs.get(pos.venue());
+            if (in == null) continue;
+            try {
+                Ticker24h t = in.prices().get(pos.symbol());
+                if (t == null || !(t.lastPrice() > 0)) continue; // 价格缺失：本轮不判断
+                SymbolBars btc = in.bars().bars().get(UniverseFilter.BTC);
+                SymbolBars b = in.bars().bars().get(pos.symbol());
                 EarlySignal sig = (b == null || btc == null) ? null : signals.compute(b, btc);
                 long hour = sig == null ? -1 : b.hourly().getLast().openTime();
                 boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
-                ExitDecision d = exitPolicy.evaluate(pos, m.directory().get(pos.symbol()),
+                ExitDecision d = exitPolicy.evaluate(pos, in.infos().get(pos.symbol()),
                         OrderBook.reference(pos.symbol(), t.lastPrice(), now), sig, fresh);
                 if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);
                 for (String note : d.notes()) {
@@ -159,6 +183,8 @@ public class V1Tracker {
                 } else {
                     book.update(d.updated(), d.netPnl(), now);
                 }
+            } catch (RuntimeException ex) {
+                log.warn("V1 {} 本轮判断出错，跳过：{}", pos.symbol(), ex.toString()); // 一个持仓出错不影响其他
             }
         }
         if (!lines.isEmpty()) {

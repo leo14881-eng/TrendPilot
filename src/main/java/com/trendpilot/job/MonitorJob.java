@@ -44,6 +44,8 @@ public class MonitorJob {
 
     public static final String JOB = "MONITOR";
     public static final String FAST_JOB = "MONITOR_FAST";
+    /** 锁外抓的盘口在锁内使用时最多这么旧。 */
+    static final java.time.Duration MAX_BOOK_AGE = java.time.Duration.ofSeconds(90);
 
     private static final Logger log = LoggerFactory.getLogger(MonitorJob.class);
 
@@ -79,7 +81,7 @@ public class MonitorJob {
     public record Report(String generation, int positions, List<String> exits, String dataStatus) {
     }
 
-    private record Observed(SymbolInfo info, OrderBook book) {
+    private record Observed(SymbolInfo info, OrderBook book, long fetchedNanos) {
     }
 
     @Scheduled(cron = "0 */5 * * * *", zone = "${trendpilot.zone}")
@@ -92,17 +94,24 @@ public class MonitorJob {
         try {
             Report r = monitor(gen, now);
             // V1 观察账本与 V2 分开：V2 本轮因缺数据停止时，V1 仍用自己的参考价判断
+            // 行情都在锁外抓好，锁内只判断和记账：慢接口不会挡住 Discovery 和 FastWatch
             List<String> v1Exits = new ArrayList<>();
-            lock.run(() -> v1Exits.addAll(v1.manage(gen, now)));
+            try {
+                var v1In = v1.fetch(now);
+                lock.run(() -> v1Exits.addAll(v1.manage(gen, now, v1In)));
+                v1.recordEquity(now);
+            } catch (RuntimeException e) {
+                log.warn("V1 对照本轮失败：{}", e.getMessage()); // 失败不影响 V2
+            }
             // 深度放宽对照账本：失败不影响 V2 / V1
             try {
-                lock.run(() -> depthVariant.manage(gen, now));
+                var dIn = depthVariant.fetch(now);
+                lock.run(() -> depthVariant.manage(gen, now, dIn));
                 depthVariant.book().recordEquity(now);
             } catch (RuntimeException e) {
                 log.warn("V2D15 对照本轮失败：{}", e.getMessage());
             }
             book.recordEquity(now);
-            v1.recordEquity(now);
             runs.record(JOB, gen, now, Instant.now(), "SUCCESS", r.dataStatus(),
                     "positions=" + r.positions() + " exits=" + r.exits() + " v1Exits=" + v1Exits);
             return r;
@@ -188,8 +197,8 @@ public class MonitorJob {
                 } catch (Exception ex) {
                     ob = null;
                 }
-                if (ob != null && ob.usable()) {
-                    observed.put(p.symbol(), new Observed(info, ob)); // 下架但还有盘口：硬失效按盘口卖出
+                if (ob != null && ob.sane()) {
+                    observed.put(p.symbol(), new Observed(info, ob, System.nanoTime())); // 下架但还有盘口：硬失效按盘口卖出
                 } else if (info == null || !info.trading()) {
                     delisted.add(p.symbol());
                     markDelistedUnpriced(gen, now, p);
@@ -208,9 +217,14 @@ public class MonitorJob {
         // 缺失时该持仓本轮不算有效观察
         Map<Venue, BarsLoader.Result> barsBy = new EnumMap<>(Venue.class);
         for (Venue v : snapshot.stream().map(Position::venue).distinct().toList()) {
+            if (markets.get(v) == null) continue; // 交易所已停用：上面已记为缺数据
             List<String> names = new ArrayList<>(snapshot.stream().filter(p -> p.venue() == v).map(Position::symbol).toList());
             names.add(UniverseFilter.BTC);
-            barsBy.put(v, markets.get(v).bars().load(names, now));
+            try {
+                barsBy.put(v, markets.get(v).bars().load(names, now));
+            } catch (RuntimeException e) {
+                log.warn("Monitor {} K 线获取失败，本轮该交易所持仓没有信号指标：{}", v, e.getMessage());
+            }
         }
 
         List<String> exits = new ArrayList<>();
@@ -224,6 +238,12 @@ public class MonitorJob {
                 if (o == null) {
                     continue; // 抓取之后新开的仓，下轮再看
                 }
+                // 盘口是锁外抓的；等锁太久（被别的任务占着）这份盘口已经旧了，不用它做卖出判断
+                if (System.nanoTime() - o.fetchedNanos() > MAX_BOOK_AGE.toNanos()) {
+                    log.warn("Monitor {} 盘口已超过 {} 秒，本轮不判断", pos.symbol(), MAX_BOOK_AGE.toSeconds());
+                    continue;
+                }
+                try {
                 BarsLoader.Result bars = barsBy.get(pos.venue());
                 SymbolBars b = bars == null ? null : bars.bars().get(pos.symbol());
                 SymbolBars btc = bars == null ? null : bars.bars().get(UniverseFilter.BTC);
@@ -233,6 +253,12 @@ public class MonitorJob {
                 ExitDecision d = exitPolicy.evaluate(pos, o.info(), o.book(), sig, fresh);
                 apply(gen, now, pos, d, exits, sig == null ? Double.NaN : sig.atr1hPct());
                 if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);
+                } catch (RuntimeException e) {
+                    // 一个持仓的数据异常不能让其他持仓失去管理
+                    log.error("Monitor {} 判断出错，跳过：{}", pos.symbol(), e.toString(), e);
+                    notifier.send("monitor-error:" + pos.symbol() + ":" + now.truncatedTo(ChronoUnit.HOURS),
+                            "⚠️ Monitor 判断 " + pos.symbol() + " 时出错（" + e.getClass().getSimpleName() + "），本轮跳过，其他持仓照常管理");
+                }
             }
         });
         boolean complete = barsBy.values().stream().allMatch(BarsLoader.Result::complete);
