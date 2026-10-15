@@ -55,9 +55,18 @@ public final class B0Sim extends Sim {
     private final Map<String, Integer> lastExitQ = new HashMap<>();
     private final Map<String, double[]> earlySeen = new HashMap<>(); // firstPrice, firstQ, lastQ
     private final List<Integer> lossExits = new ArrayList<>();
+    /** 冻结修复（设计文档 7.7 第 2 条）：深度浮亏只在第一次跌破线后的窗口内计一次，之后不再计入。 */
+    private final boolean freezeFix;
+    private final Map<String, Integer> underwaterSince = new HashMap<>();
 
     public B0Sim(String name, MarketData data, Regimes regimes, SignalTape tape, StrategyParams params, int fromQ, int toQ) {
+        this(name, data, regimes, tape, params, fromQ, toQ, false);
+    }
+
+    public B0Sim(String name, MarketData data, Regimes regimes, SignalTape tape, StrategyParams params, int fromQ, int toQ,
+                 boolean freezeFix) {
         super(name, data, regimes, tape, params, fromQ, toQ);
+        this.freezeFix = freezeFix;
         this.reviewer = new CapitalReviewer(params);
         this.allocator = new CapitalAllocator(params);
         this.exitPolicy = new ExitPolicy(params);
@@ -129,6 +138,7 @@ public final class B0Sim extends Sim {
 
     private void close(Position pos, int q, Fill fill, double pnl, String reason) {
         positions.remove(pos.symbol());
+        underwaterSince.remove(pos.symbol());
         markNet.remove(pos.symbol());
         lastObsHour.remove(pos.symbol());
         realized += pnl;
@@ -172,9 +182,23 @@ public final class B0Sim extends Sim {
 
         // 系统风险：亏损冻结 = 24h 内亏损退出 + 深度浮亏持仓；冲击、山寨崩盘熔断、恢复期都用线上的类
         lossExits.removeIf(x -> x < q - MarketData.DAY);
-        int underwater = (int) positions.values().stream()
-                .filter(p -> markNet.getOrDefault(p.symbol(), 0.0) <= -p.costBasis().doubleValue() * params.risk().underwaterLossPct() / 100)
-                .count();
+        int underwater;
+        if (freezeFix) {
+            for (Position p : positions.values()) {
+                if (markNet.getOrDefault(p.symbol(), 0.0) <= -p.costBasis().doubleValue() * params.risk().underwaterLossPct() / 100) {
+                    underwaterSince.putIfAbsent(p.symbol(), q);
+                }
+            }
+            int window = params.risk().lossWindowHours() * 4;
+            underwater = (int) positions.keySet().stream().filter(sym -> {
+                Integer since = underwaterSince.get(sym);
+                return since != null && q - since < window;
+            }).count();
+        } else {
+            underwater = (int) positions.values().stream()
+                    .filter(p -> markNet.getOrDefault(p.symbol(), 0.0) <= -p.costBasis().doubleValue() * params.risk().underwaterLossPct() / 100)
+                    .count();
+        }
         double median1h = data.context(q + 1) == null ? Double.NaN : data.context(q + 1).alt1h();
         RiskRecovery.AltCrash crash = recovery.altCrash(median1h, now);
         MarketEvidence ev = new MarketEvidence(LIQUIDITY_SPREAD_BPS, 0, recovery.confirmedShocks(now), crash.active());

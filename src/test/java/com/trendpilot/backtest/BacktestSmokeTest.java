@@ -53,6 +53,8 @@ class BacktestSmokeTest {
         SignalTape tape = new SignalTape(data, new EarlySignalCalculator(params));
         int fromQ = 10 * 96;
         List<Sim> sims = List.of(new B0Sim("B0", data, regimes, tape, params, fromQ, data.size),
+                new B0Sim("B0-冻结修复", data, regimes, tape, params, fromQ, data.size, true),
+                new NSim(V2nParams.base().with("N-论点失效直接卖", b -> b.set("decayMode", "SELL")), data, regimes, tape, params, fromQ, data.size),
                 new NSim(V2nParams.base(), data, regimes, tape, params, fromQ, data.size),
                 new NSim(V2nParams.base().with("N-无山寨门", b -> b.set("altGate", false).set("trendGate", false)),
                         data, regimes, tape, params, fromQ, data.size));
@@ -66,8 +68,8 @@ class BacktestSmokeTest {
         assertThat(sims.get(0).trades()).isNotEmpty();
         EdgeStudy edge = new EdgeStudy(data, regimes, tape, params.review().minScore());
         edge.run(fromQ, data.size);
-        assertThat(edge.count(4, 0)).isGreaterThan(0);
-        assertThat(edge.count(4, 0)).isGreaterThanOrEqualTo(edge.count(0, 0) + edge.count(2, 0) + edge.count(3, 0));
+        assertThat(edge.count(EdgeStudy.ALL, 0)).isGreaterThan(0);
+        assertThat(edge.count(EdgeStudy.ALL, 0)).isGreaterThanOrEqualTo(edge.count(0, 0) + edge.count(3, 0) + edge.count(4, 0));
         Nav nav = new Nav(data, params.capital().hardCap());
         double[] curve = nav.curve(sims.get(0), fromQ / 4, data.size / 4);
         assertThat(curve[0]).isEqualTo(1.0);

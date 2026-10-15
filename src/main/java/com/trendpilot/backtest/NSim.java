@@ -178,9 +178,28 @@ public final class NSim extends Sim {
         x.lastObsHour = hour;
         int weak = (sig.rel1h() < 0 ? 1 : 0) + (sig.rel4h() < 0 ? 1 : 0) + (sig.accel() < 0 ? 1 : 0) + (sig.ret15m() < 0 ? 1 : 0);
         x.weakStreak = weak >= params.exit().decayMinWeak() ? x.weakStreak + 1 : 0;
-        if (x.weakStreak >= params.exit().decayConsecutive() && (netC > 0 || p.decayLossExit())) {
-            sellAll(x, q, c, imp, "THESIS_DECAY");
-            return true;
+        if (x.weakStreak >= params.exit().decayConsecutive()) {
+            switch (p.decayMode()) {
+                case "SELL" -> {
+                    sellAll(x, q, c, imp, "THESIS_DECAY");
+                    return true;
+                }
+                case "PROFIT_ONLY" -> {
+                    if (netC > 0) {
+                        sellAll(x, q, c, imp, "THESIS_DECAY");
+                        return true;
+                    }
+                }
+                case "RAISE" -> {
+                    if (netC > 0) {
+                        sellAll(x, q, c, imp, "THESIS_DECAY");
+                        return true;
+                    }
+                    if (!x.breakeven) x.stop = Math.max(x.stop, V2nRules.priceForNet(x.qty, x.cost, imp, fee, -0.5 * x.risk));
+                }
+                default -> {
+                }
+            }
         }
         return false;
     }

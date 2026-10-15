@@ -189,7 +189,7 @@ public final class Report {
         line("SELECTED=" + best);
         line("PASSED=" + fails.isEmpty());
 
-        List<String> main = new ArrayList<>(List.of("B0", "B0-旧利润保护", "N"));
+        List<String> main = new ArrayList<>(List.of("B0", "B0-旧利润保护", "B0-冻结修复", "N"));
         if (!main.contains(best)) main.add(best);
         line("");
         line("## 总体对比");
@@ -212,7 +212,7 @@ public final class Report {
         line(edge);
         if (data != null) {
             line("## 卖出后的走势（7.6 第 1、2 项：论点失效该不该卖、利润保护截断了多少）");
-            afterExit(List.of("B0", "B0-旧利润保护", "N", "N-现行利润保护", "N-论点失效亏损不卖"));
+            afterExit(List.of("B0", "B0-旧利润保护", "B0-冻结修复", "N", "N-论点失效直接卖", "N-现行利润保护", "N-论点失效亏损不卖"));
         }
         line("");
         line("## 六种行情（验证期）");

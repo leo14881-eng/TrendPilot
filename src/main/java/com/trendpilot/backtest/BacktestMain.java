@@ -110,6 +110,12 @@ public final class BacktestMain {
                 System.out.println("完成 B0-旧利润保护：" + s.trades().size() + " 笔");
                 return new Report.Run(s, null, "B0");
             }));
+            fs.add(pool.submit(() -> {
+                Sim s = new B0Sim("B0-冻结修复", data, regimes, tape, params, fromQ, size, true);
+                s.run();
+                System.out.println("完成 B0-冻结修复：" + s.trades().size() + " 笔");
+                return new Report.Run(s, null, "B0");
+            }));
             for (Map.Entry<V2nParams, String> e : ex.all().entrySet()) {
                 fs.add(pool.submit(() -> {
                     Sim s = new NSim(e.getKey(), data, regimes, tape, params, fromQ, size);
@@ -197,7 +203,9 @@ public final class BacktestMain {
             e.put(base.with("N-无趋势门", b -> b.set("trendGate", false)), "ablation");
             e.put(base.with("N-无追高门", b -> b.set("extensionGate", false)), "ablation");
             e.put(base.with("N-无时间止损", b -> b.set("timeStopHours", 0)), "ablation");
-            e.put(base.with("N-论点失效亏损不卖", b -> b.set("decayLossExit", false)), "ablation");
+            e.put(base.with("N-论点失效直接卖", b -> b.set("decayMode", "SELL")), "ablation");
+            e.put(base.with("N-论点失效亏损不卖", b -> b.set("decayMode", "PROFIT_ONLY")), "ablation");
+            e.put(base.with("N-论点失效不处理", b -> b.set("decayMode", "NONE")), "ablation");
             e.put(base.with("N-跌了才加", b -> b.set("addMode", "DROPS")), "ablation");
             e.put(base.with("N-不加仓", b -> b.set("addMode", "NONE")), "ablation");
             e.put(base.with("N-现行利润保护", b -> b.set("exitMode", "B0")), "ablation");

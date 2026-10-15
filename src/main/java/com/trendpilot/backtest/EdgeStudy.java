@@ -19,15 +19,21 @@ public final class EdgeStudy {
     static final int[] HOURS = {1, 4, 24, 72};
     static final double FEE = 0.001;
 
-    /** 分组：评分 ≥8 的 EARLY、其中 24h 内首次出现、评分 6~8、评分 <6 的 EARLY、标的池全部（基准）。 */
-    static final String[] GROUPS = {"EARLY 评分≥8", "其中 24h 内首次", "EARLY 评分 6~8", "EARLY 评分<6", "标的池全部（基准）"};
+    /**
+     * 分组：现行 EARLY 按评分分档，另加几种候选买入信号（7.7 第 3 条：没有优势就改买入），最后一组是标的池全部。
+     * 排名都在同一时刻的标的池里算，只用当时已收盘的数据。
+     */
+    static final String[] GROUPS = {"EARLY 评分≥8", "其中 24h 内首次", "EARLY 评分≥8 且山寨大盘向好", "EARLY 评分 6~8", "EARLY 评分<6",
+            "候选：7 天强势中回调（7d 前 20% 且 24h 跌 ≥3%）", "候选：7 天强势（前 10%）", "候选：24h 涨幅前 10%",
+            "候选：24h 超跌（跌幅前 10%）", "标的池全部（基准）"};
+    static final int ALL = GROUPS.length - 1;
 
     private final MarketData data;
     private final Regimes regimes;
     private final SignalTape tape;
     private final double minScore;
 
-    /** [组][周期] → 每个样本：净收益%、超额%、所在天、行情。 */
+    /** [组][周期] → 每个样本：净收益%、超额%（相对同一时刻同成交额档的平均，相当于随机挑同档的币）、所在天、行情。 */
     private final List<double[]>[][] samples;
 
     @SuppressWarnings("unchecked")
@@ -44,47 +50,86 @@ public final class EdgeStudy {
         Map<String, Integer> lastEarly = new LinkedHashMap<>();
         for (int q = fromQ + Math.floorMod(-fromQ, 4); q < toQ; q += 4) {
             List<String> universe = data.universe(q);
+            int n = universe.size();
             int regime = regimes.at(q);
             int day = q / MarketData.DAY;
-            // 每个周期先算整个标的池的远期收益，取中位数作超额基准
-            double[][] fwd = new double[universe.size()][HOURS.length];
-            for (int i = 0; i < universe.size(); i++) {
-                for (int h = 0; h < HOURS.length; h++) fwd[i][h] = forward(universe.get(i), q, HOURS[h] * 4, toQ);
-            }
-            double[] median = new double[HOURS.length];
-            for (int h = 0; h < HOURS.length; h++) {
-                final int hh = h;
-                median[h] = median(Arrays.stream(fwd).mapToDouble(r -> r[hh]).filter(x -> !Double.isNaN(x)).toArray());
-            }
-            for (int i = 0; i < universe.size(); i++) {
+            MarketData.Context ctx = data.context(q + 1);
+            boolean altGood = ctx != null && ctx.alt24h() > 0 && ctx.alt4h() > 0;
+            double[][] fwd = new double[n][HOURS.length];
+            double[] r24 = new double[n], r7d = new double[n], vol = new double[n];
+            for (int i = 0; i < n; i++) {
                 String sym = universe.get(i);
-                EarlySignal s = tape.at(sym, q);
-                if (s == null) continue;
+                for (int h = 0; h < HOURS.length; h++) fwd[i][h] = forward(sym, q, HOURS[h] * 4, toQ);
+                r24[i] = back(sym, q, MarketData.DAY);
+                r7d[i] = back(sym, q, 7 * MarketData.DAY);
                 var t = data.ticker(sym, q);
-                if (t == null) continue;
-                double cost = 2 * (FEE + Costs.impact(t.quoteVolume(), 1000)) * 100;
+                vol[i] = t == null ? Double.NaN : t.quoteVolume();
+            }
+            // 同成交额档（冲击分档）的平均远期收益：随机挑一个同档币的期望
+            double[][] tierSum = new double[4][HOURS.length];
+            int[][] tierN = new int[4][HOURS.length];
+            for (int i = 0; i < n; i++) {
+                if (Double.isNaN(vol[i])) continue;
+                int tier = tier(vol[i]);
+                for (int h = 0; h < HOURS.length; h++) {
+                    if (Double.isNaN(fwd[i][h])) continue;
+                    tierSum[tier][h] += fwd[i][h];
+                    tierN[tier][h]++;
+                }
+            }
+            double r7Top20 = quantile(r7d, 0.8), r7Top10 = quantile(r7d, 0.9);
+            double r24Top10 = quantile(r24, 0.9), r24Bottom10 = quantile(r24, 0.1);
+            for (int i = 0; i < n; i++) {
+                String sym = universe.get(i);
+                if (Double.isNaN(vol[i])) continue;
+                EarlySignal s = tape.at(sym, q);
+                double cost = 2 * (FEE + Costs.impact(vol[i], 1000)) * 100;
                 List<Integer> groups = new ArrayList<>();
-                groups.add(4);
-                if (s.early()) {
+                groups.add(ALL);
+                if (s != null && s.early()) {
                     if (s.score() >= minScore) {
                         groups.add(0);
                         Integer prev = lastEarly.get(sym);
                         if (prev == null || q - prev > MarketData.DAY) groups.add(1);
+                        if (altGood) groups.add(2);
                     } else if (s.score() >= 6) {
-                        groups.add(2);
-                    } else {
                         groups.add(3);
+                    } else {
+                        groups.add(4);
                     }
                     lastEarly.put(sym, q);
                 }
+                if (!Double.isNaN(r7d[i]) && r7d[i] >= r7Top20 && r24[i] <= -3) groups.add(5);
+                if (!Double.isNaN(r7d[i]) && r7d[i] >= r7Top10) groups.add(6);
+                if (!Double.isNaN(r24[i]) && r24[i] >= r24Top10) groups.add(7);
+                if (!Double.isNaN(r24[i]) && r24[i] <= r24Bottom10) groups.add(8);
+                int tier = tier(vol[i]);
                 for (int h = 0; h < HOURS.length; h++) {
-                    if (Double.isNaN(fwd[i][h])) continue;
+                    if (Double.isNaN(fwd[i][h]) || tierN[tier][h] == 0) continue;
                     double net = fwd[i][h] - cost;
-                    double excess = fwd[i][h] - median[h];
+                    double excess = fwd[i][h] - tierSum[tier][h] / tierN[tier][h];
                     for (int g : groups) samples[g][h].add(new double[]{net, excess, day, regime});
                 }
             }
         }
+    }
+
+    static int tier(double vol) {
+        return vol >= 50_000_000 ? 0 : vol >= 10_000_000 ? 1 : vol >= 2_000_000 ? 2 : 3;
+    }
+
+    /** 过去 n 根 15m 的涨跌%；数据不够返回 NaN。 */
+    private double back(String sym, int q, int n) {
+        Series s = data.get(sym);
+        if (s == null || !s.has(q) || q - n < 0) return Double.NaN;
+        double p = s.lastClose(q - n, 8);
+        return Double.isNaN(p) ? Double.NaN : (s.close[q] / p - 1) * 100;
+    }
+
+    static double quantile(double[] v, double p) {
+        double[] c = Arrays.stream(v).filter(x -> !Double.isNaN(x)).sorted().toArray();
+        if (c.length == 0) return Double.NaN;
+        return c[Math.min(c.length - 1, (int) Math.floor(p * c.length))];
     }
 
     /** q 收盘买入、n 根 15m 后收盘卖出的毛收益%；之后没数据（下架）按最后一根收盘；未到期返回 NaN。 */
@@ -124,7 +169,7 @@ public final class EdgeStudy {
         StringBuilder b = new StringBuilder();
         b.append("## 信号本身有没有优势\n\n");
         b.append("每个整点（线上 :17 那一刻）对标的池里的币按信号分组，看之后 1h / 4h / 24h / 72h 的收益。")
-                .append("净收益已扣来回手续费 0.2% 和 1,000U 冲击；超额 = 毛收益 − 同期标的池中位数（不扣费，看选币能力）。")
+                .append("净收益已扣来回手续费 0.2% 和 1,000U 冲击；超额 = 毛收益 − 同一时刻同成交额档所有币的平均（相当于随机挑同档的币，不扣费，看选币能力）。")
                 .append("区间按天汇总：每天先平均，再对天数算 95% 区间；区间全在 0 以上才算有优势。\n\n");
         for (int h = 0; h < HOURS.length; h++) {
             b.append("### ").append(HOURS[h]).append(" 小时后\n\n");
@@ -159,12 +204,12 @@ public final class EdgeStudy {
             }
             b.append('\n');
         }
-        b.append("\n超额按行情（24 小时后，选中的币比同期中位数多涨%）：\n\n| 分组 |");
+        b.append("\n超额按行情（24 小时后，比随机挑同档的币多涨%）：\n\n| 分组 |");
         for (int r = 1; r < Regimes.NAMES.length; r++) b.append(' ').append(Regimes.NAMES[r]).append(" |");
         b.append("\n|---|");
         for (int r = 1; r < Regimes.NAMES.length; r++) b.append("---|");
         b.append('\n');
-        for (int g = 0; g < GROUPS.length - 1; g++) {
+        for (int g = 0; g < ALL; g++) {
             b.append("| ").append(GROUPS[g]).append(" |");
             for (int r = 1; r < Regimes.NAMES.length; r++) {
                 final int rr = r;
