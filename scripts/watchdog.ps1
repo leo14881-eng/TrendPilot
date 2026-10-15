@@ -41,6 +41,10 @@ function Send-Telegram($text) {
     }
 }
 
+function Read-Flag {
+    try { return ([string](Get-Content $Updating -Raw)).Trim() } catch { return '' }
+}
+
 function Get-State {
     $s = @{ down = $false; downSince = ''; hangCount = 0; startFailures = 0; pausedUntil = ''; monitorAlerted = $false }
     if (Test-Path $State) {
@@ -97,7 +101,19 @@ function Start-TrendPilot {
 $mutex = New-Object System.Threading.Mutex($false, 'Local\TrendPilotWatchdog')
 if (-not $mutex.WaitOne(0)) { exit 0 }
 try {
-    if ((Test-Path $Updating) -and ((Get-Item $Updating).LastWriteTime -gt (Get-Date).AddMinutes(-30))) { exit 0 }
+    # 心跳：自动更新据此确认守护任务确实在运行
+    Set-Content (Join-Path $Bin 'watchdog-last.txt') ((Get-Date).ToString('o'))
+    # 自动更新正在换版本时不干预；但如果写标记的更新程序已经不在了（中途被结束），标记作废，照常检查和拉起
+    if ((Test-Path $Updating) -and ((Get-Item $Updating).LastWriteTime -gt (Get-Date).AddMinutes(-30))) {
+        $owner = 0
+        [void][int]::TryParse(((Read-Flag) -split ' ')[0], [ref]$owner)
+        if ($owner -gt 0 -and -not (Get-Process -Id $owner -ErrorAction SilentlyContinue)) {
+            Write-Log "更新标记残留（更新程序 PID=$owner 已退出），清除并照常检查"
+            Remove-Item $Updating -ErrorAction SilentlyContinue
+        } else {
+            exit 0
+        }
+    }
     $s = Get-State
     if ($s.pausedUntil -and (Get-Date) -lt [datetime]$s.pausedUntil) { exit 0 }
 

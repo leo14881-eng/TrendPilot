@@ -239,7 +239,12 @@ try {
     $hash = (Get-FileHash $installer -Algorithm SHA256).Hash
     $hashFile = Join-Path $Bin 'installer.sha256'
     & schtasks.exe /Query /TN 'TrendPilot-Watchdog' 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0 -or $hash -ne (Read-Text $hashFile)) {
+    $wdMissing = $LASTEXITCODE -ne 0
+    # 守护任务注册了但超过 15 分钟没跑过（心跳文件没更新）：也重新注册，并提醒
+    $wdBeat = Join-Path $Bin 'watchdog-last.txt'
+    $wdDead = (Test-Path $wdBeat) -and ((Get-Item $wdBeat).LastWriteTime -lt (Get-Date).AddMinutes(-15))
+    if ($wdDead) { Send-Telegram '⚠️ TrendPilot 守护任务超过 15 分钟没有运行，已重新注册' }
+    if ($wdMissing -or $wdDead -or $hash -ne (Read-Text $hashFile)) {
         Set-Content $hashFile $hash
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'install-autoupdate.ps1') | Out-Null
         Write-Log '已重新注册计划任务（服务、自动更新、守护）'
@@ -306,9 +311,10 @@ try {
     }
 
     # ---------- 4. 等空档 → 平滑停机 → 替换 → 启动 → 等一次成功的 Monitor（期间守护任务不干预） ----------
-    Set-Content $Updating (Get-Date)
+    # 标记里写本进程 PID：更新程序中途被结束时，守护任务发现这个进程不在了就立刻接手，不用等 30 分钟
+    Set-Content $Updating "$PID $((Get-Date).ToString('o'))"
     Wait-QuietWindow
-    Set-Content $Updating (Get-Date)
+    Set-Content $Updating "$PID $((Get-Date).ToString('o'))"
     if (-not (Stop-TrendPilot)) {
         Report-StopDenied "新版本 $short 已构建好"
         exit 1

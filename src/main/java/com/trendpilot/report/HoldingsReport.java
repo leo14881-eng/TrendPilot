@@ -102,7 +102,7 @@ public class HoldingsReport {
      * Telegram 版：Markdown 表格在 Telegram 里不好看，换成每行一条；分段由 Notifier 负责。
      * 表格行 "| a | b | c |" 变成 "a · b · c"，分隔行去掉。
      */
-    static String telegram(String md) {
+    public static String telegram(String md) {
         List<String> out = new ArrayList<>();
         for (String line : md.split("\n")) {
             if (line.startsWith("|---") || line.startsWith("| |---") || line.matches("^\\|[-:| ]+\\|$")) continue;

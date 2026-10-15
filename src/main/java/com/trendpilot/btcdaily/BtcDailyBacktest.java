@@ -105,7 +105,7 @@ public final class BtcDailyBacktest {
                     tradeDays++;
                     lastBuyDay = day;
                 } else if (f.side() == Fill.Side.SELL) {
-                    rounds.add(book.lastRound);
+                    if (book.lastRound != null) rounds.add(book.lastRound); // 分批卖出的前一半还没有完整的一轮
                     long hold = ChronoUnit.DAYS.between(opened, day);
                     holdSum += hold;
                     maxHold = Math.max(maxHold, hold);
