@@ -66,6 +66,16 @@ public final class B0Sim extends Sim {
         return this;
     }
 
+    /** 防洗盘止损研究（StopStudy）：叠加在现行退出规则之上的止损；null = 不止损。 */
+    private StopRule stopRule;
+    /** 每个持仓买入时算好的止损距离（比例）。 */
+    private final Map<String, Double> stopDist = new HashMap<>();
+
+    B0Sim stop(StopRule rule) {
+        this.stopRule = rule;
+        return this;
+    }
+
     public B0Sim(String name, MarketData data, Regimes regimes, SignalTape tape, StrategyParams params, int fromQ, int toQ) {
         this(name, data, regimes, tape, params, fromQ, toQ, false);
     }
@@ -103,6 +113,18 @@ public final class B0Sim extends Sim {
                 double proceeds = pos.qty().doubleValue() * s.open[q] * (1 - imp) * (1 - params.feeRate());
                 close(pos, q, null, proceeds - pos.costBasis().doubleValue(), "TIME_EXIT");
                 continue;
+            }
+            if (stopRule != null && pos.costBasis().signum() > 0) {
+                String why = stopRule.check(data, s, q, pos.costBasis().doubleValue() / pos.qty().doubleValue(), entryQ.get(pos.symbol()),
+                        stopDist.getOrDefault(pos.symbol(), stopRule.fallback()));
+                if (why != null) {
+                    // 按触发那根 K 线的收盘价卖出（收盘确认），扣冲击和手续费
+                    double imp = Costs.impact(vol, pos.costBasis().doubleValue());
+                    double proceeds = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate());
+                    path.net(proceeds - pos.costBasis().doubleValue());
+                    close(pos, q, null, proceeds - pos.costBasis().doubleValue(), why);
+                    continue;
+                }
             }
             Position cur = pos;
             double prev = s.open[q];
@@ -152,6 +174,7 @@ public final class B0Sim extends Sim {
 
     private void close(Position pos, int q, Fill fill, double pnl, String reason) {
         positions.remove(pos.symbol());
+        stopDist.remove(pos.symbol());
         underwaterSince.remove(pos.symbol());
         markNet.remove(pos.symbol());
         lastObsHour.remove(pos.symbol());
@@ -250,6 +273,7 @@ public final class B0Sim extends Sim {
                 positions.put(r.symbol(), new Position(Venue.BINANCE, r.symbol(), f.qty(), f.totalCost(), f.notional(), 1,
                         f.avgPrice(), now, gen, now, false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false));
                 entryQ.put(r.symbol(), q);
+                if (stopRule != null) stopDist.put(r.symbol(), stopRule.distance(atrDaily(data.get(r.symbol()), q)));
                 paths.put(r.symbol(), new Path(q, f.avgPrice().doubleValue()));
                 markNet.put(r.symbol(), -f.fee().doubleValue() * 2);
             } else {
