@@ -16,7 +16,7 @@ import com.trendpilot.signal.EarlySignal;
  */
 public final class EdgeStudy {
 
-    static final int[] HOURS = {1, 4, 24, 72};
+    static final int[] HOURS = {1, 4, 24, 72, 168};
     static final double FEE = 0.001;
 
     /**
@@ -25,7 +25,9 @@ public final class EdgeStudy {
      */
     static final String[] GROUPS = {"EARLY 评分≥8", "其中 24h 内首次", "EARLY 评分≥8 且山寨大盘向好", "EARLY 评分 6~8", "EARLY 评分<6",
             "候选：7 天强势中回调（7d 前 20% 且 24h 跌 ≥3%）", "候选：7 天强势（前 10%）", "候选：24h 涨幅前 10%",
-            "候选：24h 超跌（跌幅前 10%）", "标的池全部（基准）"};
+            "候选：24h 超跌（跌幅前 10%）",
+            "候选：暴跌/暴跌后反弹时 24h 超跌（跌幅前 10%）", "候选：暴跌/暴跌后反弹时买标的池任意币", "候选：山寨 7 天上涨时 7 天强势（前 10%）",
+            "候选：72h 超跌（跌幅前 10%）", "候选：ETH", "标的池全部（基准）"};
     static final int ALL = GROUPS.length - 1;
 
     private final MarketData data;
@@ -56,11 +58,14 @@ public final class EdgeStudy {
             MarketData.Context ctx = data.context(q + 1);
             boolean altGood = ctx != null && ctx.alt24h() > 0 && ctx.alt4h() > 0;
             double[][] fwd = new double[n][HOURS.length];
-            double[] r24 = new double[n], r7d = new double[n], vol = new double[n];
+            double[] r24 = new double[n], r72 = new double[n], r7d = new double[n], vol = new double[n];
+            boolean crash = regime == 5 || regime == 6;
+            boolean altUp7d = ctx != null && ctx.alt7d() > 0;
             for (int i = 0; i < n; i++) {
                 String sym = universe.get(i);
                 for (int h = 0; h < HOURS.length; h++) fwd[i][h] = forward(sym, q, HOURS[h] * 4, toQ);
                 r24[i] = back(sym, q, MarketData.DAY);
+                r72[i] = back(sym, q, 3 * MarketData.DAY);
                 r7d[i] = back(sym, q, 7 * MarketData.DAY);
                 var t = data.ticker(sym, q);
                 vol[i] = t == null ? Double.NaN : t.quoteVolume();
@@ -78,7 +83,7 @@ public final class EdgeStudy {
                 }
             }
             double r7Top20 = quantile(r7d, 0.8), r7Top10 = quantile(r7d, 0.9);
-            double r24Top10 = quantile(r24, 0.9), r24Bottom10 = quantile(r24, 0.1);
+            double r24Top10 = quantile(r24, 0.9), r24Bottom10 = quantile(r24, 0.1), r72Bottom10 = quantile(r72, 0.1);
             for (int i = 0; i < n; i++) {
                 String sym = universe.get(i);
                 if (Double.isNaN(vol[i])) continue;
@@ -103,6 +108,11 @@ public final class EdgeStudy {
                 if (!Double.isNaN(r7d[i]) && r7d[i] >= r7Top10) groups.add(6);
                 if (!Double.isNaN(r24[i]) && r24[i] >= r24Top10) groups.add(7);
                 if (!Double.isNaN(r24[i]) && r24[i] <= r24Bottom10) groups.add(8);
+                if (crash && !Double.isNaN(r24[i]) && r24[i] <= r24Bottom10) groups.add(9);
+                if (crash) groups.add(10);
+                if (altUp7d && !Double.isNaN(r7d[i]) && r7d[i] >= r7Top10) groups.add(11);
+                if (!Double.isNaN(r72[i]) && r72[i] <= r72Bottom10) groups.add(12);
+                if (sym.equals("ETHUSDT")) groups.add(13);
                 int tier = tier(vol[i]);
                 for (int h = 0; h < HOURS.length; h++) {
                     if (Double.isNaN(fwd[i][h]) || tierN[tier][h] == 0) continue;
