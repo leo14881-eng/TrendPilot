@@ -26,6 +26,7 @@ import com.trendpilot.report.HoldingsReport;
  * <li>长轮询 getUpdates（服务器最多挂 25 秒），没有消息时约每 25 秒一次请求，不额外耗费接口额度。</li>
  * <li>只有负责运行的那台电脑回应（见 ActiveLease），两台同时开也不会回两遍。</li>
  * <li>这个机器人如果同时被别的程序用 getUpdates 读取（Telegram 返回 409），暂停 10 分钟再试，不和它抢。</li>
+ * <li>出错（例如数据库正忙、网络断开）最多等 15 秒就重试；处理失败的指令不跳过，下次重试，同一条最多试 5 次。</li>
  * </ul>
  * trendpilot.telegram-commands.enabled=false 可关闭。
  */
@@ -34,6 +35,9 @@ public class TelegramCommands {
 
     private static final Logger log = LoggerFactory.getLogger(TelegramCommands.class);
     static final String OFFSET_KEY = "telegram:update-offset";
+    /** 出错后重试的最长等待：指令要尽快恢复响应，不能像后台任务一样退避到几分钟。 */
+    static final long MAX_BACKOFF_MS = 15_000;
+    static final int MAX_TRIES = 5;
     static final String HELP = "可用指令：\n/v2 当前 V2 持仓、当天盈亏和资金情况\n/help 指令列表";
 
     private final TelegramProperties props;
@@ -44,6 +48,9 @@ public class TelegramCommands {
     private final ObjectProvider<ActiveLease> lease;
     private final boolean enabled;
     private RestClient http;
+    /** 下一条要读的消息编号；内存里为准，数据库只做重启后的恢复（写失败不影响读指令）。 */
+    private Long offset;
+    private final Map<Long, Integer> tries = new java.util.HashMap<>();
 
     public TelegramCommands(TelegramProperties props, ObjectMapper json, Notifier notifier, AppState state,
                             HoldingsReport report, ObjectProvider<ActiveLease> lease,
@@ -70,7 +77,7 @@ public class TelegramCommands {
     }
 
     private void loop() {
-        long backoff = 5_000;
+        long backoff = 2_000;
         while (!Thread.currentThread().isInterrupted()) {
             try {
                 ActiveLease l = lease.getIfAvailable();
@@ -79,7 +86,7 @@ public class TelegramCommands {
                     continue;
                 }
                 poll();
-                backoff = 5_000;
+                backoff = 2_000;
             } catch (InterruptedException e) {
                 return;
             } catch (org.springframework.web.client.HttpClientErrorException.Conflict e) {
@@ -88,13 +95,13 @@ public class TelegramCommands {
             } catch (RuntimeException e) {
                 log.warn("读取 Telegram 指令失败：{}", Notifier.maskText(e.getMessage()));
                 sleep(backoff);
-                backoff = Math.min(backoff * 2, 300_000);
+                backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
             }
         }
     }
 
     void poll() {
-        long offset = state.get(OFFSET_KEY).map(Long::parseLong).orElse(0L);
+        if (offset == null) offset = state.get(OFFSET_KEY).map(Long::parseLong).orElse(0L);
         String raw = http.post().uri("/bot{token}/getUpdates", props.botToken())
                 .body(Map.of("offset", offset, "timeout", 25, "allowed_updates", java.util.List.of("message")))
                 .retrieve().body(String.class);
@@ -111,19 +118,45 @@ public class TelegramCommands {
         }
         for (JsonNode u : root.path("result")) {
             long id = u.path("update_id").asLong();
-            state.put(OFFSET_KEY, String.valueOf(id + 1)); // 先记下，出错也不会反复处理同一条
             JsonNode m = u.path("message");
-            if (!m.path("chat").path("id").asText().equals(props.chatId())) continue;
-            String text = m.path("text").asText("").trim().toLowerCase(Locale.ROOT);
-            String cmd = text.split("[\\s@]", 2)[0];
-            switch (cmd) {
-                case "/v2", "v2" -> notifier.send("cmd:" + id, HoldingsReport.telegram(report.markdown(now)));
-                case "/help", "/start" -> notifier.send("cmd:" + id, HELP);
-                default -> {
-                    if (cmd.startsWith("/")) notifier.send("cmd:" + id, "不认识的指令。" + HELP);
+            if (m.path("chat").path("id").asText().equals(props.chatId())) {
+                try {
+                    answer(id, m.path("text").asText(""), now);
+                } catch (RuntimeException e) {
+                    // 处理失败（多半是数据库正忙）：不推进编号，下次重新读到这条再试；同一条最多 5 次，避免一条坏消息卡住后面所有指令
+                    int n = tries.merge(id, 1, Integer::sum);
+                    if (n < MAX_TRIES) throw e;
+                    log.warn("Telegram 指令 {} 连续 {} 次处理失败，跳过：{}", id, n, e.toString());
                 }
             }
+            tries.remove(id);
+            advance(id + 1);
         }
+    }
+
+    private void answer(long id, String raw, Instant now) {
+        String text = raw.trim().toLowerCase(Locale.ROOT);
+        String cmd = text.split("[\\s@]", 2)[0];
+        switch (cmd) {
+            case "/v2", "v2" -> notifier.send("cmd:" + id, HoldingsReport.telegram(report.markdown(now)));
+            case "/help", "/start" -> notifier.send("cmd:" + id, HELP);
+            default -> {
+                if (cmd.startsWith("/")) notifier.send("cmd:" + id, "不认识的指令。" + HELP);
+            }
+        }
+    }
+
+    private void advance(long next) {
+        offset = next;
+        try {
+            state.put(OFFSET_KEY, String.valueOf(next));
+        } catch (RuntimeException e) {
+            log.debug("保存 Telegram 指令编号失败（内存里已记下）：{}", e.toString());
+        }
+    }
+
+    Long offset() {
+        return offset;
     }
 
     private static void sleep(long ms) {

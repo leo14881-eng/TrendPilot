@@ -6,6 +6,9 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -44,5 +47,35 @@ class TelegramCommandsTest {
         verify(notifier, never()).send(eq("cmd:11"), anyString()); // 别人的聊天不回应
         verify(notifier, never()).send(eq("cmd:13"), anyString()); // 普通聊天不回应
         verify(state).put(TelegramCommands.OFFSET_KEY, "14");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void failedCommandIsRetriedNotSkippedUpToFiveTimes() {
+        Notifier notifier = mock(Notifier.class);
+        AppState state = mock(AppState.class);
+        HoldingsReport report = mock(HoldingsReport.class);
+        when(report.markdown(any(Instant.class))).thenThrow(new IllegalStateException("Failed to obtain JDBC Connection"))
+                .thenReturn("# TrendPilot V2 日报");
+        TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), notifier,
+                state, report, mock(ObjectProvider.class), true, true);
+        String batch = """
+                {"ok":true,"result":[{"update_id":20,"message":{"chat":{"id":42},"text":"/V2"}}]}""";
+        Instant now = Instant.parse("2026-10-15T01:00:00Z");
+
+        assertThatThrownBy(() -> c.handle(batch, now)).hasMessageContaining("JDBC");
+        assertThat(c.offset()).isNull(); // 编号没推进，下次还会读到这条
+        c.handle(batch, now);
+        verify(notifier).send(eq("cmd:20"), contains("V2 日报"));
+        assertThat(c.offset()).isEqualTo(21L);
+
+        // 一直失败的指令：第 5 次放弃，不卡住后面的指令
+        when(report.markdown(any(Instant.class))).thenThrow(new IllegalStateException("坏了"));
+        String bad = """
+                {"ok":true,"result":[{"update_id":30,"message":{"chat":{"id":42},"text":"/v2"}}]}""";
+        for (int i = 0; i < 4; i++) assertThatThrownBy(() -> c.handle(bad, now));
+        c.handle(bad, now);
+        assertThat(c.offset()).isEqualTo(31L);
+        verify(report, times(7)).markdown(any(Instant.class));
     }
 }
