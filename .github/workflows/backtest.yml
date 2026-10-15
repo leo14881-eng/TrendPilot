@@ -1,0 +1,27 @@
+# V2 规则一年回测（docs/V2交易规则重设计.md 第 7 节）。手动触发，不影响线上服务。
+# 数据来自币安公开数据站 data.binance.vision（K 线压缩包，不走 API、不占限流），结果推到 backtest-results 分支。
+name: Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: 回测参数
+        required: false
+        default: probe
+
+permissions:
+  contents: write
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe data.binance.vision
+        if: inputs.args == 'probe'
+        run: |
+          curl -sS -o /tmp/b.zip -w "%{http_code} %{size_download}\n" https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-10.zip
+          unzip -p /tmp/b.zip | head -3
+          curl -sS "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix=data/spot/monthly/klines/" | head -c 1500
