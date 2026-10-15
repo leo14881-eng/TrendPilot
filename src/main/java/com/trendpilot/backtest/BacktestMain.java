@@ -33,7 +33,7 @@ import com.trendpilot.v2n.V2nParams;
  * 一年回测入口（docs/V2交易规则重设计.md 第 7 节）。不启动 Spring 服务、不连数据库，只读公开数据站的 K 线包。
  * <pre>
  * java -cp ... com.trendpilot.backtest.BacktestMain 数据目录 输出目录 [起始月 2025-09] [结束月 2026-09] [最后一天 2026-10-14，"-" 表示到结束月月底]
- *      [开始交易 2025-10-01] [验证期开始 2026-05-01] [线程数 4]
+ *      [开始交易 2025-10-01] [验证期开始 2026-05-01] [线程数 4] [edge = 只做信号检验]
  * </pre>
  */
 public final class BacktestMain {
@@ -47,6 +47,7 @@ public final class BacktestMain {
         LocalDate tradeFrom = LocalDate.parse(args.length > 5 ? args[5] : "2025-10-01");
         LocalDate split = LocalDate.parse(args.length > 6 ? args[6] : "2026-05-01");
         int threads = args.length > 7 ? Integer.parseInt(args[7]) : 4;
+        boolean edgeOnly = args.length > 8 && args[8].equals("edge");
         Files.createDirectories(outDir);
 
         StrategyParams params = loadParams();
@@ -91,6 +92,15 @@ public final class BacktestMain {
         int splitQ = (int) ((split.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() - start) / Series.Q);
         String period = tradeFrom + " ～ " + endDay.minusDays(1) + "（验证期从 " + split + " 开始）";
 
+        if (edgeOnly) {
+            // 只做信号检验（长历史时不跑买卖模拟，省内存和时间）
+            EdgeStudy edge = new EdgeStudy(data, regimes, tape, params.review().minScore());
+            edge.run(fromQ, size);
+            String md = "# 信号检验（" + period + "）\n\n" + edge.markdown();
+            Files.writeString(outDir.resolve("report.md"), md);
+            System.out.println(md);
+            return;
+        }
         Experiments ex = Experiments.registered();
         List<Report.Run> runs = new ArrayList<>();
         try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {

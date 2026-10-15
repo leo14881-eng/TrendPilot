@@ -55,6 +55,7 @@ public final class EdgeStudy {
             int n = universe.size();
             int regime = regimes.at(q);
             int day = q / MarketData.DAY;
+            int year = java.time.Instant.ofEpochMilli(data.time(q)).atZone(java.time.ZoneOffset.UTC).getYear();
             MarketData.Context ctx = data.context(q + 1);
             boolean altGood = ctx != null && ctx.alt24h() > 0 && ctx.alt4h() > 0;
             double[][] fwd = new double[n][HOURS.length];
@@ -118,7 +119,7 @@ public final class EdgeStudy {
                     if (Double.isNaN(fwd[i][h]) || tierN[tier][h] == 0) continue;
                     double net = fwd[i][h] - cost;
                     double excess = fwd[i][h] - tierSum[tier][h] / tierN[tier][h];
-                    for (int g : groups) samples[g][h].add(new double[]{net, excess, day, regime});
+                    for (int g : groups) samples[g][h].add(new double[]{net, excess, day, regime, year});
                 }
             }
         }
@@ -198,6 +199,31 @@ public final class EdgeStudy {
                         GROUPS[g], rows.size(), net[0], net[1], net[2], net[3], median(nets), win, ex[1], ex[2], ex[3]));
             }
             b.append('\n');
+        }
+        int[] years = samples[ALL][0].stream().mapToInt(x -> (int) x[4]).distinct().sorted().toArray();
+        if (years.length > 1) {
+            for (int hi : new int[]{2, 3}) {
+                b.append("### 按年份：").append(HOURS[hi]).append(" 小时后 平均净收益% / 超额%\n\n| 分组 |");
+                for (int y : years) b.append(' ').append(y).append(" |");
+                b.append("\n|---|");
+                for (int y : years) b.append("---|");
+                b.append('\n');
+                for (int g = 0; g < GROUPS.length; g++) {
+                    b.append("| ").append(GROUPS[g]).append(" |");
+                    for (int y : years) {
+                        final int yy = y;
+                        List<double[]> in = samples[g][hi].stream().filter(x -> x[4] == yy).toList();
+                        if (in.isEmpty()) {
+                            b.append(" - |");
+                            continue;
+                        }
+                        double[] net = dailyCi(in, 0), ex = dailyCi(in, 1);
+                        b.append(String.format(Locale.ROOT, " %.2f / %.2f（%.2f ~ %.2f）|", net[1], ex[1], ex[2], ex[3]));
+                    }
+                    b.append('\n');
+                }
+                b.append('\n');
+            }
         }
         b.append("### 按行情：24 小时后平均净收益%（样本数）\n\n| 分组 |");
         for (int r = 1; r < Regimes.NAMES.length; r++) b.append(' ').append(Regimes.NAMES[r]).append(" |");
