@@ -217,16 +217,15 @@ function Set-NoSleep {
         & powercfg.exe /change $setting 0 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { $failed += $setting }
     }
-    # 合盖动作：0 = 不采取任何操作（接电源和用电池都设），设置后重新激活当前电源计划才生效
+    # 合盖动作：接电源时 0 = 不采取任何操作；用电池时 1 = 睡眠（放进包里不发热耗电）。设置后重新激活当前电源计划才生效
     & powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { $failed += 'lid-ac' }
-    & powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { $failed += 'lid-dc' }
+    & powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 1 2>&1 | Out-Null
     & powercfg.exe /setactive SCHEME_CURRENT 2>&1 | Out-Null
     if ($failed.Count -eq 0) {
         if ($last -notlike 'v2-*') {
             Write-Log '已设置接电源时不睡眠、不休眠，合上盖子不睡眠'
-            Send-Telegram '✅ 已设置：合上笔记本盖子、接电源空闲时电脑都不再睡眠，TrendPilot 会一直运行。'
+            Send-Telegram '✅ 已设置：接着电源时，合上笔记本盖子或空闲都不再睡眠，TrendPilot 会一直运行（用电池合盖仍会睡眠）。'
         }
         Set-Content $marker "v2-$today"
     } else {
