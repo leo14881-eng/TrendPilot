@@ -64,10 +64,17 @@ class BacktestSmokeTest {
             assertThat(m.trades()).isEqualTo(s.trades().size());
         }
         assertThat(sims.get(0).trades()).isNotEmpty();
-        Report report = new Report(regimes, fromQ, fromQ + 15 * 96, data.size, "合成数据");
+        EdgeStudy edge = new EdgeStudy(data, regimes, tape, params.review().minScore());
+        edge.run(fromQ, data.size);
+        assertThat(edge.count(4, 0)).isGreaterThan(0);
+        assertThat(edge.count(4, 0)).isGreaterThanOrEqualTo(edge.count(0, 0) + edge.count(2, 0) + edge.count(3, 0));
+        Nav nav = new Nav(data, params.capital().hardCap());
+        double[] curve = nav.curve(sims.get(0), fromQ / 4, data.size / 4);
+        assertThat(curve[0]).isEqualTo(1.0);
+        Report report = new Report(regimes, fromQ, fromQ + 15 * 96, data.size, "合成数据").with(data, nav, edge.markdown());
         sims.forEach(s -> report.add(new Report.Run(s, s instanceof NSim ? V2nParams.base() : null, "x")));
         String md = report.build(List.of("N"), List.of(), List.of());
-        assertThat(md).contains("PASSED=");
+        assertThat(md).contains("PASSED=").contains("净值曲线对照").contains("信号本身有没有优势").contains("卖出后的走势");
     }
 
     @Test

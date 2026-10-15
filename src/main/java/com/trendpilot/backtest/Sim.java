@@ -32,6 +32,8 @@ public abstract class Sim {
     protected final List<Trade> trades = new ArrayList<>();
     /** 每个整点的权益（已实现 + 浮动），下标为小时。 */
     protected final double[] equity;
+    /** 每个整点占用的本金（持仓成本合计），算资金使用率。 */
+    protected final double[] deployed;
     /** 每个币出现 EARLY 的 15m 下标（再入场证据用）。 */
     protected final Map<String, TreeSet<Integer>> earlyLog = new HashMap<>();
 
@@ -44,6 +46,7 @@ public abstract class Sim {
         this.fromQ = fromQ;
         this.toQ = toQ;
         this.equity = new double[data.size / 4 + 1];
+        this.deployed = new double[data.size / 4 + 1];
     }
 
     public String name() {
@@ -58,14 +61,22 @@ public abstract class Sim {
         return equity;
     }
 
+    public double[] deployed() {
+        return deployed;
+    }
+
     public void run() {
         for (int q = fromQ; q < toQ; q++) {
             manage(q);
             if (q % 4 == 0) discover(q);
-            if (q % 4 == 3) equity[q / 4 + 1] = realized + unrealized(q);
+            if (q % 4 == 3) {
+                equity[q / 4 + 1] = realized + unrealized(q);
+                deployed[q / 4 + 1] = deployedCost();
+            }
         }
         closeAll(toQ - 1);
         equity[toQ / 4] = realized;
+        deployed[toQ / 4] = 0;
     }
 
     /** 管理第 q 根 15m 期间的持仓（开高低收路径）。 */
@@ -75,6 +86,9 @@ public abstract class Sim {
     protected abstract void discover(int q);
 
     protected abstract double unrealized(int q);
+
+    /** 当前持仓占用的本金。 */
+    protected abstract double deployedCost();
 
     /** 回测结束时按最后收盘价全部卖出（记为 END）。 */
     protected abstract void closeAll(int q);

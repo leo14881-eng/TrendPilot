@@ -233,6 +233,11 @@ public final class B0Sim extends Sim {
     }
 
     @Override
+    protected double deployedCost() {
+        return positions.values().stream().mapToDouble(p -> p.costBasis().doubleValue()).sum();
+    }
+
+    @Override
     protected double unrealized(int q) {
         double sum = 0;
         for (Position p : positions.values()) {

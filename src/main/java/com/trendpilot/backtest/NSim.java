@@ -505,6 +505,11 @@ public final class NSim extends Sim {
     }
 
     @Override
+    protected double deployedCost() {
+        return positions.values().stream().mapToDouble(x -> x.cost).sum();
+    }
+
+    @Override
     protected double unrealized(int q) {
         double sum = 0;
         for (Pos x : positions.values()) {

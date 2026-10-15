@@ -21,6 +21,9 @@ public final class Report {
     private final Map<String, Run> runs = new LinkedHashMap<>();
     private final StringBuilder md = new StringBuilder();
     private final String period;
+    private MarketData data;
+    private Nav nav;
+    private String edge = "";
 
     public Report(Regimes regimes, int fromQ, int splitQ, int toQ, String period) {
         this.regimes = regimes;
@@ -28,6 +31,14 @@ public final class Report {
         this.splitQ = splitQ;
         this.toQ = toQ;
         this.period = period;
+    }
+
+    /** 净值对照和卖出后走势需要行情数据；信号优势研究的文字直接放进报告。 */
+    public Report with(MarketData data, Nav nav, String edge) {
+        this.data = data;
+        this.nav = nav;
+        this.edge = edge == null ? "" : edge;
+        return this;
     }
 
     public void add(Run r) {
@@ -148,6 +159,13 @@ public final class Report {
         }
         if (total > 0 && better * 2 < total) fails.add("相邻参数在验证期多数不如现行（" + better + "/" + total + "）");
         if (vn.withoutTop3() < vb.withoutTop3()) fails.add("去掉最好 3 笔后验证期不如现行");
+        if (nav != null) {
+            int a = splitQ / 4, z = Math.min(toQ / 4, runs.get(best).sim().equity().length - 1);
+            Run rb = runs.get(best);
+            Nav.Row row = nav.row(best, nav.curve(rb.sim(), a, z), rb.sim().deployed(), a, nav.matched(rb.sim(), a, z));
+            if (row.returnPct() <= 0) fails.add("验证期净值没有跑赢现金");
+            if (!(row.diffLow() > 0)) fails.add("验证期每日收益没有稳定跑赢同仓位持币（差值 95% 区间下限 " + f(row.diffLow()) + "%）");
+        }
 
         line("");
         line("## 结论");
@@ -171,6 +189,24 @@ public final class Report {
         table("全年", main, fromQ, toQ);
         table("校准期（前段）", main, fromQ, splitQ);
         table("验证期（后段）", main, splitQ, toQ);
+        if (nav != null) {
+            List<String> navNames = new ArrayList<>(main);
+            for (String n : ablations) if (!navNames.contains(n)) navNames.add(n);
+            for (String n : stopStudy) if (!navNames.contains(n)) navNames.add(n);
+            line("");
+            line("## 净值曲线对照（7.6 第 3 项）");
+            line("");
+            line("资金按 " + f0(capitalOf()) + " U 计。同仓位持币 = 每小时按该方案的资金占用比例持有标的池等权组合，其余拿现金；"
+                    + "\"每日比同仓位持币多\"的区间全在 0 以上才算规则本身有价值（7.4）。");
+            navTable("全年", navNames, fromQ, toQ);
+            navTable("验证期（后段）", navNames, splitQ, toQ);
+        }
+        line("");
+        line(edge);
+        if (data != null) {
+            line("## 卖出后的走势（7.6 第 1、2 项：论点失效该不该卖、利润保护截断了多少）");
+            afterExit(List.of("B0", "N", "N-现行利润保护", "N-论点失效亏损不卖"));
+        }
         line("");
         line("## 六种行情（验证期）");
         regimeTable("每种行情：笔数 / 每笔平均收益 / 该行情期间的权益变化(U)", main, splitQ, toQ);
@@ -187,6 +223,79 @@ public final class Report {
         line("## 止损调查（3.1）");
         stopStudy(stopStudy);
         return md.toString();
+    }
+
+    private double capitalOf() {
+        return nav == null ? 0 : nav.capital();
+    }
+
+    private void navTable(String title, List<String> names, int a0, int b0) {
+        int a = a0 / 4;
+        Run any = runs.values().iterator().next();
+        int z = Math.min(b0 / 4, any.sim().equity().length - 1);
+        List<Nav.Row> rows = new ArrayList<>();
+        double[] zero = new double[z - a + 1];
+        java.util.Arrays.fill(zero, 1);
+        rows.add(nav.row("现金", zero, null, a, null));
+        rows.add(nav.row("持有 BTC", nav.hold(nav.btcHourly(), a, z), null, a, null));
+        rows.add(nav.row("标的池等权（满仓）", nav.hold(nav.poolHourly(), a, z), null, a, null));
+        for (String n : names) {
+            Run r = runs.get(n);
+            if (r == null) continue;
+            double[] matched = nav.matched(r.sim(), a, z);
+            rows.add(nav.row(n, nav.curve(r.sim(), a, z), r.sim().deployed(), a, matched));
+            rows.add(nav.row("　└ " + n + " 的同仓位持币", matched, r.sim().deployed(), a, null));
+        }
+        line("");
+        line("### " + title);
+        line("");
+        md.append(Nav.table(rows));
+    }
+
+    /** 每种卖出原因：卖出后 24h / 72h 收盘相对卖出价、72h 内最高涨幅、之后又涨过 2R 的比例。 */
+    private void afterExit(List<String> names) {
+        line("");
+        line("正数 = 卖早了（卖出后还在涨），负数 = 卖对了。2R 按该笔买入时的风险额换算成涨幅。");
+        line("");
+        line("| 方案 | 卖出原因 | 笔数 | 每笔收益% | 卖后24h% | 卖后72h% | 72h内最高% | 之后又涨过2R |");
+        line("|---|---|---:|---:|---:|---:|---:|---:|");
+        for (String n : names) {
+            Run run = runs.get(n);
+            if (run == null) continue;
+            Map<String, List<Trade>> by = new LinkedHashMap<>();
+            for (Trade t : run.sim().trades()) {
+                if (t.entryQ() < fromQ || t.reason().equals("END")) continue;
+                by.computeIfAbsent(t.reason(), k -> new ArrayList<>()).add(t);
+            }
+            for (Map.Entry<String, List<Trade>> e : by.entrySet()) {
+                double s24 = 0, s72 = 0, hi = 0;
+                int n24 = 0, n72 = 0, nh = 0, up2r = 0;
+                for (Trade t : e.getValue()) {
+                    Series s = data.get(t.symbol());
+                    if (s == null) continue;
+                    double px = s.lastClose(t.exitQ(), 8);
+                    if (Double.isNaN(px)) continue;
+                    double c24 = t.exitQ() + 96 < toQ ? s.lastClose(t.exitQ() + 96, 96) : Double.NaN;
+                    double c72 = t.exitQ() + 288 < toQ ? s.lastClose(t.exitQ() + 288, 288) : Double.NaN;
+                    if (!Double.isNaN(c24)) { s24 += c24 / px - 1; n24++; }
+                    if (!Double.isNaN(c72)) { s72 += c72 / px - 1; n72++; }
+                    double h = Double.NaN;
+                    for (int q = t.exitQ() + 1; q <= Math.min(t.exitQ() + 288, toQ - 1); q++) {
+                        if (s.has(q)) h = Double.isNaN(h) ? s.high[q] : Math.max(h, s.high[q]);
+                    }
+                    if (!Double.isNaN(h)) {
+                        hi += h / px - 1;
+                        nh++;
+                        double twoR = t.cost() > 0 ? 2 * t.r() / t.cost() : Double.NaN;
+                        if (h / px - 1 >= twoR) up2r++;
+                    }
+                }
+                double mean = e.getValue().stream().mapToDouble(Trade::pct).average().orElse(Double.NaN);
+                line("| " + n + " | " + e.getKey() + " | " + e.getValue().size() + " | " + f(mean) + " | "
+                        + f(n24 == 0 ? Double.NaN : s24 / n24 * 100) + " | " + f(n72 == 0 ? Double.NaN : s72 / n72 * 100) + " | "
+                        + f(nh == 0 ? Double.NaN : hi / nh * 100) + " | " + pct(nh == 0 ? Double.NaN : up2r / (double) nh) + " |");
+            }
+        }
     }
 
     private void stopStudy(List<String> names) {

@@ -32,7 +32,7 @@ import com.trendpilot.v2n.V2nParams;
 /**
  * 一年回测入口（docs/V2交易规则重设计.md 第 7 节）。不启动 Spring 服务、不连数据库，只读公开数据站的 K 线包。
  * <pre>
- * java -cp ... com.trendpilot.backtest.BacktestMain 数据目录 输出目录 [起始月 2025-09] [结束月 2026-09] [最后一天 2026-10-14]
+ * java -cp ... com.trendpilot.backtest.BacktestMain 数据目录 输出目录 [起始月 2025-09] [结束月 2026-09] [最后一天 2026-10-14，"-" 表示到结束月月底]
  *      [开始交易 2025-10-01] [验证期开始 2026-05-01] [线程数 4]
  * </pre>
  */
@@ -43,7 +43,7 @@ public final class BacktestMain {
         Path outDir = Path.of(args.length > 1 ? args[1] : "backtest-out");
         YearMonth from = YearMonth.parse(args.length > 2 ? args[2] : "2025-09");
         YearMonth to = YearMonth.parse(args.length > 3 ? args[3] : "2026-09");
-        LocalDate lastDay = args.length > 4 && !args[4].equals("-") ? LocalDate.parse(args[4]) : null;
+        LocalDate lastDay = args.length <= 4 ? LocalDate.of(2026, 10, 14) : args[4].equals("-") ? null : LocalDate.parse(args[4]);
         LocalDate tradeFrom = LocalDate.parse(args.length > 5 ? args[5] : "2025-10-01");
         LocalDate split = LocalDate.parse(args.length > 6 ? args[6] : "2026-05-01");
         int threads = args.length > 7 ? Integer.parseInt(args[7]) : 4;
@@ -111,7 +111,11 @@ public final class BacktestMain {
             }
             for (Future<Report.Run> f : fs) runs.add(f.get());
         }
-        Report report = new Report(regimes, fromQ, splitQ, size, period);
+        EdgeStudy edge = new EdgeStudy(data, regimes, tape, params.review().minScore());
+        edge.run(fromQ, size);
+        System.out.println("信号优势研究完成");
+        Report report = new Report(regimes, fromQ, splitQ, size, period)
+                .with(data, new Nav(data, params.capital().hardCap()), edge.markdown());
         runs.forEach(report::add);
         String md = report.build(ex.ids("grid"), ex.ids("ablation"), ex.ids("stop"));
         Files.writeString(outDir.resolve("report.md"), md);
