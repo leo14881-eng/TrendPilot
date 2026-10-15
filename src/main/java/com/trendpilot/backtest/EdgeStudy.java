@@ -27,7 +27,10 @@ public final class EdgeStudy {
             "候选：7 天强势中回调（7d 前 20% 且 24h 跌 ≥3%）", "候选：7 天强势（前 10%）", "候选：24h 涨幅前 10%",
             "候选：24h 超跌（跌幅前 10%）",
             "候选：暴跌/暴跌后反弹时 24h 超跌（跌幅前 10%）", "候选：暴跌/暴跌后反弹时买标的池任意币", "候选：山寨 7 天上涨时 7 天强势（前 10%）",
-            "候选：72h 超跌（跌幅前 10%）", "候选：ETH", "标的池全部（基准）"};
+            "候选：72h 超跌（跌幅前 10%）", "候选：ETH",
+            "回调 P2：7d 前 20% 且 24h 跌 ≥6%", "回调 P3：7d 前 30% 且 24h 跌 ≥3%", "回调 P4：P1 且山寨 24h 中位数 > −2%",
+            "回调 P5：30d 前 20% 且 24h 跌 ≥3%", "回调 P6：7d 前 20% 且 72h 跌 ≥5%", "回调 P1 首次（同币 72h 内只算一次）",
+            "标的池全部（基准）"};
     static final int ALL = GROUPS.length - 1;
 
     private final MarketData data;
@@ -50,6 +53,7 @@ public final class EdgeStudy {
 
     public void run(int fromQ, int toQ) {
         Map<String, Integer> lastEarly = new LinkedHashMap<>();
+        Map<String, Integer> lastPullback = new LinkedHashMap<>();
         for (int q = fromQ + Math.floorMod(-fromQ, 4); q < toQ; q += 4) {
             List<String> universe = data.universe(q);
             int n = universe.size();
@@ -59,7 +63,7 @@ public final class EdgeStudy {
             MarketData.Context ctx = data.context(q + 1);
             boolean altGood = ctx != null && ctx.alt24h() > 0 && ctx.alt4h() > 0;
             double[][] fwd = new double[n][HOURS.length];
-            double[] r24 = new double[n], r72 = new double[n], r7d = new double[n], vol = new double[n];
+            double[] r24 = new double[n], r72 = new double[n], r7d = new double[n], r30 = new double[n], vol = new double[n];
             boolean crash = regime == 5 || regime == 6;
             boolean altUp7d = ctx != null && ctx.alt7d() > 0;
             for (int i = 0; i < n; i++) {
@@ -67,6 +71,7 @@ public final class EdgeStudy {
                 for (int h = 0; h < HOURS.length; h++) fwd[i][h] = forward(sym, q, HOURS[h] * 4, toQ);
                 r24[i] = back(sym, q, MarketData.DAY);
                 r72[i] = back(sym, q, 3 * MarketData.DAY);
+                r30[i] = back(sym, q, 30 * MarketData.DAY);
                 r7d[i] = back(sym, q, 7 * MarketData.DAY);
                 var t = data.ticker(sym, q);
                 vol[i] = t == null ? Double.NaN : t.quoteVolume();
@@ -83,7 +88,8 @@ public final class EdgeStudy {
                     tierN[tier][h]++;
                 }
             }
-            double r7Top20 = quantile(r7d, 0.8), r7Top10 = quantile(r7d, 0.9);
+            double r7Top20 = quantile(r7d, 0.8), r7Top10 = quantile(r7d, 0.9), r7Top30 = quantile(r7d, 0.7), r30Top20 = quantile(r30, 0.8);
+            boolean altCalm = ctx != null && ctx.alt24h() > -2;
             double r24Top10 = quantile(r24, 0.9), r24Bottom10 = quantile(r24, 0.1), r72Bottom10 = quantile(r72, 0.1);
             for (int i = 0; i < n; i++) {
                 String sym = universe.get(i);
@@ -114,6 +120,20 @@ public final class EdgeStudy {
                 if (altUp7d && !Double.isNaN(r7d[i]) && r7d[i] >= r7Top10) groups.add(11);
                 if (!Double.isNaN(r72[i]) && r72[i] <= r72Bottom10) groups.add(12);
                 if (sym.equals("ETHUSDT")) groups.add(13);
+                boolean strong7 = !Double.isNaN(r7d[i]) && r7d[i] >= r7Top20;
+                boolean p1 = strong7 && r24[i] <= -3;
+                if (strong7 && r24[i] <= -6) groups.add(14);
+                if (!Double.isNaN(r7d[i]) && r7d[i] >= r7Top30 && r24[i] <= -3) groups.add(15);
+                if (p1 && altCalm) groups.add(16);
+                if (!Double.isNaN(r30[i]) && r30[i] >= r30Top20 && r24[i] <= -3) groups.add(17);
+                if (strong7 && r72[i] <= -5) groups.add(18);
+                if (p1) {
+                    Integer prev = lastPullback.get(sym);
+                    if (prev == null || q - prev >= 3 * MarketData.DAY) {
+                        groups.add(19);
+                        lastPullback.put(sym, q);
+                    }
+                }
                 int tier = tier(vol[i]);
                 for (int h = 0; h < HOURS.length; h++) {
                     if (Double.isNaN(fwd[i][h]) || tierN[tier][h] == 0) continue;
