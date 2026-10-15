@@ -24,12 +24,16 @@ public final class PrePumpStudy {
         boolean hit(Series s, int q, MarketData.Context ctx);
     }
 
-    record Sign(String name, Cond cond) {
+    /** baseline = 对照组（随便买），不去重、不算进抓到率。 */
+    record Sign(String name, Cond cond, boolean baseline) {
+        Sign(String name, Cond cond) {
+            this(name, cond, false);
+        }
     }
 
     static List<Sign> signs() {
         List<Sign> t = new ArrayList<>();
-        t.add(new Sign("随便买（每个币每天一次，对照）", (s, q, c) -> q % DAY == DAY - 1));
+        t.add(new Sign("随便买（每个币每天一次，对照）", (s, q, c) -> q % DAY == DAY - 1, true));
         t.add(new Sign("4 小时放量 3 倍、价格没动（±2%）", (s, q, c) -> volRatio(s, q, 4 * H) >= 3 && Math.abs(ret(s, q, 4 * H)) < 2));
         t.add(new Sign("24 小时放量 2 倍、价格没动（±3%）", (s, q, c) -> volRatio(s, q, DAY) >= 2 && Math.abs(ret(s, q, DAY)) < 3));
         t.add(new Sign("连续 3 天成交额递增、3 天价格横盘（±5%）", (s, q, c) -> rising3(s, q) && Math.abs(ret(s, q, 3 * DAY)) < 5));
@@ -62,7 +66,14 @@ public final class PrePumpStudy {
     }
 
     private final MarketData data;
-    private final List<Sign> signs = signs();
+    private final List<Sign> signs;
+    private final String title;
+    private final String filePrefix;
+    /** 对照组的币-天里，事前 24 小时出现过任意迹象的数量（和抓到率对比用）。 */
+    private int baseDays;
+    private int baseWithSign;
+    /** 至少要有这么多根历史才参与（原检验 7 天；新币检验设 0）。 */
+    private int minHistory = 7 * DAY;
     private final List<PumpStudy.Exit> exits = exits();
     /** [迹象] → 每笔 {天, 年份, 24h 最高涨%, 各卖法净收益%..., 各卖法不算成本%...}。 */
     private final List<List<double[]>> rows = new ArrayList<>();
@@ -75,7 +86,14 @@ public final class PrePumpStudy {
     private final List<String> eventLog = new ArrayList<>();
 
     public PrePumpStudy(MarketData data) {
+        this(data, signs(), "大涨前埋伏检验（整点检查迹象；下一根 15 分钟开盘买入；同一币同一迹象 24 小时只算一次；不含 BTC/ETH）", "prepump");
+    }
+
+    public PrePumpStudy(MarketData data, List<Sign> signs, String title, String filePrefix) {
         this.data = data;
+        this.signs = signs;
+        this.title = title;
+        this.filePrefix = filePrefix;
         for (int i = 0; i < signs.size(); i++) rows.add(new ArrayList<>());
         caught = new int[signs.size()];
     }
@@ -91,7 +109,7 @@ public final class PrePumpStudy {
             for (String sym : data.universe(q)) {
                 if (MarketData.ETH.equals(sym) || MarketData.BTC.equals(sym)) continue;
                 Series s = data.get(sym);
-                if (s == null || !s.has(q) || !s.has(q + 1) || !s.has(q - 7 * DAY)) continue;
+                if (s == null || !s.has(q) || !s.has(q + 1) || (minHistory > 0 && !s.has(q - minHistory))) continue;
                 int[] lastHit = last.computeIfAbsent(sym, k -> filled(signs.size()));
                 double open = s.open[q + 1];
                 double maxUp = maxUp(s, q + 1, DAY, open);
@@ -101,7 +119,8 @@ public final class PrePumpStudy {
                     boolean any = false;
                     StringBuilder ev = new StringBuilder(sym).append(',').append(Instant.ofEpochMilli(data.time(q + 1))).append(',')
                             .append(open).append(',').append(String.format(Locale.ROOT, "%.3f", maxUp));
-                    for (int k = 1; k < signs.size(); k++) {
+                    for (int k = 0; k < signs.size(); k++) {
+                        if (signs.get(k).baseline()) continue;
                         boolean seen = q - lastHit[k] <= DAY;
                         if (seen) caught[k]++;
                         any |= seen;
@@ -114,7 +133,8 @@ public final class PrePumpStudy {
                 if (t == null) continue;
                 double imp = Costs.impact(t.quoteVolume(), 1000);
                 for (int k = 0; k < signs.size(); k++) {
-                    if (k > 0 && q - lastHit[k] < DAY) continue;
+                    boolean base = signs.get(k).baseline();
+                    if (!base && q - lastHit[k] < DAY) continue;
                     boolean hit;
                     try {
                         hit = signs.get(k).cond().hit(s, q, ctx);
@@ -123,6 +143,15 @@ public final class PrePumpStudy {
                     }
                     if (!hit) continue;
                     lastHit[k] = q;
+                    if (k == 0) {
+                        baseDays++;
+                        for (int j = 0; j < signs.size(); j++) {
+                            if (!signs.get(j).baseline() && q - lastHit[j] <= DAY) {
+                                baseWithSign++;
+                                break;
+                            }
+                        }
+                    }
                     double[] r = new double[3 + 2 * exits.size()];
                     r[0] = day;
                     r[1] = year;
@@ -212,6 +241,11 @@ public final class PrePumpStudy {
         return PumpStudy.fromHigh(s, q, n);
     }
 
+    PrePumpStudy minHistory(int bars) {
+        this.minHistory = bars;
+        return this;
+    }
+
     /** 交易明细和大涨事件明细。 */
     public void writeCsv(java.nio.file.Path dir) throws java.io.IOException {
         StringBuilder h = new StringBuilder("# 迹象编号: ");
@@ -220,10 +254,10 @@ public final class PrePumpStudy {
         for (int j = 0; j < exits.size(); j++) h.append(j).append('=').append(exits.get(j).name()).append("; ");
         h.append("\nsign,symbol,entry_time_utc,entry_open,impact_pct,max_up_24h_pct");
         for (int j = 0; j < exits.size(); j++) h.append(",net_").append(j).append(",gross_").append(j);
-        Csv.writeGz(dir.resolve("prepump-trades.csv.gz"), h.toString(), tradeLog);
+        Csv.writeGz(dir.resolve(filePrefix + "-trades.csv.gz"), h.toString(), tradeLog);
         StringBuilder e = new StringBuilder("# 每个币每天 UTC 23:45 收盘看一次，之后 24h 最高涨 ≥20% 记一次大涨；sign_k=1 表示事前 24 小时内出现过第 k 种迹象\nsymbol,entry_time_utc,entry_open,max_up_24h_pct");
-        for (int k = 1; k < signs.size(); k++) e.append(",sign_").append(k);
-        Csv.writeGz(dir.resolve("prepump-events.csv.gz"), e.toString(), eventLog);
+        for (int k = 0; k < signs.size(); k++) if (!signs.get(k).baseline()) e.append(",sign_").append(k);
+        Csv.writeGz(dir.resolve(filePrefix + "-events.csv.gz"), e.toString(), eventLog);
     }
 
     int count(int sign) {
@@ -231,11 +265,13 @@ public final class PrePumpStudy {
     }
 
     public String markdown() {
-        StringBuilder b = new StringBuilder("## 大涨前埋伏检验（整点检查迹象；下一根 15 分钟开盘买入；同一币同一迹象 24 小时只算一次；不含 BTC/ETH）\n\n");
+        StringBuilder b = new StringBuilder("## ").append(title).append("\n\n");
         b.append("「之后 24h 涨到 +10% / +20%」= 买入后 24 小时内最高价达到的比例，和第一行「随便买」比，高出越多说明迹象越有用。")
                 .append("「抓到率」= 所有 24 小时内涨过 20% 的大涨里，事前 24 小时内出现过这个迹象的比例。净收益扣来回手续费和 1,000U 冲击。\n\n");
-        b.append(String.format(Locale.ROOT, "大涨事件（某币某天之后 24h 内最高涨 ≥20%%）共 %d 次；事前 24 小时内出现过 9 种迹象中任意一种的（合并去重）%d 次，合并抓到率 %.0f%%。%n%n",
-                pumps, caughtAny, pumps == 0 ? 0 : caughtAny * 100.0 / pumps));
+        long n = signs.stream().filter(x -> !x.baseline()).count();
+        b.append(String.format(Locale.ROOT, "大涨事件（某币某天之后 24h 内最高涨 ≥20%%）共 %d 次；事前 24 小时内出现过 %d 种迹象中任意一种的（合并去重）%d 次，合并抓到率 %.1f%%。"
+                        + "对照：第一行随便买的 %d 个币-天里，事前 24 小时出现过任意迹象的占 %.1f%%（两者差得越多，迹象越能区分大涨）。%n%n",
+                pumps, n, caughtAny, pumps == 0 ? 0 : caughtAny * 100.0 / pumps, baseDays, baseDays == 0 ? 0 : baseWithSign * 100.0 / baseDays));
         b.append("| 迹象 | 笔数 | 每天平均笔数 | 之后 24h 涨到 +10% | 涨到 +20% | 抓到率 |");
         for (PumpStudy.Exit e : exits) b.append(' ').append(e.name()).append(" 净% |");
         b.append(" 最好卖法不算成本% |\n|---|---|---|---|---|---|");
@@ -248,7 +284,7 @@ public final class PrePumpStudy {
             double p10 = rs.stream().filter(r -> r[2] >= 10).count() * 100.0 / rs.size();
             double p20 = rs.stream().filter(r -> r[2] >= 20).count() * 100.0 / rs.size();
             b.append(String.format(Locale.ROOT, "| %s | %d | %.1f | %.1f%% | %.1f%% | %s |", signs.get(k).name(), rs.size(),
-                    rs.size() / (double) Math.max(1, days), p10, p20, k == 0 || pumps == 0 ? "-" : String.format(Locale.ROOT, "%.0f%%", caught[k] * 100.0 / pumps)));
+                    rs.size() / (double) Math.max(1, days), p10, p20, signs.get(k).baseline() || pumps == 0 ? "-" : String.format(Locale.ROOT, "%.0f%%", caught[k] * 100.0 / pumps)));
             int best = 0;
             double bestMean = -1e9;
             for (int j = 0; j < exits.size(); j++) {

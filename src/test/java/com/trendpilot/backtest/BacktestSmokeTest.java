@@ -85,6 +85,10 @@ class BacktestSmokeTest {
         pump.writeCsv(dir.resolve("pump-trades.csv.gz"));
         assertThat(dir.resolve("prepump-trades.csv.gz")).exists();
         assertThat(dir.resolve("prepump-events.csv.gz")).exists();
+        PrePumpStudy deriv = new PrePumpStudy(data, DerivSigns.signs(new FuturesData(dir, data.start, data.size / 4 + 1)), "合约迹象", "deriv").minHistory(0);
+        deriv.run(fromQ, data.size);
+        assertThat(deriv.markdown()).contains("对照 A");
+        deriv.writeCsv(dir);
         TrendStudy trend = new TrendStudy(data);
         trend.run(fromQ, fromQ + 15 * 96, data.size);
         assertThat(trend.results()).isNotEmpty();

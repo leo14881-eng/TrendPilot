@@ -38,6 +38,9 @@ import com.trendpilot.v2n.V2nParams;
  */
 public final class BacktestMain {
 
+    /** 合约持仓量、多空比数据（每天一个包，量大）只下载这一天起的。 */
+    static final LocalDate METRICS_FROM = LocalDate.of(2025, 1, 1);
+
     public static void main(String[] args) throws Exception {
         Path dataDir = Path.of(args.length > 0 ? args[0] : "backtest-data");
         Path outDir = Path.of(args.length > 1 ? args[1] : "backtest-out");
@@ -104,11 +107,19 @@ public final class BacktestMain {
             pump.run(fromQ, size);
             PrePumpStudy pre = new PrePumpStudy(data);
             pre.run(fromQ, size);
+            // 合约数据：资金费率和数据同起点；持仓量、多空比数据量大，只取 METRICS_FROM 起
+            FuturesData fd = new FuturesData(dataDir.resolve("futures"), start, size / 4 + 1);
+            LocalDate metricsTo = lastDay != null ? lastDay : to.atEndOfMonth();
+            fd.load(data.series.keySet(), from, to, METRICS_FROM, metricsTo);
+            PrePumpStudy deriv = new PrePumpStudy(data, DerivSigns.signs(fd),
+                    "合约数据和成交结构的大涨前迹象（整点检查；下一根 15 分钟开盘买入；同一币同一迹象 24 小时只算一次；不含 BTC/ETH）", "deriv").minHistory(0);
+            deriv.run(fromQ, size);
             TrendStudy trend = new TrendStudy(data);
             trend.run(fromQ, splitQ, size);
-            String md = "# 信号检验（" + period + "）\n\n" + pre.markdown() + pump.markdown() + trend.markdown("前段", "后段") + f150.markdown() + f30.markdown() + edge.markdown();
+            String md = "# 信号检验（" + period + "）\n\n" + fd.summary() + "持仓量和多空比只有 " + METRICS_FROM + " 起的数据，相关迹象请和对照 C 比。\n\n" + deriv.markdown() + pre.markdown() + pump.markdown() + trend.markdown("前段", "后段") + f150.markdown() + f30.markdown() + edge.markdown();
             Files.writeString(outDir.resolve("report.md"), md);
             pre.writeCsv(outDir);
+            deriv.writeCsv(outDir);
             pump.writeCsv(outDir.resolve("pump-trades.csv.gz"));
             trend.writeBtcCsv(outDir.resolve("trend-btc-daily.csv"));
             f150.writePoolCsv(outDir);

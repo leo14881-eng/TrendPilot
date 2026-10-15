@@ -126,7 +126,7 @@ public final class Archive {
     }
 
     /** @return 是否新下载了；已有或不存在都返回 false（不存在记一个 .none 标记，不重复请求）。 */
-    private boolean fetch(String rel) throws IOException, InterruptedException {
+    boolean fetch(String rel) throws IOException, InterruptedException {
         Path target = dir.resolve(rel);
         Path none = dir.resolve(rel + ".none");
         if (Files.exists(target) || Files.exists(none)) return false;
@@ -155,7 +155,7 @@ public final class Archive {
         }
     }
 
-    private String get(String url) throws IOException, InterruptedException {
+    String get(String url) throws IOException, InterruptedException {
         for (int attempt = 1; ; attempt++) {
             try {
                 HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(60)).build(),
@@ -191,13 +191,13 @@ public final class Archive {
         }
     }
 
-    /** CSV：open_time, open, high, low, close, volume, close_time, quote_volume, ... 可能带表头。step 是网格步长（毫秒）。 */
+    /** CSV：open_time, open, high, low, close, volume, close_time, quote_volume, trades, taker_buy_base, taker_buy_quote, ignore；可能带表头。step 是网格步长（毫秒）。 */
     static boolean parse(BufferedReader r, Series s, long step) throws IOException {
         boolean any = false;
         String line;
         while ((line = r.readLine()) != null) {
             if (line.isEmpty() || !Character.isDigit(line.charAt(0))) continue;
-            String[] f = line.split(",", 9);
+            String[] f = line.split(",", 12);
             long t = Long.parseLong(f[0]);
             if (t > 100_000_000_000_000L) t /= 1000; // 微秒 → 毫秒
             long off = t - s.start;
@@ -205,8 +205,9 @@ public final class Archive {
             int i = (int) (off / step);
             double c = Double.parseDouble(f[4]);
             if (!(c > 0)) continue;
+            double takerBuy = f.length > 10 ? Double.parseDouble(f[10]) : 0;
             s.set(i, Double.parseDouble(f[1]), Double.parseDouble(f[2]), Double.parseDouble(f[3]), c,
-                    Double.parseDouble(f[7]));
+                    Double.parseDouble(f[7]), takerBuy);
             any = true;
         }
         return any;

@@ -21,6 +21,8 @@ public final class Series {
     public final float[] low;
     public final float[] close;
     public final float[] quoteVolume;
+    /** 主动买入成交额（taker buy quote volume）；旧数据或测试里没有时为 0。 */
+    public final float[] takerBuyQuote;
 
     public Series(String symbol, long start, int size) {
         this.symbol = symbol;
@@ -30,6 +32,7 @@ public final class Series {
         low = new float[size];
         close = new float[size];
         quoteVolume = new float[size];
+        takerBuyQuote = new float[size];
         java.util.Arrays.fill(close, Float.NaN);
     }
 
@@ -42,12 +45,45 @@ public final class Series {
     }
 
     public void set(int i, double o, double h, double l, double c, double qv) {
+        set(i, o, h, l, c, qv, 0);
+    }
+
+    public void set(int i, double o, double h, double l, double c, double qv, double takerBuy) {
         if (i < 0 || i >= close.length) return;
+        takerBuyQuote[i] = (float) takerBuy;
         open[i] = (float) o;
         high[i] = (float) h;
         low[i] = (float) l;
         close[i] = (float) c;
         quoteVolume[i] = (float) qv;
+    }
+
+    /** 最近 n 根的主动买入占成交额的比例（0~1）；没有成交或没有数据时 NaN。 */
+    public double takerBuyShare(int last, int n) {
+        double v = 0, b = 0;
+        for (int i = Math.max(0, last - n + 1); i <= last && i < close.length; i++) {
+            if (Float.isNaN(close[i])) continue;
+            v += quoteVolume[i];
+            b += takerBuyQuote[i];
+        }
+        return v <= 0 || b <= 0 ? Double.NaN : b / v;
+    }
+
+    private int first = -2;
+
+    /** 第一根有数据的下标；没有数据为 -1。 */
+    public int firstIndex() {
+        if (first == -2) {
+            int f = -1;
+            for (int i = 0; i < close.length; i++) {
+                if (!Float.isNaN(close[i])) {
+                    f = i;
+                    break;
+                }
+            }
+            first = f;
+        }
+        return first;
     }
 
     public long openTime(int i) {
