@@ -158,11 +158,14 @@ public class HoldingsReport {
         // ---------- 一、概览 ----------
         out.add("## 一、概览");
         out.add("");
+        out.add(String.format(Locale.ROOT, "- **合计（已实现 + 浮动）%s U**%s", signed(realized + net),
+                dayChange(ShadowBook.BOOK, dayStart, realized + net)));
         out.add(String.format(Locale.ROOT, "- 当天已实现 %s U（平仓 %d 笔，盈利 %d 笔）；累计已实现 %s U", signed(today), sells.size(),
                 wins, signed(realized)));
         out.add(String.format(Locale.ROOT, "- 持仓 %d 个，成本 %s U，浮动 %s U（%s），%d 个浮亏、%d 个浮盈", rows.size(), money(cost),
                 signed(net), pct(cost == 0 ? 0 : net / cost * 100), losers, rows.size() - losers));
-        out.add(String.format(Locale.ROOT, "- 已实现 + 浮动合计 %s U", signed(realized + net)));
+        out.add("- 说明：现行规则不止损，只有赚钱或利润保护时才卖，亏损仓一直拿着，所以平仓几乎全是盈利，"
+                + "单看已实现会偏乐观；判断好坏请看合计。");
         out.add("");
 
         // ---------- 二、持仓明细 ----------
@@ -246,7 +249,8 @@ public class HoldingsReport {
         long v1losers = v1rows.stream().filter(r -> r.net() < 0).count();
         out.add("## 六、V1 宽口径观察（对照用，按参考价记账）");
         out.add("");
-        out.add(String.format(Locale.ROOT, "合计：%d 个仓位，总成本 %s U，浮动净盈亏 %s U（%s），%d 个浮亏、%d 个浮盈。已实现累计 %s U，当天 %s U。",
+        out.add(String.format(Locale.ROOT, "**合计（已实现 + 浮动）%s U**%s。%d 个仓位，总成本 %s U，浮动净盈亏 %s U（%s），%d 个浮亏、%d 个浮盈。已实现累计 %s U，当天 %s U。",
+                signed(v1.realizedPnl() + v1net), dayChange(ObservationBook.BOOK, dayStart, v1.realizedPnl() + v1net),
                 v1rows.size(), money(v1cost), signed(v1net), pct(v1cost == 0 ? 0 : v1net / v1cost * 100), v1losers,
                 v1rows.size() - v1losers, signed(v1.realizedPnl()),
                 signed(sells(ObservationBook.BOOK, dayStart, dayEnd).stream().mapToDouble(Sell::pnl).sum())));
@@ -262,6 +266,14 @@ public class HoldingsReport {
             out.add("");
         }
         return String.join("\n", out) + "\n";
+    }
+
+    /** "，当天 ±x U"：合计相对当天 0 点（越南时间）前最后一个净值点的变化；没有当天之前的记录时不显示。 */
+    private String dayChange(String book, Instant dayStart, double total) {
+        Optional<Double> start = jdbc.sql("""
+                SELECT realized + unrealized FROM equity_curve WHERE book = :b AND at <= :t ORDER BY at DESC, id DESC LIMIT 1
+                """).param("b", book).param("t", dayStart.toString()).query(Double.class).optional();
+        return start.map(v -> String.format(Locale.ROOT, "，当天 %s U", signed(total - v))).orElse("");
     }
 
     private static String v1Line(String tag, Row r, Instant now) {
@@ -356,6 +368,7 @@ public class HoldingsReport {
             case "HARD_INVALID_NOT_TRADING" -> "停止交易/下架";
             case "HARD_INVALID_IDENTITY" -> "黑名单";
             case "HARD_INVALID_LIQUIDITY" -> "流动性异常";
+            case "TIME_SETTLE" -> "到期结算（V1 观察满 72 小时）";
             default -> reason;
         };
     }

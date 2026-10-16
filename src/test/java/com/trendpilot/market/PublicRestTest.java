@@ -42,4 +42,18 @@ class PublicRestTest {
         assertThatThrownBy(() -> rest.get(() -> http.get().uri("/a"), "a")).hasMessageContaining("限流暂停中");
         server.verify();
     }
+
+    @Test
+    void failureMessageCarriesTheCause() {
+        RestClient.Builder b = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(b).build();
+        RestClient http = b.baseUrl("https://x.test").build();
+        PublicRest rest = new PublicRest("X", 2, 0);
+        server.expect(ExpectedCount.times(3), requestTo("https://x.test/a")).andRespond(withStatus(HttpStatus.BAD_GATEWAY));
+        assertThatThrownBy(() -> rest.get(() -> http.get().uri("/a"), "a")).hasMessageContaining("HTTP 502");
+        org.assertj.core.api.Assertions.assertThat(PublicRest.reason(
+                new org.springframework.web.client.ResourceAccessException("I/O error", new java.net.UnknownHostException("api.bybit.com"))))
+                .isEqualTo("UnknownHostException：api.bybit.com");
+        org.assertj.core.api.Assertions.assertThat(PublicRest.reason(null)).isEqualTo("未知");
+    }
 }

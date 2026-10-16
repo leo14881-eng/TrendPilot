@@ -87,4 +87,25 @@ class NotifierTest {
         assertThat(n.sendAlways("standby-switch", "⏸")).isTrue();
         server.verify();
     }
+
+    @Test
+    void strandedPreparedIsResentAfterRestart() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        Notifier n = new Notifier(jdbc, new TelegramProperties("1:t", "9", "https://tg.test"), builder);
+        Instant now = Instant.now();
+        // 写入 Outbox 后服务被重启：一条 10 分钟前的 PREPARED，一条刚写入的 PREPARED（可能正在发送，不动它）
+        jdbc.sql("INSERT INTO notification_outbox(event_key, channel, text, status, created_at) VALUES ('stranded-old', 'TELEGRAM', '⚠️ 旧告警', 'PREPARED', :t)")
+                .param("t", now.minus(java.time.Duration.ofMinutes(10)).toString()).update();
+        jdbc.sql("INSERT INTO notification_outbox(event_key, channel, text, status, created_at) VALUES ('stranded-new', 'TELEGRAM', '新告警', 'PREPARED', :t)")
+                .param("t", now.minus(java.time.Duration.ofMinutes(1)).toString()).update();
+        server.expect(ExpectedCount.once(), requestTo("https://tg.test/bot1%3At/sendMessage"))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.text")
+                        .value(Notifier.RESENT_PREFIX + "⚠️ 旧告警"))
+                .andRespond(withSuccess());
+        assertThat(n.retryFailed(now)).isEqualTo(1);
+        server.verify();
+        assertThat(jdbc.sql("SELECT status FROM notification_outbox WHERE event_key = 'stranded-old'").query(String.class).single()).isEqualTo("SENT");
+        assertThat(jdbc.sql("SELECT status FROM notification_outbox WHERE event_key = 'stranded-new'").query(String.class).single()).isEqualTo("PREPARED");
+    }
 }

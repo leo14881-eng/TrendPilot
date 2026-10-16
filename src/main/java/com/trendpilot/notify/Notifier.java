@@ -18,7 +18,7 @@ import org.springframework.web.client.RestClientException;
  * 通知发送：先写 Outbox（PREPARED），再发 Telegram，成功记 SENT，失败记 FAILED。
  * 同一个 eventKey 只发一次。PREPARED 不代表用户已收到。
  * 超过 Telegram 单条上限的消息按行分段发送；失败的消息每 2 分钟重试，24 小时内最多 6 次，
- * 已发出的分段不重发。
+ * 已发出的分段不重发。写入后没来得及发送就重启的（超过 5 分钟仍是 PREPARED）也按同样规则补发。
  */
 @Service
 public class Notifier {
@@ -27,6 +27,9 @@ public class Notifier {
     /** Telegram 单条上限 4096 字符，留余量。 */
     static final int MAX_PART = 4000;
     static final int MAX_ATTEMPTS = 6;
+    /** 写入 Outbox 后超过这么久仍是 PREPARED，说明发送前服务被重启了。 */
+    static final Duration STRANDED_AFTER = Duration.ofMinutes(5);
+    static final String RESENT_PREFIX = "（补发：服务重启前没来得及发出）\n";
 
     private final JdbcClient jdbc;
     private final TelegramProperties props;
@@ -109,16 +112,21 @@ public class Notifier {
 
     public int retryFailed(Instant now) {
         if (!props.configured() || !sendGate.getAsBoolean()) return 0;
-        record Pending(String key, String text, int sentParts) { }
+        record Pending(String key, String text, int sentParts, boolean stranded) { }
+        // PREPARED 超过 STRANDED_AFTER 还没发：写入 Outbox 后服务被重启/停止，来不及发出，一并补发
         List<Pending> pending = jdbc.sql("""
-                SELECT event_key, text, sent_parts FROM notification_outbox
-                WHERE status = 'FAILED' AND attempts < :max AND created_at >= :since ORDER BY id
+                SELECT event_key, text, sent_parts, status FROM notification_outbox
+                WHERE (status = 'FAILED' OR (status = 'PREPARED' AND created_at < :stale))
+                  AND attempts < :max AND created_at >= :since ORDER BY id
                 """)
                 .param("max", MAX_ATTEMPTS).param("since", now.minus(Duration.ofHours(24)).toString())
-                .query((rs, i) -> new Pending(rs.getString(1), rs.getString(2), rs.getInt(3))).list();
+                .param("stale", now.minus(STRANDED_AFTER).toString())
+                .query((rs, i) -> new Pending(rs.getString(1), rs.getString(2), rs.getInt(3),
+                        "PREPARED".equals(rs.getString(4)))).list();
         int sent = 0;
         for (Pending p : pending) {
-            if (deliver(p.key(), p.text(), p.sentParts())) sent++;
+            String text = p.stranded() ? RESENT_PREFIX + p.text() : p.text();
+            if (deliver(p.key(), text, p.sentParts())) sent++;
             else break; // 网络还没恢复，下一轮再试
         }
         return sent;

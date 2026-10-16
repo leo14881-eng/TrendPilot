@@ -43,6 +43,8 @@ final class StreamConnection {
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
 
     private volatile WebSocket socket;
+    /** 下一条排队消息最早可发送的时刻（见 sendPaced）。 */
+    private long nextPacedMs;
     private CompletableFuture<?> sendTail = CompletableFuture.completedFuture(null);
     private volatile boolean closed;
     private volatile long connectedAtMs;
@@ -126,11 +128,17 @@ final class StreamConnection {
         });
     }
 
-    /** 分批发送订阅消息，每批间隔 gapMs，避免超过交易所的消息频率限制。 */
-    void sendPaced(List<String> messages, long gapMs) {
-        for (int i = 0; i < messages.size(); i++) {
-            String m = messages.get(i);
-            scheduler.schedule(() -> send(m), i * gapMs, TimeUnit.MILLISECONDS);
+    /**
+     * 分批发送订阅消息，相邻两条至少间隔 gapMs，避免超过交易所的消息频率限制（Binance 每秒 5 条）。
+     * 间隔按整个连接统一排队：启动时"连上后重新订阅全部"和"订阅列表更新"可能同时发生，
+     * 各排各的会叠加成两倍速率，被交易所以 1008 Too many requests 断开。
+     */
+    synchronized void sendPaced(List<String> messages, long gapMs) {
+        long now = System.currentTimeMillis();
+        for (String m : messages) {
+            long at = Math.max(now, nextPacedMs);
+            nextPacedMs = at + gapMs;
+            scheduler.schedule(() -> send(m), at - now, TimeUnit.MILLISECONDS);
         }
     }
 

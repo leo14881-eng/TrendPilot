@@ -23,4 +23,22 @@ class StreamConnectionTest {
         assertThat(StreamConnection.stale(true, now - 30_000, now)).isFalse();
         assertThat(StreamConnection.stale(false, 0, now)).isFalse(); // 没连上时由退避重连负责
     }
+
+    @Test
+    void overlappingPacedBatchesShareOneQueue() {
+        var scheduler = org.mockito.Mockito.mock(java.util.concurrent.ScheduledExecutorService.class);
+        var c = new StreamConnection("X", java.net.URI.create("wss://x.test"), m -> { }, x -> { }, scheduler);
+        // 连上后的全量重订阅和订阅更新同时到来：合起来仍是每 300ms 一条，而不是两路叠加
+        c.sendPaced(java.util.List.of("a", "b", "c"), 300);
+        c.sendPaced(java.util.List.of("d", "e"), 300);
+        var delays = org.mockito.ArgumentCaptor.forClass(Long.class);
+        org.mockito.Mockito.verify(scheduler, org.mockito.Mockito.times(5))
+                .schedule(org.mockito.ArgumentMatchers.any(Runnable.class), delays.capture(),
+                        org.mockito.ArgumentMatchers.eq(java.util.concurrent.TimeUnit.MILLISECONDS));
+        java.util.List<Long> d = delays.getAllValues();
+        for (int i = 1; i < d.size(); i++) {
+            assertThat(d.get(i) - d.get(i - 1)).isBetween(250L, 300L);
+        }
+        assertThat(d.get(4)).isBetween(1150L, 1200L);
+    }
 }

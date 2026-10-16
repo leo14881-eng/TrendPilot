@@ -143,11 +143,25 @@ final class PublicRest {
                 pause(2_000L << (attempt - 1));
             }
             if (attempt < MAX_ATTEMPTS) {
-                log.warn("{} 请求失败，第 {} 次重试：{}", name, attempt, what);
+                log.warn("{} 请求失败（{}），第 {} 次重试：{}", name, reason(last), attempt, what);
                 sleep(Duration.ofMillis(500L << (attempt - 1)));
             }
         }
-        throw new MarketDataException(name + " 请求多次失败：" + what, last);
+        throw new MarketDataException(name + " 请求多次失败（" + reason(last) + "）：" + what, last);
+    }
+
+    /** 失败原因的简短说明：HTTP 状态码，或网络错误的根因类型和信息，便于事后定位。 */
+    static String reason(Exception e) {
+        if (e == null) return "未知";
+        if (e instanceof HttpStatusCodeException h) return "HTTP " + h.getStatusCode().value();
+        if (e instanceof RetryableException) return "交易所返回限流：" + e.getMessage();
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        String msg = root.getMessage();
+        String type = root.getClass().getSimpleName();
+        if (msg == null || msg.isBlank()) return type;
+        msg = msg.length() > 120 ? msg.substring(0, 120) : msg;
+        return type + "：" + msg;
     }
 
     /** 交易所在 200 响应里返回的限流等可重试错误。 */
