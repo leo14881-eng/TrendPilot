@@ -45,7 +45,7 @@ logging:
 
 # 策略参数（人工修改后请同时修改 version）
 trendpilot.strategy:
-  version: v3.2-2026-10-15-datasafe
+  version: v3.3-2026-10-17-observe
   fee-rate: 0.001                 # 单边手续费 0.1%
   universe:
     quote-asset: USDT
@@ -246,10 +246,13 @@ trendpilot.btc-daily:
     us10y-rise-pp: 0.2           # 10 年期利率 5 日升 ≥ 0.2 个百分点 → 减半（需 FRED key）
     dollar-rise-pct: 1.5         # 美元指数 5 日涨 ≥ 1.5% → 减半（需 FRED key）
     min-multiplier: 0.25
-    # 美联储议息决议日（官方日程；2027 年日程公布后补上）。CPI 发布日由 FRED 获取
+    # 美联储议息决议日（官方日程；2027 年日程公布后补上）。CPI 发布日由 FRED 获取，没有 FRED key 时用下面的 BLS 官方日程
     fomc-dates: ["2024-01-31", "2024-03-20", "2024-05-01", "2024-06-12", "2024-07-31", "2024-09-18", "2024-11-07", "2024-12-18",
                  "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18", "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
                  "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17", "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09"]
+    # CPI 发布日（BLS 官方日程 bls.gov/schedule/2026；2027 年日程公布后补上）。某年没有日程且没有 FRED key 时按数据缺失处理（金额减半）
+    cpi-dates: ["2026-01-13", "2026-02-13", "2026-03-11", "2026-04-10", "2026-05-12", "2026-06-10",
+                "2026-07-14", "2026-08-12", "2026-09-11", "2026-10-14", "2026-11-10", "2026-12-10"]
     fred-api-key: ${FRED_API_KEY:}   # 免费 key，填在本机 config/application-local.yml 的 trendpilot.btc-daily.filters.fred-api-key
     binance-futures-url: https://fapi.binance.com
     fear-greed-url: https://api.alternative.me

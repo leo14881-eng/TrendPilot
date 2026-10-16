@@ -44,6 +44,8 @@ import com.trendpilot.universe.UniverseFilter;
  *     距上次 V1 退出至少一个再入场冷却期。没有评分门槛、资金池和数量上限。</li>
  * <li>记账：每笔名义 1,000U，按参考价 + 手续费记账（不请求盘口），样本收益不能当作可执行组合收益。</li>
  * <li>退出：与 V2 相同的退出顺序（硬失效 → 利润保护 → 论点失效 → 8% 复核），价格取一次批量的 24h 行情。</li>
+ * <li>到期结算：持有满 {@link #SETTLE_AFTER} 仍没卖的，按当时参考价结算（TIME_SETTLE）。V1 只是对照样本、不止损，
+ *     不结算的话亏损仓会一直累积（几百个），已实现盈亏只剩盈利单，统计失真；固定周期结算后每笔样本都有结果。</li>
  * </ul>
  * 每轮的 V1 进入与退出各汇总成一条 Telegram，避免刷屏。
  */
@@ -53,6 +55,9 @@ public class V1Tracker {
     private static final Logger log = LoggerFactory.getLogger(V1Tracker.class);
     /** V1 买入/卖出通知只列前 20 个，其余只给数量（全部明细在网页和数据库里）。 */
     static final int NOTIFY_TOP = 20;
+    /** V1 观察仓位的最长持有时间，到期按参考价结算。 */
+    static final Duration SETTLE_AFTER = Duration.ofHours(72);
+    static final String TIME_SETTLE = "TIME_SETTLE";
 
     private final ObservationBook book;
     private final Markets markets;
@@ -173,13 +178,15 @@ public class V1Tracker {
                 for (String note : d.notes()) {
                     if (!note.equals("PROTECTION_GAPPED")) book.note(pos, note, gen, now);
                 }
-                if (d.sell()) {
-                    book.close(pos, d.fill(), d.netPnl(), d.reason(), gen, now);
+                boolean settle = settleDue(pos, d, now);
+                if (d.sell() || settle) {
+                    String reason = d.sell() ? d.reason() : TIME_SETTLE;
+                    book.close(pos, d.fill(), d.netPnl(), reason, gen, now);
                     exits.add(pos.symbol());
                     total = total.add(d.netPnl());
                     lines.add(Map.entry(d.netPnl().abs().doubleValue(), String.format(Locale.ROOT,
                             "· %s%s %s，净盈亏 %s U（%.2f%%）", pos.symbol(),
-                            Messages.venueTag(pos.venue()), d.reason(), Messages.money(d.netPnl()), d.rawReturnPct())));
+                            Messages.venueTag(pos.venue()), reason, Messages.money(d.netPnl()), d.rawReturnPct())));
                 } else {
                     book.update(d.updated(), d.netPnl(), now);
                 }
@@ -192,5 +199,12 @@ public class V1Tracker {
                     Messages.top(lines, NOTIFY_TOP, "盈亏金额最大"));
         }
         return exits;
+    }
+
+    /** 持有满 SETTLE_AFTER、本轮规则判断继续持有、且盘口正常（结算价可信）时到期结算。 */
+    static boolean settleDue(Position pos, ExitDecision d, Instant now) {
+        return !d.sell() && "HOLD".equals(d.reason()) && !d.notes().contains("ABNORMAL_BOOK_HOLD")
+                && d.fill() != null && d.fill().complete()
+                && !Duration.between(pos.openedAt(), now).minus(SETTLE_AFTER).isNegative();
     }
 }

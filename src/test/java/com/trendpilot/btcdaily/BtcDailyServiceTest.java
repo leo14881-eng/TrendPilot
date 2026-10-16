@@ -78,6 +78,30 @@ class BtcDailyServiceTest {
         }
     }
 
+    /** 计划日需要的市场数据都在（资金费率、恐惧贪婪、ETF 资金流），按正常口径出计划。 */
+    void seedContext(LocalDate day) {
+        String sql = "INSERT OR REPLACE INTO btc_daily_series(source, day, value) VALUES (:s, :d, :v)";
+        jdbc.sql(sql).param("s", "funding").param("d", day.minusDays(1).toString()).param("v", 0.01).update();
+        jdbc.sql(sql).param("s", "fng").param("d", day.minusDays(1).toString()).param("v", 50.0).update();
+        for (int i = 2; i <= 4; i++) {
+            jdbc.sql(sql).param("s", "etf").param("d", day.minusDays(i).toString()).param("v", 10.0).update();
+        }
+    }
+
+    @Test
+    void missingEtfFlowMeansNoNewRound() {
+        LocalDate day = LocalDate.parse("2026-10-15");
+        long start = BtcDailyRules.dayStart(day);
+        List<Kline> daily = new ArrayList<>(BtcDailyRulesTest.daily(day.minusDays(1), 80, 60_000, 2_000));
+        daily.add(new Kline(start, 60_000, 60_000, 60_000, 60_000, 1e9, start + 86_399_999L));
+        market.daily.put("BTCUSDT", daily);
+        market.quarters.put("BTCUSDT", quarters(start - 120 * Q, start, 60_000));
+        service.tick(Instant.ofEpochMilli(start + 60_000)); // 外部数据源全部拿不到
+        assertThat(jdbc.sql("SELECT skip_new FROM btc_daily_plan").query(Integer.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT reasons FROM btc_daily_plan").query(String.class).single())
+                .contains("数据缺失（ETF 资金流）：不开新一轮");
+    }
+
     @Test
     void planThenBuyAddAndTakeProfit() {
         LocalDate day = LocalDate.parse("2026-10-15");
@@ -85,6 +109,7 @@ class BtcDailyServiceTest {
         List<Kline> daily = new ArrayList<>(BtcDailyRulesTest.daily(day.minusDays(1), 80, 60_000, 2_000));
         daily.add(new Kline(start, 60_000, 60_000, 60_000, 60_000, 1e9, start + 86_399_999L)); // 今天未收盘
         market.daily.put("BTCUSDT", daily);
+        seedContext(day);
 
         // 07:01（UTC 00:01）：首次运行，生成计划并推送
         Instant t0 = Instant.ofEpochMilli(start + 60_000);

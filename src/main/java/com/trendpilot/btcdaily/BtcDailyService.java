@@ -168,6 +168,9 @@ public class BtcDailyService {
             }
         }
         if (plan == null) plan = BtcDailyRules.plan(day, before, today.open(), book, p, ctx);
+        if (p.filters().enabled()) {
+            plan = BtcDailyRules.guardMissingData(plan, ctx.missingDataGate(p.filters()), p.filters().minMultiplier());
+        }
         store.savePlan(plan, now);
         LocalDate yesterday = day.minusDays(1);
         notifier.send("btc-daily-plan-" + day, BtcDailyMessages.plan(plan, book, store.daySummary(yesterday), live()));

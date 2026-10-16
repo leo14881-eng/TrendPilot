@@ -86,6 +86,28 @@ public final class BtcDailyRules {
                 regime(dailyBefore, p), 0, 0);
     }
 
+    /**
+     * 实盘缺数据保护（见 {@link MarketContext#missingDataGate}）：只作用于新一轮的挂单，已有仓位的止盈和加仓不变。
+     * 不开新一轮时去掉全部挂单；减半时按比例缩小每档金额（总乘数不低于 minMultiplier）。
+     */
+    static DailyPlan guardMissingData(DailyPlan plan, MarketContext.Gate guard, double minMultiplier) {
+        if (plan.carried() || plan.levels().isEmpty() || guard.reasons().isEmpty()) return plan;
+        String reasons = plan.reasons().isBlank() ? guard.text() : plan.reasons() + "；" + guard.text();
+        if (guard.skipNew()) {
+            return new DailyPlan(plan.day(), plan.version(), plan.open(), plan.atr(), plan.ema(), plan.prevClose(),
+                    plan.strong(), plan.carried(), plan.tpPct(), List.of(), true, 0, reasons, plan.strategy(),
+                    plan.regime(), plan.hourAtr(), plan.addFloor());
+        }
+        double before = plan.multiplier() > 0 ? plan.multiplier() : 1;
+        double after = Math.max(minMultiplier, before * guard.multiplier());
+        double factor = Math.min(1, after / before);
+        List<DailyPlan.Level> levels = plan.levels().stream()
+                .map(l -> new DailyPlan.Level(l.index(), l.price(), round2(l.usdt() * factor))).toList();
+        return new DailyPlan(plan.day(), plan.version(), plan.open(), plan.atr(), plan.ema(), plan.prevClose(),
+                plan.strong(), plan.carried(), plan.tpPct(), levels, plan.skipNew(), before * factor, reasons,
+                plan.strategy(), plan.regime(), plan.hourAtr(), plan.addFloor());
+    }
+
     /** 行情：UP 昨收 > EMA20 > EMA50；DOWN 见 {@link #downtrend}；其余 SIDE。 */
     static String regime(List<Kline> daily, BtcDailyProperties p) {
         if (downtrend(daily, p)) return "DOWN";

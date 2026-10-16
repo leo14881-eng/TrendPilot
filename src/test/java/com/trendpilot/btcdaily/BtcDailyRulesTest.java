@@ -187,6 +187,44 @@ class BtcDailyRulesTest {
     }
 
     @Test
+    void liveMissingDataNeverMeansFullSize() {
+        List<Kline> d = daily(DAY.minusDays(1), 60, 60_000, 2_000);
+        BtcDailyProperties.Filters f = P.filters();
+        // ETF 资金流拿不到：3 日大额流出这条检查做不了 → 不开新一轮
+        MarketContext noEtf = new MarketContext(DAY, null, 0.01, 50.0, null, null, null, null, null, null,
+                List.of(MarketContext.GAP_ETF, MarketContext.GAP_NO_FRED));
+        DailyPlan p1 = BtcDailyRules.plan(DAY, d, 60_000, new Book(), P, noEtf);
+        assertThat(p1.levels()).isNotEmpty(); // 原规则（回测口径）会开
+        DailyPlan g1 = BtcDailyRules.guardMissingData(p1, noEtf.missingDataGate(f), f.minMultiplier());
+        assertThat(g1.skipNew()).isTrue();
+        assertThat(g1.levels()).isEmpty();
+        assertThat(g1.reasons()).contains("数据缺失（ETF 资金流）：不开新一轮");
+
+        // 资金费率缺失：减半；没配 FRED 但 CPI 日程已知不算缺数据
+        MarketContext noFunding = new MarketContext(DAY, null, null, 50.0, DAY.minusDays(2), 10.0, 20.0, null, null,
+                null, List.of(MarketContext.GAP_FUNDING, MarketContext.GAP_NO_FRED));
+        DailyPlan p2 = BtcDailyRules.plan(DAY, d, 60_000, new Book(), P, noFunding);
+        DailyPlan g2 = BtcDailyRules.guardMissingData(p2, noFunding.missingDataGate(f), f.minMultiplier());
+        assertThat(g2.multiplier()).isEqualTo(0.5);
+        assertThat(g2.levels()).extracting(DailyPlan.Level::usdt)
+                .containsExactlyElementsOf(p2.levels().stream().map(l -> l.usdt() / 2).toList());
+
+        // 数据齐全：不变
+        MarketContext full = new MarketContext(DAY, null, 0.01, 50.0, DAY.minusDays(2), 10.0, 20.0, null, null, null,
+                List.of(MarketContext.GAP_NO_FRED));
+        DailyPlan p3 = BtcDailyRules.plan(DAY, d, 60_000, new Book(), P, full);
+        assertThat(BtcDailyRules.guardMissingData(p3, full.missingDataGate(f), f.minMultiplier())).isSameAs(p3);
+    }
+
+    @Test
+    void cpiCalendarFromConfigWithoutFred() {
+        BtcDailyProperties.Filters f = new BtcDailyProperties.Filters(true, 50, 5, 0.03, 80, 300, 1000, 0.2, 1.5, 0.25,
+                List.of(), List.of("2026-10-14"), "", null, null, null, null);
+        assertThat(f.cpiCalendarKnown(LocalDate.parse("2026-11-01"))).isTrue();
+        assertThat(f.cpiCalendarKnown(LocalDate.parse("2027-01-05"))).isFalse();
+    }
+
+    @Test
     void downtrendBlocksNewRoundButNotCarriedAdds() {
         List<Kline> d = new ArrayList<>();
         for (int i = 0; i < 60; i++) { // 每天跌 1%

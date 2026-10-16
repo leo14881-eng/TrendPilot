@@ -22,6 +22,16 @@ public record MarketContext(LocalDate day, String event, Double fundingPct, Doub
                             Double etfFlowM, Double etf3dM, Double us10yChg, Double dollarChg, Double oiUsd,
                             List<String> gaps) {
 
+    public static final String GAP_FUNDING = "资金费率";
+    public static final String GAP_FNG = "恐惧贪婪指数";
+    public static final String GAP_ETF = "ETF 资金流";
+    public static final String GAP_US10Y = "美国 10 年期利率";
+    public static final String GAP_DOLLAR = "美元指数";
+    /** 没配 FRED key：利率和美元指数这两个过滤不启用（是设置选择，不算缺数据）；CPI 用配置里的官方日程。 */
+    public static final String GAP_NO_FRED = "利率 / 美元指数（未配置 FRED key）";
+    /** 没配 FRED key，且配置里也没有这一年的 CPI 日程：当天是不是 CPI 发布日不知道。 */
+    public static final String GAP_NO_FRED_NO_CPI = "利率 / 美元指数 / CPI 日程（未配置 FRED key，也没有该年 CPI 日程）";
+
     public static MarketContext empty(LocalDate day) {
         return new MarketContext(day, null, null, null, null, null, null, null, null, null, List.of());
     }
@@ -74,5 +84,27 @@ public record MarketContext(LocalDate day, String event, Double fundingPct, Doub
         }
         double m = Math.max(f.minMultiplier(), Math.pow(0.5, halves));
         return new Gate(skip, m, List.copyOf(reasons));
+    }
+
+    /**
+     * 实盘专用的缺数据保护（"数据缺失只能导致不动作"）：本来该检查的数据拿不到时，不能当作"没问题"按满额开新一轮。
+     * <ul>
+     * <li>ETF 资金流缺失：3 日大额流出这条"不开新一轮"的检查做不了 → 不开新一轮；</li>
+     * <li>资金费率、恐惧贪婪、（已配 FRED 时的）利率、美元指数、CPI 日程缺失：每缺一项按触发处理，金额减半（不低于下限）。</li>
+     * </ul>
+     * 回测不用它：历史上很多数据源本来就没有（例如 ETF 2024 年才有），回测按原口径。
+     */
+    public Gate missingDataGate(BtcDailyProperties.Filters f) {
+        List<String> reasons = new ArrayList<>();
+        boolean skip = gaps.contains(GAP_ETF);
+        if (skip) reasons.add("数据缺失（" + GAP_ETF + "）：不开新一轮");
+        int halves = 0;
+        for (String g : List.of(GAP_FUNDING, GAP_FNG, GAP_US10Y, GAP_DOLLAR, GAP_NO_FRED_NO_CPI)) {
+            if (gaps.contains(g)) {
+                halves++;
+                reasons.add("数据缺失（" + g + "）：减半");
+            }
+        }
+        return new Gate(skip, Math.max(f.minMultiplier(), Math.pow(0.5, halves)), List.copyOf(reasons));
     }
 }

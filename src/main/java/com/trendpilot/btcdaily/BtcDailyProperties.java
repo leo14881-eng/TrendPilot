@@ -141,15 +141,22 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
      */
     public record Filters(boolean enabled, int emaLong, int slopeDays, double fundingMaxPct, double fearGreedMax,
                           double etfOutflowDayM, double etfOutflow3dM, double us10yRisePp, double dollarRisePct,
-                          double minMultiplier, List<String> fomcDates, String fredApiKey, String binanceFuturesUrl,
+                          double minMultiplier, List<String> fomcDates, List<String> cpiDates, String fredApiKey, String binanceFuturesUrl,
                           String fearGreedUrl, String farsideUrl, String fredUrl) {
 
         public Filters {
             if (fomcDates == null) fomcDates = List.of();
+            if (cpiDates == null) cpiDates = List.of();
             if (binanceFuturesUrl == null || binanceFuturesUrl.isBlank()) binanceFuturesUrl = "https://fapi.binance.com";
             if (fearGreedUrl == null || fearGreedUrl.isBlank()) fearGreedUrl = "https://api.alternative.me";
             if (farsideUrl == null || farsideUrl.isBlank()) farsideUrl = "https://farside.co.uk/btc/";
             if (fredUrl == null || fredUrl.isBlank()) fredUrl = "https://api.stlouisfed.org";
+        }
+
+        /** 这一年的 CPI 发布日是否已知（FRED 或配置里的官方日程）。 */
+        public boolean cpiCalendarKnown(java.time.LocalDate day) {
+            String year = day.getYear() + "-";
+            return fredConfigured() || cpiDates.stream().anyMatch(d -> d.startsWith(year));
         }
 
         public boolean fredConfigured() {
@@ -162,7 +169,7 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
                             "2024-11-07", "2024-12-18", "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
                             "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10", "2026-01-28", "2026-03-18",
                             "2026-04-29", "2026-06-17", "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09"),
-                    "", null, null, null, null);
+                    List.of(), "", null, null, null, null);
         }
     }
 

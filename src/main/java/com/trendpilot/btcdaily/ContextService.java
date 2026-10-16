@@ -128,19 +128,19 @@ public class ContextService {
         List<String> gaps = new ArrayList<>();
         String event = null;
         if (f.fomcDates().contains(day.toString())) event = "美联储议息";
-        else if (value(CPI, day) != null) event = "CPI 发布";
+        else if (value(CPI, day) != null || f.cpiDates().contains(day.toString())) event = "CPI 发布";
 
         Double funding = value(FUNDING, day.minusDays(1));
-        if (funding == null) gaps.add("资金费率");
+        if (funding == null) gaps.add(MarketContext.GAP_FUNDING);
         Double fng = value(FNG, day.minusDays(1));
-        if (fng == null) gaps.add("恐惧贪婪指数");
+        if (fng == null) gaps.add(MarketContext.GAP_FNG);
         Double oi = value(OI, day.minusDays(1));
 
         List<Map.Entry<LocalDate, Double>> etf = recent(ETF, day.minusDays(2), 3, 7);
         LocalDate etfDay = null;
         Double etfFlow = null, etf3d = null;
         if (etf.isEmpty()) {
-            gaps.add("ETF 资金流");
+            gaps.add(MarketContext.GAP_ETF);
         } else {
             etfDay = etf.getFirst().getKey();
             etfFlow = etf.getFirst().getValue();
@@ -151,12 +151,12 @@ public class ContextService {
         if (f.fredConfigured()) {
             List<Map.Entry<LocalDate, Double>> y = recent(US10Y, day.minusDays(2), 6, 10);
             if (y.size() == 6) us10y = y.getFirst().getValue() - y.getLast().getValue();
-            else gaps.add("美国 10 年期利率");
+            else gaps.add(MarketContext.GAP_US10Y);
             List<Map.Entry<LocalDate, Double>> d = recent(DOLLAR, day.minusDays(2), 6, 21);
             if (d.size() == 6) dollar = (d.getFirst().getValue() / d.getLast().getValue() - 1) * 100;
-            else gaps.add("美元指数");
+            else gaps.add(MarketContext.GAP_DOLLAR);
         } else {
-            gaps.add("利率 / 美元指数 / CPI 日程（未配置 FRED key）");
+            gaps.add(f.cpiCalendarKnown(day) ? MarketContext.GAP_NO_FRED : MarketContext.GAP_NO_FRED_NO_CPI);
         }
         return new MarketContext(day, event, funding, fng, etfDay, etfFlow, etf3d, us10y, dollar, oi, List.copyOf(gaps));
     }
