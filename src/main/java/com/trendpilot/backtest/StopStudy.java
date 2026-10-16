@@ -24,8 +24,9 @@ import com.trendpilot.signal.EarlySignalCalculator;
  * 买入和现行退出规则完全用现行 V2（B0），只叠加不同的止损，和不止损对比收益、回撤、被洗出后又涨回的比例。
  * 只是研究，不改线上规则。
  * <pre>
- * java -cp ... com.trendpilot.backtest.StopStudy 数据目录 输出目录 [起始月 2022-09] [结束月 2026-09] [最后一天 2026-10-14] [开始交易 2022-10-01] [线程数 4]
+ * java -cp ... com.trendpilot.backtest.StopStudy 数据目录 输出目录 [起始月 2022-09] [结束月 2026-09] [最后一天 2026-10-14] [开始交易 2022-10-01] [线程数 4] [quick]
  * </pre>
+ * 第 8 个参数 quick：检验用户 2026-10-17 提出的"亏损超过 2% 止损、或 3 天没收益就找个高点卖"（方案见 {@link #quickSims}）。
  */
 public final class StopStudy {
 
@@ -41,6 +42,26 @@ public final class StopStudy {
                 StopRule.atr("日线ATR×2+大盘跌时暂缓+2小时确认", 2, false, true, "HOUR2"));
     }
 
+    /**
+     * 用户 2026-10-17 提议的方案（看结果之前定好）："亏损超过 2%，或者三天没有收益就选择一个高点退出"。
+     * 拆成单独的两部分和组合，并和现行、已选定的日线 ATR×1.5 止损对照。有卖出亏损仓的方案都配冻结修复（同 10-15 口径）。
+     */
+    static List<B0Sim> quickSims(MarketData data, Regimes regimes, SignalTape tape, StrategyParams params, int fromQ, int size) {
+        StopRule l2bar = StopRule.fixed("-2%（15m收盘）", 2, "BAR15");
+        StopRule l2hour = StopRule.fixed("-2%（1h收盘）", 2, "HOUR");
+        StopRule atr = StopRule.atr("日线ATR×1.5（1h收盘）", 1.5, false, false, "HOUR");
+        return List.of(
+                new B0Sim("不止损（现行）", data, regimes, tape, params, fromQ, size),
+                new B0Sim("不止损+冻结修复", data, regimes, tape, params, fromQ, size, true),
+                new B0Sim("亏2%止损（15m收盘）", data, regimes, tape, params, fromQ, size, true).stop(l2bar),
+                new B0Sim("亏2%止损（1h收盘）", data, regimes, tape, params, fromQ, size, true).stop(l2hour),
+                new B0Sim("3天仍亏损：立即卖", data, regimes, tape, params, fromQ, size, true).staleExit(72, false, 0),
+                new B0Sim("3天仍亏损：等反弹高点卖（最多等24h）", data, regimes, tape, params, fromQ, size, true).staleExit(72, true, 24),
+                new B0Sim("用户方案：亏2%（1h收盘）或3天等反弹", data, regimes, tape, params, fromQ, size, true).stop(l2hour).staleExit(72, true, 24),
+                new B0Sim("对照：日线ATR×1.5止损", data, regimes, tape, params, fromQ, size, true).stop(atr),
+                new B0Sim("对照：ATR×1.5止损+3天等反弹", data, regimes, tape, params, fromQ, size, true).stop(atr).staleExit(72, true, 24));
+    }
+
     public static void main(String[] args) throws Exception {
         Path dataDir = Path.of(args.length > 0 ? args[0] : "backtest-data");
         Path outDir = Path.of(args.length > 1 ? args[1] : "backtest-out");
@@ -49,6 +70,7 @@ public final class StopStudy {
         LocalDate lastDay = args.length <= 4 ? LocalDate.of(2026, 10, 14) : args[4].equals("-") ? null : LocalDate.parse(args[4]);
         LocalDate tradeFrom = LocalDate.parse(args.length > 5 ? args[5] : "2022-10-01");
         int threads = args.length > 6 ? Integer.parseInt(args[6]) : 4;
+        boolean quick = args.length > 7 && args[7].equals("quick");
         Files.createDirectories(outDir);
 
         StrategyParams params = BacktestMain.loadParams();
@@ -90,6 +112,9 @@ public final class StopStudy {
         List<Sim> sims = new ArrayList<>();
         try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {
             List<Future<Sim>> fs = new ArrayList<>();
+            if (quick) {
+                for (B0Sim sim : quickSims(data, regimes, tape, params, fromQ, size)) fs.add(pool.submit(() -> run(sim)));
+            } else {
             fs.add(pool.submit(() -> run(new B0Sim("不止损（现行）", data, regimes, tape, params, fromQ, size))));
             fs.add(pool.submit(() -> run(new B0Sim("不止损+冻结修复", data, regimes, tape, params, fromQ, size, true))));
             fs.add(pool.submit(() -> run(new B0Sim("24小时没进保护就卖+冻结修复", data, regimes, tape, params, fromQ, size, true).timeExit(24))));
@@ -97,10 +122,12 @@ public final class StopStudy {
                 // 有止损时亏损仓会被卖出，冻结按"已实现亏损 + 新跌破的持仓"计，有固定解冻时间（冻结修复）
                 fs.add(pool.submit(() -> run(new B0Sim(r.id(), data, regimes, tape, params, fromQ, size, true).stop(r))));
             }
+            }
             for (Future<Sim> f : fs) sims.add(f.get());
         }
         Nav nav = new Nav(data, params.capital().hardCap());
         String md = report(sims, data, regimes, nav, fromQ, size, period, tradeFrom, endDay);
+        if (quick) md = md.replaceFirst("# 防洗盘止损检验", "# 亏损 2% 止损 / 3 天不赚钱离场检验");
         Files.writeString(outDir.resolve("report.md"), md);
         for (Sim s : sims) Files.writeString(outDir.resolve("trades-" + s.name().replaceAll("[^\\p{L}\\p{N}]+", "_") + ".csv"),
                 BacktestMain.tradesCsv(s, data));

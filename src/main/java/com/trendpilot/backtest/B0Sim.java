@@ -76,6 +76,43 @@ public final class B0Sim extends Sim {
         return this;
     }
 
+    /**
+     * 不赚钱就走（QuickExitStudy，用户 2026-10-17 提议）：持有满 staleHours、利润保护没启动、按 1h 收盘仍亏损，
+     * waitBounce=false 时当根收盘卖；true 时进入"等反弹"：之后某根 1h 收盘回本就卖，或反弹过后第一根回落的 1h 收盘卖（局部高点），
+     * 最多再等 maxWaitHours 小时按收盘卖。
+     */
+    private int staleHours;
+    private boolean staleWaitBounce;
+    private int staleMaxWaitHours;
+    /** symbol → {进入等待的 q, 上一根 1h 收盘价, 等待期间是否出现过上涨的 1h 收盘(0/1)} */
+    private final Map<String, double[]> staleWait = new HashMap<>();
+
+    B0Sim staleExit(int hours, boolean waitBounce, int maxWaitHours) {
+        this.staleHours = hours;
+        this.staleWaitBounce = waitBounce;
+        this.staleMaxWaitHours = maxWaitHours;
+        return this;
+    }
+
+    /** 第 q 根（1h 收盘时）是否按"不赚钱就走"卖出；返回原因或 null。只用已收盘数据。 */
+    private String staleCheck(Position pos, Series s, int q, double net) {
+        if (staleHours <= 0 || q % 4 != 3 || pos.protectArmed()) return null;
+        double[] w = staleWait.get(pos.symbol());
+        if (w == null) {
+            if (java.time.Duration.between(pos.openedAt(), now(q)).toMinutes() < staleHours * 60L || net >= 0) return null;
+            if (!staleWaitBounce) return "L1_STALE";
+            staleWait.put(pos.symbol(), new double[]{q, s.close[q], 0});
+            return null;
+        }
+        if (net >= 0) return "L1_STALE_EVEN";
+        double prev = w[1];
+        if (w[2] > 0 && s.close[q] < prev) return "L1_STALE_BOUNCE";
+        if (s.close[q] > prev) w[2] = 1;
+        w[1] = s.close[q];
+        if (q - w[0] >= staleMaxWaitHours * 4L) return "L1_STALE_TIMEOUT";
+        return null;
+    }
+
     public B0Sim(String name, MarketData data, Regimes regimes, SignalTape tape, StrategyParams params, int fromQ, int toQ) {
         this(name, data, regimes, tape, params, fromQ, toQ, false);
     }
@@ -123,6 +160,16 @@ public final class B0Sim extends Sim {
                     double proceeds = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate());
                     path.net(proceeds - pos.costBasis().doubleValue());
                     close(pos, q, null, proceeds - pos.costBasis().doubleValue(), why);
+                    continue;
+                }
+            }
+            if (staleHours > 0 && pos.costBasis().signum() > 0 && q % 4 == 3) {
+                double imp = Costs.impact(vol, pos.costBasis().doubleValue());
+                double net = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate()) - pos.costBasis().doubleValue();
+                String why = staleCheck(pos, s, q, net);
+                if (why != null) {
+                    path.net(net);
+                    close(pos, q, null, net, why);
                     continue;
                 }
             }
@@ -175,6 +222,7 @@ public final class B0Sim extends Sim {
     private void close(Position pos, int q, Fill fill, double pnl, String reason) {
         positions.remove(pos.symbol());
         stopDist.remove(pos.symbol());
+        staleWait.remove(pos.symbol());
         underwaterSince.remove(pos.symbol());
         markNet.remove(pos.symbol());
         lastObsHour.remove(pos.symbol());
