@@ -58,6 +58,7 @@ public final class Archive {
         this.dir = dir;
         this.interval = interval;
         this.step = switch (interval) {
+            case "1m" -> 60_000L;
             case "15m" -> Series.Q;
             case "1h" -> Series.H;
             case "1d" -> 24 * Series.H;
