@@ -52,12 +52,14 @@ public class HoldingsReport {
     private final ZoneId zone;
     private final Path dir;
     private final com.trendpilot.notify.Notifier notifier;
+    private final com.trendpilot.portfolio.TrendBook v3;
 
     public HoldingsReport(ShadowBook v2, ObservationBook v1, BtcDailyService btc, StrategyParams params, AppState state,
                           JdbcClient jdbc, @Value("${trendpilot.zone}") String zone,
                           @Value("${trendpilot.data-dir:./data}") String dataDir,
-                          com.trendpilot.notify.Notifier notifier) {
+                          com.trendpilot.notify.Notifier notifier, com.trendpilot.portfolio.TrendBook v3) {
         this.notifier = notifier;
+        this.v3 = v3;
         this.v2 = v2;
         this.v1 = v1;
         this.btc = btc;
@@ -265,6 +267,26 @@ public class HoldingsReport {
             worst.forEach(r -> out.add(v1Line("最差", r, now)));
             out.add("");
         }
+        // ---------- V3 ----------
+        List<Row> v3rows = rows(v3);
+        double v3cost = v3rows.stream().mapToDouble(Row::cost).sum();
+        double v3net = v3rows.stream().mapToDouble(Row::net).sum();
+        List<Sell> v3sells = sells(com.trendpilot.portfolio.TrendBook.BOOK, dayStart, dayEnd);
+        out.add("## 七、V3 趋势跟踪（影子，大赚小亏试验）");
+        out.add("");
+        out.add(String.format(Locale.ROOT, "**合计（已实现 + 浮动）%s U**%s。持仓 %d 个，占用 %s U，浮动 %s U；已实现累计 %s U，当天卖出 %d 笔 %s U。"
+                        + "规则：大盘多头时买创 20 日新高的山寨，ATR 止损 + 跟踪止损，不设过早的利润保护；独立资金 20,000 U。",
+                signed(v3.realizedPnl() + v3net), dayChange(com.trendpilot.portfolio.TrendBook.BOOK, dayStart, v3.realizedPnl() + v3net),
+                v3rows.size(), money(v3cost), signed(v3net), signed(v3.realizedPnl()), v3sells.size(),
+                signed(v3sells.stream().mapToDouble(Sell::pnl).sum())));
+        if (!v3rows.isEmpty()) {
+            out.add("");
+            out.add("| 代码 | 成本 | 浮动盈亏 | 收益率 | 持有 |");
+            out.add("|---|---:|---:|---:|---:|");
+            v3rows.forEach(r -> out.add(String.format(Locale.ROOT, "| %s | %s | %s | %s | %s |", r.p().symbol().replace("USDT", ""),
+                    money(r.cost()), signed(r.net()), pct(r.pct()), hours(r.p().openedAt(), now))));
+        }
+        out.add("");
         return String.join("\n", out) + "\n";
     }
 
@@ -371,6 +393,8 @@ public class HoldingsReport {
             case "STOP_LOSS" -> "止损（日线波动 ×1.5）";
             case "STALE_EXIT" -> "3 天没赚钱，反弹高点离场";
             case "TIME_SETTLE" -> "到期结算（V1 观察满 72 小时）";
+            case "TRAIL_STOP" -> "跟踪止损";
+            case "LOW10_EXIT" -> "跌破 10 日低点";
             default -> reason;
         };
     }

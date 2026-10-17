@@ -258,3 +258,7 @@ trendpilot.btc-daily:
     fear-greed-url: https://api.alternative.me
     farside-url: https://farside.co.uk/btc/
     fred-url: https://api.stlouisfed.org
+
+# V3 趋势跟踪影子（2026-10-17 用户要求，先跑 1 个月观察）：规则见 com.trendpilot.v3.TrendRules，独立资金 20,000 U，不影响 V2
+trendpilot.v3:
+  enabled: true
