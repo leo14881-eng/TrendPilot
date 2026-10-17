@@ -61,6 +61,20 @@ public final class ListingStudy {
 
     /** Upbit 交易类公告，按页取到没有为止（缓存原始 JSON）。 */
     void fetchUpbit() throws IOException, InterruptedException {
+        // GitHub Actions（美国机房）访问不到 Upbit 公告接口：优先用仓库里整理好的公告清单（research-data，2026-10-17 从公开接口整理）
+        Path seed = Path.of("research-data", "upbit-krw-listings.txt");
+        if (Files.exists(seed)) {
+            for (String line : Files.readAllLines(seed)) {
+                if (line.isBlank() || line.startsWith("#")) continue;
+                String[] f = line.split("\\|", 3);
+                Instant at = OffsetDateTime.parse(f[1].trim()).toInstant();
+                for (String t : f[2].split(",")) {
+                    events.add(new Event("Upbit", Long.parseLong(f[0].trim()), at, "Upbit KRW 上线 " + f[2].trim(), t.trim()));
+                }
+            }
+            System.out.println("Upbit 公告（仓库清单）：上线类事件 " + events.size() + " 个");
+            return;
+        }
         Path cache = dir.resolve("upbit");
         Files.createDirectories(cache);
         for (int page = 1; page <= 400; page++) {
@@ -104,7 +118,7 @@ public final class ListingStudy {
     /** 韩元市场新增币的公告（"원화 마켓" / "KRW 마켓" + "추가"），排除只在 BTC/USDT 市场的。 */
     static boolean isKrwListing(String title) {
         boolean krw = title.contains("원화") || title.contains("KRW");
-        boolean add = title.contains("추가") || title.contains("상장");
+        boolean add = title.contains("추가") || title.contains("상장") || title.contains("신규 거래지원");
         boolean other = title.contains("유의") || title.contains("종료") || title.contains("연기") || title.contains("거래지원 종료");
         return krw && add && !other;
     }
