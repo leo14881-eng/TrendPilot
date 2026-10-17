@@ -70,6 +70,24 @@ public abstract class Ledger {
                 .count();
     }
 
+    /**
+     * 冻结修复：深度浮亏（可退出净利 ≤ −本金 pct%）的持仓，只在第一次跌破后的 window 内计入亏损冻结，之后不再计入，
+     * 冻结能自己解开（与 4 年回测 B0Sim freezeFix 同口径）。第一次跌破的时间记在 underwater_since，持仓卖出后随行删除。
+     */
+    public int underwaterCountWithin(double pct, java.time.Instant now, java.time.Duration window) {
+        int n = 0;
+        for (Position p : positions()) {
+            if (markNet(p.symbol()) <= -p.costBasis().doubleValue() * pct / 100) {
+                jdbc.sql("UPDATE " + table + " SET underwater_since = :t WHERE symbol = :s AND underwater_since IS NULL")
+                        .param("t", now.toString()).param("s", p.symbol()).update();
+            }
+            String since = jdbc.sql("SELECT underwater_since FROM " + table + " WHERE symbol = :s").param("s", p.symbol())
+                    .query(String.class).optional().orElse(null);
+            if (since != null && java.time.Duration.between(java.time.Instant.parse(since), now).compareTo(window) < 0) n++;
+        }
+        return n;
+    }
+
     public double markNet(String symbol) {
         return jdbc.sql("SELECT mark_net FROM " + table + " WHERE symbol = :s").param("s", symbol)
                 .query(String.class).optional().map(Double::parseDouble).orElse(0.0);

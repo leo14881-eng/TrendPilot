@@ -247,7 +247,8 @@ public class DiscoveryJob {
         Ticker24h btcTicker = main.tickers().stream().filter(t -> t.symbol().equals(UniverseFilter.BTC)).findFirst().orElse(null);
         // 亏损冻结：窗口内亏损退出 + 深度浮亏的持仓（亏损仓不卖出，不能让它们在风控里隐身）
         int lossExits = book.lossExitsSince(now.minus(Duration.ofHours(params.risk().lossWindowHours())))
-                + book.underwaterCount(params.risk().underwaterLossPct());
+                + book.underwaterCountWithin(params.risk().underwaterLossPct(), now,
+                        Duration.ofHours(params.risk().lossWindowHours()));
         // 全市场最优买卖价：每个池一次请求，用于流动性证据和信号跟踪的起点价
         Map<Venue, Map<String, BookTicker>> quotes = new EnumMap<>(Venue.class);
         for (Pool pool : pools) {

@@ -35,7 +35,16 @@ public final class Messages {
                 %s V2 影子卖出 SELL %s%s
                 原因：%s
                 成交均价 %s，净盈亏 %s U，原始收益 %.2f%%""",
-                icon, d.symbol(), venueTag(venue), d.reason(), price(d.fill().avgPrice()), money(d.netPnl()), d.rawReturnPct());
+                icon, d.symbol(), venueTag(venue), reasonText(d.reason()), price(d.fill().avgPrice()), money(d.netPnl()), d.rawReturnPct());
+    }
+
+    /** 卖出原因：止损类给出中文说明，其余保持原代码（与历史通知一致）。 */
+    static String reasonText(String reason) {
+        return switch (reason) {
+            case "STOP_LOSS" -> "STOP_LOSS 止损（跌破买入时日线波动 ×1.5 或 −30%）";
+            case "STALE_EXIT" -> "STALE_EXIT 持有 3 天仍亏损，反弹高点离场";
+            default -> reason;
+        };
     }
 
     public static String note(String symbol, String note, ExitDecision d) {

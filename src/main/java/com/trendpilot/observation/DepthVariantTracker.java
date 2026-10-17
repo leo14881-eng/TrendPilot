@@ -46,10 +46,12 @@ public class DepthVariantTracker {
     private final EarlySignalCalculator signals;
     private final ExitPolicy exitPolicy;
     private final double minDepthUsdt;
+    private final com.trendpilot.monitor.LossGuard guard;
 
     public DepthVariantTracker(DepthVariantBook book, Markets markets, EarlySignalCalculator signals,
-                               ExitPolicy exitPolicy,
+                               ExitPolicy exitPolicy, com.trendpilot.monitor.LossGuard guard,
                                @Value("${trendpilot.variants.depth-min-usdt:15000}") double minDepthUsdt) {
+        this.guard = guard;
         this.book = book;
         this.markets = markets;
         this.signals = signals;
@@ -107,6 +109,9 @@ public class DepthVariantTracker {
                 log.warn("V2D15 本轮跳过 {}：K 线获取失败 {}", e.getKey(), ex.getMessage());
                 continue;
             }
+            for (Position pos : guard.needDailyAtr(DepthVariantBook.BOOK, e.getValue())) {
+                guard.provideDailyAtr(DepthVariantBook.BOOK, pos, com.trendpilot.monitor.LossGuard.dailyAtrPct(m, pos.symbol(), now));
+            }
             for (Position pos : e.getValue()) {
                 try {
                     OrderBook ob = m.depth().getCovering(pos.symbol(), com.trendpilot.job.DiscoveryJob.DEPTH_SPAN_PCT,
@@ -138,6 +143,11 @@ public class DepthVariantTracker {
                 long hour = sig == null ? -1 : in.bars().hourly().getLast().openTime();
                 boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
                 ExitDecision d = exitPolicy.evaluate(pos, in.info(), in.book(), sig, fresh);
+                var lastHour = in.bars() == null || in.bars().hourly().isEmpty() ? null : in.bars().hourly().getLast();
+                if (lastHour != null && in.info() != null && in.info().trading()) {
+                    String g = guard.check(DepthVariantBook.BOOK, pos, d, lastHour.close(), lastHour.openTime(), now);
+                    if (g != null) d = com.trendpilot.monitor.LossGuard.asExit(d, g);
+                }
                 if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);
                 for (String note : d.notes()) {
                     if (!note.equals("PROTECTION_GAPPED")) book.note(pos, note, gen, now);
