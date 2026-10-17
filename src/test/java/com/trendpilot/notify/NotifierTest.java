@@ -101,7 +101,7 @@ class NotifierTest {
                 .param("t", now.minus(java.time.Duration.ofMinutes(1)).toString()).update();
         server.expect(ExpectedCount.once(), requestTo("https://tg.test/bot1%3At/sendMessage"))
                 .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.text")
-                        .value(Notifier.RESENT_PREFIX + "⚠️ 旧告警"))
+                        .value(Notifier.PROJECT_TAG + Notifier.RESENT_PREFIX + "⚠️ 旧告警"))
                 .andRespond(withSuccess());
         assertThat(n.retryFailed(now)).isEqualTo(1);
         server.verify();

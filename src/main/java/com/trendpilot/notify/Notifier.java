@@ -27,6 +27,8 @@ public class Notifier {
     /** Telegram 单条上限 4096 字符，留余量。 */
     static final int MAX_PART = 4000;
     static final int MAX_ATTEMPTS = 6;
+    /** 每条 Telegram 开头带上项目名（用户 2026-10-18 要求），多个项目共用一个聊天时能分清。Outbox 里存原文。 */
+    public static final String PROJECT_TAG = "【TrendPilot】";
     /** 写入 Outbox 后超过这么久仍是 PREPARED，说明发送前服务被重启了。 */
     static final Duration STRANDED_AFTER = Duration.ofMinutes(5);
     static final String RESENT_PREFIX = "（补发：服务重启前没来得及发出）\n";
@@ -133,11 +135,11 @@ public class Notifier {
     }
 
     private boolean deliver(String eventKey, String text, int fromPart) {
-        List<String> parts = split(text, MAX_PART);
+        List<String> parts = split(text, MAX_PART - PROJECT_TAG.length());
         int done = fromPart;
         try {
             for (int i = fromPart; i < parts.size(); i++) {
-                String part = parts.size() == 1 ? parts.get(i) : "(" + (i + 1) + "/" + parts.size() + ")\n" + parts.get(i);
+                String part = PROJECT_TAG + (parts.size() == 1 ? parts.get(i) : "(" + (i + 1) + "/" + parts.size() + ")\n" + parts.get(i));
                 http.post()
                         .uri("/bot{token}/sendMessage", props.botToken())
                         .body(Map.of("chat_id", props.chatId(), "text", part))

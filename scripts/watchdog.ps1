@@ -26,6 +26,7 @@ function Write-Log($msg) {
 }
 
 function Send-Telegram($text) {
+    $text = "【TrendPilot】" + $text
     try {
         $cfg = Join-Path $AppDir 'config\application-local.yml'
         if (-not (Test-Path $cfg)) { return }
