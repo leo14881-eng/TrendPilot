@@ -259,12 +259,14 @@ function Write-PowerDiag {
     $lines = @("==== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ====")
     $lines += (& powercfg.exe /a 2>&1 | Out-String)
     $lines += (& powercfg.exe /getactivescheme 2>&1 | Out-String)
-    $lines += (& powercfg.exe /q SCHEME_CURRENT SUB_BUTTONS LIDACTION 2>&1 | Out-String)
+    $lines += (& powercfg.exe /q SCHEME_CURRENT SUB_BUTTONS 2>&1 | Out-String)
+    $lines += (& powercfg.exe /requests 2>&1 | Out-String)
     $lines += (& powercfg.exe /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE 2>&1 | Out-String)
     try {
         $ev = Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 1, 42, 506, 507, 566 } -MaxEvents 30 -ErrorAction Stop
         foreach ($e in $ev) {
-            $msg = ($e.Message -split "`r?`n")[0]
+            # 进入新型待机的事件（506）要带上原因（合盖 / 电源键 / 空闲），其余只取第一行
+            $msg = if ($e.Id -eq 506) { ($e.Message -replace "`r?`n", ' ') } else { ($e.Message -split "`r?`n")[0] }
             $lines += "$($e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss')) id=$($e.Id) $($e.ProviderName) $msg"
         }
     } catch {
@@ -296,6 +298,12 @@ try {
     }
 
     try { Set-NoSleep } catch { Write-Log "设置不睡眠出错：$($_.Exception.Message)" }
+    # 远程排查用：app\power-diag.request 存在时立即记录一次电源诊断，然后删掉这个请求文件
+    $diagRequest = Join-Path $Bin 'power-diag.request'
+    if (Test-Path $diagRequest) {
+        try { Write-PowerDiag } catch { Write-Log "电源诊断记录出错：$($_.Exception.Message)" }
+        Remove-Item $diagRequest -Force -ErrorAction SilentlyContinue
+    }
 
     # ---------- 2. 检查新提交 ----------
     if (-not (Test-Path (Join-Path $SrcDir '.git'))) {
