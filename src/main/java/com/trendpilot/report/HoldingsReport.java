@@ -368,6 +368,8 @@ public class HoldingsReport {
             case "HARD_INVALID_NOT_TRADING" -> "停止交易/下架";
             case "HARD_INVALID_IDENTITY" -> "黑名单";
             case "HARD_INVALID_LIQUIDITY" -> "流动性异常";
+            case "STOP_LOSS" -> "止损（日线波动 ×1.5）";
+            case "STALE_EXIT" -> "3 天没赚钱，反弹高点离场";
             case "TIME_SETTLE" -> "到期结算（V1 观察满 72 小时）";
             default -> reason;
         };

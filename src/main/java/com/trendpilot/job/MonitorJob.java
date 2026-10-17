@@ -68,7 +68,9 @@ public class MonitorJob {
     public MonitorJob(Markets markets, V1Tracker v1, EarlySignalCalculator signals,
                       ExitPolicy exitPolicy, ShadowBook book, PortfolioLock lock, Notifier notifier, JobRuns runs,
                       AppState state, ParallelExits parallel,
-                      com.trendpilot.observation.DepthVariantTracker depthVariant, StreamHub hub) {
+                      com.trendpilot.observation.DepthVariantTracker depthVariant, StreamHub hub,
+                      com.trendpilot.monitor.LossGuard guard) {
+        this.guard = guard;
         this.depthVariant = depthVariant;
         this.hub = hub;
         this.parallel = parallel;
@@ -158,6 +160,7 @@ public class MonitorJob {
     }
 
     private final SkipAlerts skipAlerts = new SkipAlerts();
+    private final com.trendpilot.monitor.LossGuard guard;
 
     /** 最优买价兜底：WebSocket 60 秒内的报价优先（不占 REST），否则用批量 bookTicker（30 秒缓存）。都没有返回 null。 */
     private Double fallbackBid(Position p) {
@@ -283,19 +286,15 @@ public class MonitorJob {
             }
         }
 
-        // 候选退出 X1 的影子并行需要买入时的日线 ATR：只为还没有的新持仓各取一次日线（锁外，失败就按默认距离）
-        for (Position p : parallel.needDailyAtr(snapshot)) {
+        // 山寨止损和影子并行 X1 需要买入时的日线 ATR：只为还没有的新持仓各取一次日线（锁外，失败就按默认距离）
+        java.util.Set<Position> needAtr = new java.util.LinkedHashSet<>(parallel.needDailyAtr(snapshot));
+        needAtr.addAll(guard.needDailyAtr(ShadowBook.BOOK, snapshot));
+        for (Position p : needAtr) {
             VenueMarket m = markets.get(p.venue());
             if (m == null) continue;
-            try {
-                long t = now.toEpochMilli();
-                List<double[]> daily = m.source().klines(p.symbol(), "1d", null, 16).stream()
-                        .filter(k -> k.closeTime() < t).map(k -> new double[]{k.high(), k.low(), k.close()}).toList();
-                double price = daily.isEmpty() ? Double.NaN : daily.getLast()[2];
-                parallel.provideDailyAtr(p, com.trendpilot.variant.AtrStaleExit.atrDailyPct(daily, price));
-            } catch (RuntimeException e) {
-                log.debug("影子并行 {} 日线获取失败：{}", p.symbol(), e.toString());
-            }
+            double atr = com.trendpilot.monitor.LossGuard.dailyAtrPct(m, p.symbol(), now);
+            parallel.provideDailyAtr(p, atr);
+            guard.provideDailyAtr(ShadowBook.BOOK, p, atr);
         }
 
         List<String> exits = new ArrayList<>();
@@ -334,6 +333,11 @@ public class MonitorJob {
                 boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
                 ExitDecision d = exitPolicy.evaluate(pos, o.info(), o.book(), sig, fresh);
                 Kline lastHour = b == null || b.hourly().isEmpty() ? null : b.hourly().getLast();
+                if (lastHour != null && o.info() != null && o.info().trading()) {
+                    // 山寨止损：现行规则不卖时再按止损 / 3 天不赚钱离场判断，同一份盘口成交
+                    String g = guard.check(ShadowBook.BOOK, pos, d, lastHour.close(), lastHour.openTime(), now);
+                    if (g != null) d = com.trendpilot.monitor.LossGuard.asExit(d, g);
+                }
                 apply(gen, now, pos, d, exits, sig == null ? Double.NaN : sig.atr1hPct(),
                         lastHour == null ? Double.NaN : lastHour.close(), lastHour == null ? -1 : lastHour.openTime());
                 if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);

@@ -232,7 +232,8 @@ class ShadowFlowTest {
         int klinesBefore = market.klineRequests.get();
         MonitorJob.Report m1 = monitor.runOnce(t1);
         assertThat(m1.exits()).isEmpty();
-        assertThat(market.klineRequests.get()).isEqualTo(klinesBefore); // 没有新收盘的 15m K 线，不请求
+        // 没有新收盘的 15m K 线，不请求；新持仓第一次 Monitor 只多取一次日线（止损距离用）
+        assertThat(market.klineRequests.get()).isEqualTo(klinesBefore + 1);
         assertThat(book.positions().getFirst().protectArmed()).isTrue();
 
         // 回落到底线以下但仍有净利：保护卖出
