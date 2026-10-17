@@ -82,6 +82,7 @@ public final class StopStudy {
         LocalDate tradeFrom = LocalDate.parse(args.length > 5 ? args[5] : "2022-10-01");
         int threads = args.length > 6 ? Integer.parseInt(args[6]) : 4;
         boolean quick = args.length > 7 && args[7].equals("quick");
+        boolean decay = args.length > 7 && args[7].equals("decay");
         Files.createDirectories(outDir);
 
         StrategyParams params = BacktestMain.loadParams();
@@ -123,7 +124,9 @@ public final class StopStudy {
         List<Sim> sims = new ArrayList<>();
         try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {
             List<Future<Sim>> fs = new ArrayList<>();
-            if (quick) {
+            if (decay) {
+                for (B0Sim sim : decaySims(data, regimes, tape, params, fromQ, size)) fs.add(pool.submit(() -> run(sim)));
+            } else if (quick) {
                 for (B0Sim sim : quickSims(data, regimes, tape, params, fromQ, size)) fs.add(pool.submit(() -> run(sim)));
             } else {
             fs.add(pool.submit(() -> run(new B0Sim("不止损（现行）", data, regimes, tape, params, fromQ, size))));
@@ -138,6 +141,7 @@ public final class StopStudy {
         }
         Nav nav = new Nav(data, params.capital().hardCap());
         String md = report(sims, data, regimes, nav, fromQ, size, period, tradeFrom, endDay);
+        if (decay) md = md.replaceFirst("# 防洗盘止损检验", "# 上涨逻辑失效时亏损也卖（选反弹高点）检验");
         if (quick) md = md.replaceFirst("# 防洗盘止损检验", "# 亏损 2% 止损 / 3 天不赚钱离场检验");
         Files.writeString(outDir.resolve("report.md"), md);
         for (Sim s : sims) Files.writeString(outDir.resolve("trades-" + s.name().replaceAll("[^\\p{L}\\p{N}]+", "_") + ".csv"),
