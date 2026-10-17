@@ -68,7 +68,9 @@ public class MonitorJob {
     public MonitorJob(Markets markets, V1Tracker v1, EarlySignalCalculator signals,
                       ExitPolicy exitPolicy, ShadowBook book, PortfolioLock lock, Notifier notifier, JobRuns runs,
                       AppState state, ParallelExits parallel,
-                      com.trendpilot.observation.DepthVariantTracker depthVariant, StreamHub hub) {
+                      com.trendpilot.observation.DepthVariantTracker depthVariant, StreamHub hub,
+                      com.trendpilot.monitor.DecayGuard decayGuard) {
+        this.decayGuard = decayGuard;
         this.depthVariant = depthVariant;
         this.hub = hub;
         this.parallel = parallel;
@@ -158,6 +160,7 @@ public class MonitorJob {
     }
 
     private final SkipAlerts skipAlerts = new SkipAlerts();
+    private final com.trendpilot.monitor.DecayGuard decayGuard;
 
     /** 最优买价兜底：WebSocket 60 秒内的报价优先（不占 REST），否则用批量 bookTicker（30 秒缓存）。都没有返回 null。 */
     private Double fallbackBid(Position p) {
@@ -334,6 +337,9 @@ public class MonitorJob {
                 boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
                 ExitDecision d = exitPolicy.evaluate(pos, o.info(), o.book(), sig, fresh);
                 Kline lastHour = b == null || b.hourly().isEmpty() ? null : b.hourly().getLast();
+                // 上涨逻辑失效但亏损（LOSS_RECOVERY）：等反弹的相对高点卖出，同一份盘口成交
+                d = decayGuard.apply(ShadowBook.BOOK, pos, d, o.info() != null && o.info().trading(),
+                        lastHour == null ? Double.NaN : lastHour.close(), lastHour == null ? -1 : lastHour.openTime(), now);
                 apply(gen, now, pos, d, exits, sig == null ? Double.NaN : sig.atr1hPct(),
                         lastHour == null ? Double.NaN : lastHour.close(), lastHour == null ? -1 : lastHour.openTime());
                 if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);

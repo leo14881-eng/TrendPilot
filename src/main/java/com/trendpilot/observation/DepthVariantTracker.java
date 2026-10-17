@@ -46,10 +46,12 @@ public class DepthVariantTracker {
     private final EarlySignalCalculator signals;
     private final ExitPolicy exitPolicy;
     private final double minDepthUsdt;
+    private final com.trendpilot.monitor.DecayGuard decayGuard;
 
     public DepthVariantTracker(DepthVariantBook book, Markets markets, EarlySignalCalculator signals,
-                               ExitPolicy exitPolicy,
+                               ExitPolicy exitPolicy, com.trendpilot.monitor.DecayGuard decayGuard,
                                @Value("${trendpilot.variants.depth-min-usdt:15000}") double minDepthUsdt) {
+        this.decayGuard = decayGuard;
         this.book = book;
         this.markets = markets;
         this.signals = signals;
@@ -138,6 +140,9 @@ public class DepthVariantTracker {
                 long hour = sig == null ? -1 : in.bars().hourly().getLast().openTime();
                 boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
                 ExitDecision d = exitPolicy.evaluate(pos, in.info(), in.book(), sig, fresh);
+                var lastHour = in.bars() == null || in.bars().hourly().isEmpty() ? null : in.bars().hourly().getLast();
+                d = decayGuard.apply(DepthVariantBook.BOOK, pos, d, in.info() != null && in.info().trading(),
+                        lastHour == null ? Double.NaN : lastHour.close(), lastHour == null ? -1 : lastHour.openTime(), now);
                 if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);
                 for (String note : d.notes()) {
                     if (!note.equals("PROTECTION_GAPPED")) book.note(pos, note, gen, now);
