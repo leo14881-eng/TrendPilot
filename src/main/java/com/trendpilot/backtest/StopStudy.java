@@ -74,6 +74,17 @@ public final class StopStudy {
                 new B0Sim("ATR×1.5止损+3天等反弹（冻结修复，10-17 回测口径）", data, regimes, tape, params, fromQ, size, true).stop(atr).staleExit(72, true, 24));
     }
 
+    /** 用户 2026-10-18 问"冻结会不会影响利润和资金利用率"：现行止损（ATR×1.5 + 3 天等反弹 + 冻结修复）下比较 4 种冻结口径。 */
+    static List<B0Sim> freezeSims(MarketData data, Regimes regimes, SignalTape tape, StrategyParams params, int fromQ, int size) {
+        StopRule atr = StopRule.atr("日线ATR×1.5（1h收盘）", 1.5, false, false, "HOUR");
+        return List.of(
+                new B0Sim("不止损（旧规则）", data, regimes, tape, params, fromQ, size),
+                new B0Sim("现行：3次冻结，浮亏算24小时", data, regimes, tape, params, fromQ, size, true).stop(atr).staleExit(72, true, 24),
+                new B0Sim("只算亏损卖出，不算浮亏", data, regimes, tape, params, fromQ, size, true).stop(atr).staleExit(72, true, 24).freezeMode("REALIZED"),
+                new B0Sim("门槛放宽到5次（4次减半）", data, regimes, tape, params, fromQ, size, true).stop(atr).staleExit(72, true, 24).freezeMode("LOOSE5"),
+                new B0Sim("不冻结", data, regimes, tape, params, fromQ, size, true).stop(atr).staleExit(72, true, 24).freezeMode("NONE"));
+    }
+
     public static void main(String[] args) throws Exception {
         Path dataDir = Path.of(args.length > 0 ? args[0] : "backtest-data");
         Path outDir = Path.of(args.length > 1 ? args[1] : "backtest-out");
@@ -84,6 +95,7 @@ public final class StopStudy {
         int threads = args.length > 6 ? Integer.parseInt(args[6]) : 4;
         boolean quick = args.length > 7 && args[7].equals("quick");
         boolean live = args.length > 7 && args[7].equals("live");
+        boolean freeze = args.length > 7 && args[7].equals("freeze");
         Files.createDirectories(outDir);
 
         StrategyParams params = BacktestMain.loadParams();
@@ -125,7 +137,9 @@ public final class StopStudy {
         List<Sim> sims = new ArrayList<>();
         try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {
             List<Future<Sim>> fs = new ArrayList<>();
-            if (live) {
+            if (freeze) {
+                for (B0Sim sim : freezeSims(data, regimes, tape, params, fromQ, size)) fs.add(pool.submit(() -> run(sim)));
+            } else if (live) {
                 for (B0Sim sim : liveSims(data, regimes, tape, params, fromQ, size)) fs.add(pool.submit(() -> run(sim)));
             } else if (quick) {
                 for (B0Sim sim : quickSims(data, regimes, tape, params, fromQ, size)) fs.add(pool.submit(() -> run(sim)));
@@ -143,6 +157,7 @@ public final class StopStudy {
         Nav nav = new Nav(data, params.capital().hardCap());
         String md = report(sims, data, regimes, nav, fromQ, size, period, tradeFrom, endDay);
         if (quick) md = md.replaceFirst("# 防洗盘止损检验", "# 亏损 2% 止损 / 3 天不赚钱离场检验");
+        if (freeze) md = md.replaceFirst("# 防洗盘止损检验", "# 亏损冻结口径检验（现行止损规则下）");
         if (live) md = md.replaceFirst("# 防洗盘止损检验", "# 山寨止损上线前检验：线上冻结规则");
         Files.writeString(outDir.resolve("report.md"), md);
         for (Sim s : sims) Files.writeString(outDir.resolve("trades-" + s.name().replaceAll("[^\\p{L}\\p{N}]+", "_") + ".csv"),

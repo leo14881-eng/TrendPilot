@@ -87,6 +87,25 @@ public final class B0Sim extends Sim {
     /** symbol → {进入等待的 q, 上一根 1h 收盘价, 等待期间是否出现过上涨的 1h 收盘(0/1)} */
     private final Map<String, double[]> staleWait = new HashMap<>();
 
+    /** 冻结口径（StopStudy freeze，2026-10-18）：LIVE 现行 / REALIZED 只算亏损卖出 / LOOSE5 门槛 5 次 / NONE 不冻结。 */
+    private String freezeMode = "LIVE";
+
+    B0Sim freezeMode(String mode) {
+        this.freezeMode = mode;
+        return this;
+    }
+
+    /** 按冻结口径换算成风控看到的亏损次数（门槛仍是线上的 3 次冻结 / 2 次减半）。 */
+    private int freezeCount(int lossExitCount, int underwaterCount) {
+        int c = lossExitCount + underwaterCount;
+        return switch (freezeMode) {
+            case "REALIZED" -> lossExitCount;
+            case "LOOSE5" -> c >= 5 ? 3 : c >= 4 ? 2 : 0;
+            case "NONE" -> 0;
+            default -> c;
+        };
+    }
+
     B0Sim staleExit(int hours, boolean waitBounce, int maxWaitHours) {
         this.staleHours = hours;
         this.staleWaitBounce = waitBounce;
@@ -287,7 +306,7 @@ public final class B0Sim extends Sim {
         double median1h = data.context(q + 1) == null ? Double.NaN : data.context(q + 1).alt1h();
         RiskRecovery.AltCrash crash = recovery.altCrash(median1h, now);
         MarketEvidence ev = new MarketEvidence(LIQUIDITY_SPREAD_BPS, 0, recovery.confirmedShocks(now), crash.active());
-        RiskState raw = assessor.assess(btcBars, btcTicker, tickers, lossExits.size() + underwater, ev);
+        RiskState raw = assessor.assess(btcBars, btcTicker, tickers, freezeCount(lossExits.size(), underwater), ev);
         recovery.recordShockIfAny(raw, now);
         RiskState risk = recovery.apply(raw, gen);
 
