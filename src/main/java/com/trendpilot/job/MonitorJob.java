@@ -17,6 +17,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.trendpilot.market.BarsLoader;
+import com.trendpilot.market.Kline;
 import com.trendpilot.market.Markets;
 import com.trendpilot.market.OrderBook;
 import com.trendpilot.market.SymbolBars;
@@ -282,6 +283,21 @@ public class MonitorJob {
             }
         }
 
+        // 候选退出 X1 的影子并行需要买入时的日线 ATR：只为还没有的新持仓各取一次日线（锁外，失败就按默认距离）
+        for (Position p : parallel.needDailyAtr(snapshot)) {
+            VenueMarket m = markets.get(p.venue());
+            if (m == null) continue;
+            try {
+                long t = now.toEpochMilli();
+                List<double[]> daily = m.source().klines(p.symbol(), "1d", null, 16).stream()
+                        .filter(k -> k.closeTime() < t).map(k -> new double[]{k.high(), k.low(), k.close()}).toList();
+                double price = daily.isEmpty() ? Double.NaN : daily.getLast()[2];
+                parallel.provideDailyAtr(p, com.trendpilot.variant.AtrStaleExit.atrDailyPct(daily, price));
+            } catch (RuntimeException e) {
+                log.debug("影子并行 {} 日线获取失败：{}", p.symbol(), e.toString());
+            }
+        }
+
         List<String> exits = new ArrayList<>();
         lock.run(() -> {
             for (Position current : book.positions()) {
@@ -317,7 +333,9 @@ public class MonitorJob {
                 long hour = sig == null ? -1 : b.hourly().getLast().openTime();
                 boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
                 ExitDecision d = exitPolicy.evaluate(pos, o.info(), o.book(), sig, fresh);
-                apply(gen, now, pos, d, exits, sig == null ? Double.NaN : sig.atr1hPct());
+                Kline lastHour = b == null || b.hourly().isEmpty() ? null : b.hourly().getLast();
+                apply(gen, now, pos, d, exits, sig == null ? Double.NaN : sig.atr1hPct(),
+                        lastHour == null ? Double.NaN : lastHour.close(), lastHour == null ? -1 : lastHour.openTime());
                 if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);
                 } catch (RuntimeException e) {
                     // 一个持仓的数据异常不能让其他持仓失去管理
@@ -350,7 +368,7 @@ public class MonitorJob {
     /** 降级判断的结果：卖出照常记账；不卖时只更新持仓状态（启动保护、底线），不喂给对比账本，避免折价净利污染对比。 */
     private void applyDegraded(String gen, Instant now, Position pos, ExitDecision d, List<String> exits) {
         if (d.sell()) {
-            apply(gen, now, pos, d, exits, Double.NaN);
+            apply(gen, now, pos, d, exits, Double.NaN, Double.NaN, -1);
             return;
         }
         String posKey = pos.symbol() + ":" + pos.openedAt();
@@ -361,7 +379,8 @@ public class MonitorJob {
         book.update(d.updated(), d.netPnl(), now);
     }
 
-    private void apply(String gen, Instant now, Position pos, ExitDecision d, List<String> exits, double atrPct) {
+    private void apply(String gen, Instant now, Position pos, ExitDecision d, List<String> exits, double atrPct,
+                       double hourClose, long hourOpen) {
         String posKey = pos.symbol() + ":" + pos.openedAt();
         for (String note : d.notes()) {
             if (note.equals("PROTECTION_GAPPED")) {
@@ -380,7 +399,7 @@ public class MonitorJob {
             parallel.closeWithV2(pos, d, now);
         } else {
             book.update(d.updated(), d.netPnl(), now);
-            parallel.observe(pos, d, atrPct, now);
+            parallel.observe(pos, d, atrPct, hourClose, hourOpen, now);
         }
     }
 }

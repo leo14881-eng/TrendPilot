@@ -20,6 +20,8 @@ import com.trendpilot.tracking.TrackingProperties;
  * <li>候选规则叠加在现行规则之上：V2 正式卖出时，仍持有的变体按同一成交一起卖出；规则先触发时变体按本轮 V2 的
  *     全数量模拟成交提前卖出。变体卖出后同一持仓后来的加仓不再跟随。</li>
  * <li>只写 variant_trade，不改正式账本、不占资金池。规则列表在 trendpilot.tracking.parallel-rules，默认空。</li>
+ * <li>{@link AtrStaleExit#ID}（日线 ATR×1.5 止损 + 3 天等反弹）需要逐笔状态和买入时的日线 ATR，单独处理：
+ *     日线 ATR 由 Monitor 在锁外取好后通过 {@link #provideDailyAtr} 传进来。</li>
  * </ul>
  */
 @Component
@@ -27,18 +29,94 @@ public class ParallelExits {
 
     private final JdbcClient jdbc;
     private final List<ExitRule> rules;
+    /** 是否启用 X1（日线 ATR×1.5 止损 + 3 天等反弹）。 */
+    private final boolean atrStale;
+    /** Monitor 锁外取好的日线 ATR%（venue:symbol → ATR%），只在新开变体时用一次。 */
+    private final java.util.Map<String, Double> dailyAtr = new java.util.concurrent.ConcurrentHashMap<>();
 
     public ParallelExits(JdbcClient jdbc, TrackingProperties p) {
         this.jdbc = jdbc;
-        this.rules = p.parallelRules() == null ? List.of() : p.parallelRules().stream().map(ExitRule::byId).toList();
+        List<String> ids = p.parallelRules() == null ? List.of() : p.parallelRules();
+        this.rules = ids.stream().filter(id -> !id.equals(AtrStaleExit.ID)).map(ExitRule::byId).toList();
+        this.atrStale = ids.contains(AtrStaleExit.ID);
     }
 
     public List<ExitRule> rules() {
         return rules;
     }
 
+    /** 全部规则编号（含 X1）。 */
+    List<String> ruleIds() {
+        List<String> ids = new ArrayList<>(rules.stream().map(ExitRule::id).toList());
+        if (atrStale) ids.add(AtrStaleExit.ID);
+        return ids;
+    }
+
+    /** 哪些持仓还需要日线 ATR（X1 变体还没有止损距离）：Monitor 在锁外为它们取日线。 */
+    public List<Position> needDailyAtr(List<Position> positions) {
+        if (!atrStale) return List.of();
+        return positions.stream().filter(p -> jdbc.sql("""
+                SELECT COUNT(*) FROM variant_trade WHERE rule_id = :r AND venue = :v AND symbol = :s AND opened_at = :o
+                    AND x_dist_pct IS NOT NULL
+                """).param("r", AtrStaleExit.ID).param("v", p.venue().name()).param("s", p.symbol())
+                .param("o", p.openedAt().toString()).query(Integer.class).single() == 0).toList();
+    }
+
+    public void provideDailyAtr(Position p, double atrPct) {
+        dailyAtr.put(p.venue() + ":" + p.symbol(), atrPct);
+    }
+
+    /** X1：每根新收盘的 1h K 线判断一次。hourClose 缺失（K 线没取到）时本轮不判断。 */
+    private void observeAtrStale(Position pos, ExitDecision d, double hourClose, long hourOpen, Instant now) {
+        String v = pos.venue().name(), sym = pos.symbol(), o = pos.openedAt().toString();
+        Double atr = dailyAtr.remove(pos.venue() + ":" + sym);
+        jdbc.sql("""
+                INSERT OR IGNORE INTO variant_trade(rule_id, venue, symbol, opened_at, status, peak_net_pct, x_dist_pct)
+                VALUES (:r, :v, :s, :o, 'OPEN', 0, :d)
+                """).param("r", AtrStaleExit.ID).param("v", v).param("s", sym).param("o", o)
+                .param("d", atr == null ? null : AtrStaleExit.distancePct(atr)).update();
+        if (atr != null) {
+            jdbc.sql("""
+                    UPDATE variant_trade SET x_dist_pct = :d WHERE rule_id = :r AND venue = :v AND symbol = :s AND opened_at = :o
+                        AND x_dist_pct IS NULL
+                    """).param("d", AtrStaleExit.distancePct(atr)).param("r", AtrStaleExit.ID).param("v", v)
+                    .param("s", sym).param("o", o).update();
+        }
+        record Row(Double dist, String since, Double prev, int rose, Long last) {
+        }
+        Row row = jdbc.sql("""
+                SELECT x_dist_pct, x_wait_since, x_prev_close, x_rose, x_last_hour FROM variant_trade
+                WHERE rule_id = :r AND venue = :v AND symbol = :s AND opened_at = :o AND status = 'OPEN'
+                """).param("r", AtrStaleExit.ID).param("v", v).param("s", sym).param("o", o)
+                .query((rs, i) -> new Row((Double) rs.getObject(1), rs.getString(2), (Double) rs.getObject(3), rs.getInt(4),
+                        rs.getObject(5) == null ? null : rs.getLong(5)))
+                .optional().orElse(null);
+        if (row == null || Double.isNaN(hourClose)) return; // 已经提前卖出，或本轮没有 K 线
+        AtrStaleExit.State st = new AtrStaleExit.State(row.dist(), row.since() == null ? null : Instant.parse(row.since()),
+                row.prev(), row.rose() != 0, row.last());
+        AtrStaleExit.Step step = AtrStaleExit.step(st, pos.openedAt(), now, d.updated().protectArmed(),
+                pos.avgEntryPrice().doubleValue(), hourClose, hourOpen, d.netPnl().doubleValue());
+        if (step.exit() != null) {
+            close(AtrStaleExit.ID, pos, "CLOSED", step.exit(), d.netPnl().doubleValue(), d.updated().costBasis().doubleValue(), now);
+            return;
+        }
+        AtrStaleExit.State n = step.next();
+        jdbc.sql("""
+                UPDATE variant_trade SET x_wait_since = :ws, x_prev_close = :pc, x_rose = :ro, x_last_hour = :lh
+                WHERE rule_id = :r AND venue = :v AND symbol = :s AND opened_at = :o AND status = 'OPEN'
+                """).param("ws", n.waitSince() == null ? null : n.waitSince().toString()).param("pc", n.prevClose())
+                .param("ro", n.rose() ? 1 : 0).param("lh", n.lastHour()).param("r", AtrStaleExit.ID).param("v", v)
+                .param("s", sym).param("o", o).update();
+    }
+
     /** V2 本轮没有卖出：更新每个变体，规则触发的提前卖出。 */
     public void observe(Position pos, ExitDecision d, double atrPct, Instant now) {
+        observe(pos, d, atrPct, Double.NaN, -1, now);
+    }
+
+    /** @param hourClose 最近一根已收盘 1h K 线收盘价（X1 用；没有为 NaN） */
+    public void observe(Position pos, ExitDecision d, double atrPct, double hourClose, long hourOpen, Instant now) {
+        if (atrStale) observeAtrStale(pos, d, hourClose, hourOpen, now);
         double cost = d.updated().costBasis().doubleValue();
         double rNet = d.netPnl().doubleValue() / cost * 100;
         double hold = Duration.between(pos.openedAt(), now).toMinutes() / 60.0;
@@ -73,7 +151,10 @@ public class ParallelExits {
     /** V2 正式卖出：记录基准结果；仍持有的变体按同一成交一起卖出。 */
     public void closeWithV2(Position pos, ExitDecision d, Instant now) {
         double cost = pos.costBasis().doubleValue();
-        for (ExitRule r : rules) {
+        for (String id : ruleIds()) {
+            record R(String id) {
+            }
+            R r = new R(id);
             jdbc.sql("""
                     INSERT OR IGNORE INTO variant_trade(rule_id, venue, symbol, opened_at, status, peak_net_pct)
                     VALUES (:r, :v, :s, :o, 'OPEN', 0)
@@ -111,7 +192,10 @@ public class ParallelExits {
 
     public List<Comparison> compare() {
         List<Comparison> out = new ArrayList<>();
-        for (ExitRule r : rules) {
+        for (String id : ruleIds()) {
+            record R(String id) {
+            }
+            R r = new R(id);
             record Row(double pnl, double cost, double b0, double b0Cost, String reason) {
             }
             List<Row> rows = jdbc.sql("""
@@ -125,7 +209,7 @@ public class ParallelExits {
                     rows.stream().mapToDouble(x -> x.pnl() / x.cost() * 100).average().orElse(Double.NaN),
                     rows.stream().mapToDouble(x -> x.b0() / x.b0Cost() * 100).average().orElse(Double.NaN),
                     rows.stream().mapToDouble(Row::pnl).sum(), rows.stream().mapToDouble(Row::b0).sum(),
-                    (int) rows.stream().filter(x -> x.reason().equals(r.id())).count()));
+                    (int) rows.stream().filter(x -> r.id().equals(AtrStaleExit.ID) ? x.reason().startsWith("X1_") : x.reason().equals(r.id())).count()));
         }
         return out;
     }

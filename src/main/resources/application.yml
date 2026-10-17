@@ -150,7 +150,7 @@ trendpilot.tracking:
   decide-min-samples: 100
   decide-min-symbols: 20
   decide-min-weeks: 4
-  parallel-rules: [S1_L8, S1_L12, S2_k6, T1_T24_g0, T2_T24_L210, M1_D3]   # 候选退出规则影子并行：只记录对比，不影响正式买卖
+  parallel-rules: [S1_L8, S1_L12, S2_k6, T1_T24_g0, T2_T24_L210, M1_D3, X1_ATR1.5_W72]   # 候选退出规则影子并行：只记录对比，不影响正式买卖；X1 = 日线 ATR×1.5 止损 + 3 天等反弹（2026-10-17 用户批准）
 
 trendpilot.binance:
   enabled: true
