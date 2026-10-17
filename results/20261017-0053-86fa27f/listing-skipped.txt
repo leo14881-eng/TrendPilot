@@ -1,0 +1,116 @@
+PONS：Binance 没有 PONSUSDT
+POD：Binance 没有 PODUSDT
+CASHCAT：Binance 没有 CASHCATUSDT
+PYUSD：Binance 没有 PYUSDUSDT
+JPYC：Binance 没有 JPYCUSDT
+BFC：Binance 没有 BFCUSDT
+CP：Binance 没有 CPUSDT
+EURC：Binance 没有 EURCUSDT
+NCT：Binance 没有 NCTUSDT
+LIT：公告前 24 小时 Binance 数据不足
+FOLD：Binance 没有 FOLDUSDT
+DOS：Binance 没有 DOSUSDT
+BSB：Binance 没有 BSBUSDT
+CAP：Binance 没有 CAPUSDT
+GRVT：Binance 没有 GRVTUSDT
+QUID：Binance 没有 QUIDUSDT
+USDG：Binance 没有 USDGUSDT
+META2：Binance 没有 META2USDT
+GEOD：Binance 没有 GEODUSDT
+DRV：Binance 没有 DRVUSDT
+ARX：Binance 没有 ARXUSDT
+SPX：Binance 没有 SPXUSDT
+SLX：Binance 没有 SLXUSDT
+TRAC：Binance 没有 TRACUSDT
+IRYS：Binance 没有 IRYSUSDT
+UP2：Binance 没有 UP2USDT
+VVV：Binance 没有 VVVUSDT
+PROS：公告前 24 小时 Binance 数据不足
+B3：Binance 没有 B3USDT
+MEGA：公告前 24 小时 Binance 数据不足
+BLEND：Binance 没有 BLENDUSDT
+PRL：Binance 没有 PRLUSDT
+XCN：Binance 没有 XCNUSDT
+CHIP：公告前 24 小时 Binance 数据不足
+PIEVERSE：Binance 没有 PIEVERSEUSDT
+SOON：Binance 没有 SOONUSDT
+USDS：公告前 24 小时 Binance 数据不足
+EDGE：Binance 没有 EDGEUSDT
+CFG：公告前 24 小时 Binance 数据不足
+SKR：Binance 没有 SKRUSDT
+AZTEC：Binance 没有 AZTECUSDT
+BIRB：Binance 没有 BIRBUSDT
+ELSA：Binance 没有 ELSAUSDT
+XAUT：公告前 24 小时 Binance 数据不足
+ZKP：公告前 24 小时 Binance 数据不足
+WET：Binance 没有 WETUSDT
+MON：Binance 没有 MONUSDT
+MET2：Binance 没有 MET2USDT
+TRUST：Binance 没有 TRUSTUSDT
+KITE：公告前 24 小时 Binance 数据不足
+ORDER：Binance 没有 ORDERUSDT
+CPOOL：Binance 没有 CPOOLUSDT
+ZBT：公告前 24 小时 Binance 数据不足
+ZORA：Binance 没有 ZORAUSDT
+IN：Binance 没有 INUSDT
+DOOD：Binance 没有 DOODUSDT
+2Z：公告前 24 小时 Binance 数据不足
+FF：公告前 24 小时 Binance 数据不足
+MIRA：公告前 24 小时 Binance 数据不足
+XPL：公告前 24 小时 Binance 数据不足
+FLUID：Binance 没有 FLUIDUSDT
+0G：公告前 24 小时 Binance 数据不足
+BARD：公告前 24 小时 Binance 数据不足
+TOSHI：Binance 没有 TOSHIUSDT
+ZKC：公告前 24 小时 Binance 数据不足
+AVNT：公告前 24 小时 Binance 数据不足
+PUMP：公告前 24 小时 Binance 数据不足
+HOLO：公告前 24 小时 Binance 数据不足
+LINEA：公告前 24 小时 Binance 数据不足
+FLOCK：Binance 没有 FLOCKUSDT
+WLFI：公告前 24 小时 Binance 数据不足
+AERO：公告前 24 小时 Binance 数据不足
+IP：Binance 没有 IPUSDT
+ERA：公告前 24 小时 Binance 数据不足
+MOODENG：Binance 没有 MOODENGUSDT
+SAHARA：公告前 24 小时 Binance 数据不足
+NEWT：公告前 24 小时 Binance 数据不足
+POKT：Binance 没有 POKTUSDT
+SOPH：公告前 24 小时 Binance 数据不足
+NXPC：公告前 24 小时 Binance 数据不足
+DEEP：Binance 没有 DEEPUSDT
+WAL：公告前 24 小时 Binance 数据不足
+LAYER：公告前 24 小时 Binance 数据不足
+BERA：公告前 24 小时 Binance 数据不足
+VIRTUAL：公告前 24 小时 Binance 数据不足
+ANIME：公告前 24 小时 Binance 数据不足
+SONIC：Binance 没有 SONICUSDT
+VANA：公告前 24 小时 Binance 数据不足
+MOCA：Binance 没有 MOCAUSDT
+ME：公告前 24 小时 Binance 数据不足
+MOVE：公告前 24 小时 Binance 数据不足
+DRIFT：Binance 没有 DRIFTUSDT
+SAFE：Binance 没有 SAFEUSDT
+MEW：Binance 没有 MEWUSDT
+CARV：Binance 没有 CARVUSDT
+BIGTIME：公告前 24 小时 Binance 数据不足
+UXLINK：Binance 没有 UXLINKUSDT
+ATH：Binance 没有 ATHUSDT
+BLAST：Binance 没有 BLASTUSDT
+ONDO：公告前 24 小时 Binance 数据不足
+TAIKO：Binance 没有 TAIKOUSDT
+BEAM：公告前 24 小时 Binance 数据不足
+ZETA：Binance 没有 ZETAUSDT
+CTC：Binance 没有 CTCUSDT
+SEI：公告前 24 小时 Binance 数据不足
+BLUR：公告前 24 小时 Binance 数据不足
+SUI：公告前 24 小时 Binance 数据不足
+ACS：Binance 没有 ACSUSDT
+APT：公告前 24 小时 Binance 数据不足
+WEMIX：Binance 没有 WEMIXUSDT
+FLOW：公告前 24 小时 Binance 数据不足
+DAWN：Binance 没有 DAWNUSDT
+CPT：Binance 没有 CPTUSDT
+BSV：Binance 没有 BSVUSDT
+CVC：公告前 24 小时 Binance 数据不足
+IQ：公告前 24 小时 Binance 数据不足
