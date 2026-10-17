@@ -211,31 +211,66 @@ function Set-NoSleep {
     $marker = Join-Path $Bin 'nosleep.txt'
     $today = Get-Date -Format 'yyyy-MM-dd'
     $last = Read-Text $marker
-    # v2：加了"合上笔记本盖子不睡眠"，旧标记不算数，升级后当天重新设置一次
-    if ($last -eq "v2-$today" -or $last -eq "failed-$today") { return }
+    # v3（2026-10-18）：插着电源合盖仍进入了待机（断网、程序被反复冻结）。改为写入所有电源计划（不只当前计划），
+    # 并在接电源时关闭待机断网、无人值守睡眠；每天记录一次电源诊断到 logs\power-diag.txt
+    if ($last -eq "v3-$today" -or $last -eq "failed-$today") { return }
     $failed = @()
+    $schemes = @()
+    foreach ($line in (& powercfg.exe /list 2>$null)) {
+        if ($line -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { $schemes += $Matches[1] }
+    }
+    if ($schemes.Count -eq 0) { $schemes = @('SCHEME_CURRENT') }
+    foreach ($g in $schemes) {
+        # 合盖动作：接电源时 0 = 不采取任何操作；用电池时 1 = 睡眠（放进包里不发热耗电）
+        & powercfg.exe /setacvalueindex $g SUB_BUTTONS LIDACTION 0 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { $failed += "lid-ac:$g" }
+        & powercfg.exe /setdcvalueindex $g SUB_BUTTONS LIDACTION 1 2>&1 | Out-Null
+        # 接电源时：空闲不睡眠、不休眠
+        & powercfg.exe /setacvalueindex $g SUB_SLEEP STANDBYIDLE 0 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { $failed += "standby-ac:$g" }
+        & powercfg.exe /setacvalueindex $g SUB_SLEEP HIBERNATEIDLE 0 2>&1 | Out-Null
+        # 以下两项部分电脑没有（隐藏或不支持），失败不算错误：无人值守睡眠超时、待机时保持联网
+        & powercfg.exe /setacvalueindex $g SUB_SLEEP UNATTENDSLEEP 0 2>&1 | Out-Null
+        & powercfg.exe /setacvalueindex $g SUB_NONE CONNECTIVITYINSTANDBY 1 2>&1 | Out-Null
+    }
     foreach ($setting in 'standby-timeout-ac', 'hibernate-timeout-ac') {
         & powercfg.exe /change $setting 0 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { $failed += $setting }
     }
-    # 合盖动作：接电源时 0 = 不采取任何操作；用电池时 1 = 睡眠（放进包里不发热耗电）。设置后重新激活当前电源计划才生效
-    & powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { $failed += 'lid-ac' }
-    & powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 1 2>&1 | Out-Null
     & powercfg.exe /setactive SCHEME_CURRENT 2>&1 | Out-Null
+    try { Write-PowerDiag } catch { Write-Log "电源诊断记录出错：$($_.Exception.Message)" }
     if ($failed.Count -eq 0) {
-        if ($last -notlike 'v2-*') {
-            Write-Log '已设置接电源时不睡眠、不休眠，合上盖子不睡眠'
-            Send-Telegram '✅ 已设置：接着电源时，合上笔记本盖子或空闲都不再睡眠，TrendPilot 会一直运行（用电池合盖仍会睡眠）。'
+        if ($last -notlike 'v3-*') {
+            Write-Log "已设置接电源时不睡眠（$($schemes.Count) 个电源计划），合盖不睡眠、待机保持联网"
+            Send-Telegram '✅ 已加强防睡眠：所有电源计划都设为接电源时合盖、空闲都不睡眠，待机时保持联网（用电池合盖仍会睡眠）。'
         }
-        Set-Content $marker "v2-$today"
+        Set-Content $marker "v3-$today"
     } else {
         Write-Log "设置不睡眠失败：$($failed -join ', ')"
         if ($last -notlike 'failed-*') {
-            Send-Telegram "⚠️ 无法关闭电脑自动睡眠（$($failed -join ', ')），电脑睡眠时 TrendPilot 会停止。请在 控制面板 > 电源选项 > 选择关闭盖子的功能 里改为“不采取任何操作”，并把接通电源时的睡眠改为“从不”。"
+            Send-Telegram "⚠️ 无法关闭电脑自动睡眠（$($failed -join ', ')），电脑睡眠时 TrendPilot 会停止。"
         }
         Set-Content $marker "failed-$today"
     }
+}
+
+# 电源诊断：支持的睡眠状态、当前电源计划、合盖设置、最近的睡眠/唤醒/待机事件（排查"插着电合盖仍睡眠"）
+function Write-PowerDiag {
+    $out = Join-Path $AppDir 'logs\power-diag.txt'
+    $lines = @("==== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ====")
+    $lines += (& powercfg.exe /a 2>&1 | Out-String)
+    $lines += (& powercfg.exe /getactivescheme 2>&1 | Out-String)
+    $lines += (& powercfg.exe /q SCHEME_CURRENT SUB_BUTTONS LIDACTION 2>&1 | Out-String)
+    $lines += (& powercfg.exe /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE 2>&1 | Out-String)
+    try {
+        $ev = Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 1, 42, 506, 507, 566 } -MaxEvents 30 -ErrorAction Stop
+        foreach ($e in $ev) {
+            $msg = ($e.Message -split "`r?`n")[0]
+            $lines += "$($e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss')) id=$($e.Id) $($e.ProviderName) $msg"
+        }
+    } catch {
+        $lines += "读取系统事件失败：$($_.Exception.Message)"
+    }
+    Add-Content -Path $out -Value $lines -Encoding UTF8
 }
 
 # 防止两次运行重叠（构建可能超过 3 分钟）
