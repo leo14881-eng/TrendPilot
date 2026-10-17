@@ -62,6 +62,17 @@ public final class StopStudy {
                 new B0Sim("对照：ATR×1.5止损+3天等反弹", data, regimes, tape, params, fromQ, size, true).stop(atr).staleExit(72, true, 24));
     }
 
+    /**
+     * 用户 2026-10-17："上涨逻辑失效，可以止损卖出，选相对高点"。处于 LOSS_RECOVERY 的持仓等反弹高点卖（最多 24 小时），
+     * 按线上冻结规则（将上线的口径）和冻结修复两种跑；另加"失效立即卖"作对照（看等反弹有没有用）。
+     */
+    static List<B0Sim> decaySims(MarketData data, Regimes regimes, SignalTape tape, StrategyParams params, int fromQ, int size) {
+        return List.of(
+                new B0Sim("不止损（现行）", data, regimes, tape, params, fromQ, size),
+                new B0Sim("失效亏损→反弹高点卖（线上冻结规则，将上线）", data, regimes, tape, params, fromQ, size, false).decayBounce(),
+                new B0Sim("失效亏损→反弹高点卖（冻结修复）", data, regimes, tape, params, fromQ, size, true).decayBounce());
+    }
+
     public static void main(String[] args) throws Exception {
         Path dataDir = Path.of(args.length > 0 ? args[0] : "backtest-data");
         Path outDir = Path.of(args.length > 1 ? args[1] : "backtest-out");

@@ -87,6 +87,15 @@ public final class B0Sim extends Sim {
     /** symbol → {进入等待的 q, 上一根 1h 收盘价, 等待期间是否出现过上涨的 1h 收盘(0/1)} */
     private final Map<String, double[]> staleWait = new HashMap<>();
 
+    /** 上涨逻辑失效时亏损也卖、选反弹高点（DecayBounceExit，用户 2026-10-17）。 */
+    private boolean decayBounce;
+    private final Map<String, com.trendpilot.monitor.DecayBounceExit.State> decayWait = new HashMap<>();
+
+    B0Sim decayBounce() {
+        this.decayBounce = true;
+        return this;
+    }
+
     B0Sim staleExit(int hours, boolean waitBounce, int maxWaitHours) {
         this.staleHours = hours;
         this.staleWaitBounce = waitBounce;
@@ -163,6 +172,19 @@ public final class B0Sim extends Sim {
                     continue;
                 }
             }
+            if (decayBounce && pos.costBasis().signum() > 0 && q % 4 == 3) {
+                double imp = Costs.impact(vol, pos.costBasis().doubleValue());
+                double net = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate()) - pos.costBasis().doubleValue();
+                var step = com.trendpilot.monitor.DecayBounceExit.step(
+                        decayWait.getOrDefault(pos.symbol(), com.trendpilot.monitor.DecayBounceExit.State.NONE),
+                        pos.lossRecovery(), now(q), s.close[q], q, net);
+                if (step.sell()) {
+                    path.net(net);
+                    close(pos, q, null, net, com.trendpilot.monitor.DecayBounceExit.REASON);
+                    continue;
+                }
+                decayWait.put(pos.symbol(), step.next());
+            }
             if (staleHours > 0 && pos.costBasis().signum() > 0 && q % 4 == 3) {
                 double imp = Costs.impact(vol, pos.costBasis().doubleValue());
                 double net = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate()) - pos.costBasis().doubleValue();
@@ -223,6 +245,7 @@ public final class B0Sim extends Sim {
         positions.remove(pos.symbol());
         stopDist.remove(pos.symbol());
         staleWait.remove(pos.symbol());
+        decayWait.remove(pos.symbol());
         underwaterSince.remove(pos.symbol());
         markNet.remove(pos.symbol());
         lastObsHour.remove(pos.symbol());
