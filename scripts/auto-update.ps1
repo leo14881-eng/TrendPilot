@@ -219,6 +219,7 @@ function Invoke-ServerTool($exe, $argLine, $stdinText) {
         $p.RedirectStandardInput = $tmpIn
     }
     $proc = Start-Process @p
+    $null = $proc.Handle   # Windows PowerShell 5.1：不先取 Handle，进程退出后 ExitCode 读出来是空的
     if (-not $proc.WaitForExit(50 * 60 * 1000)) { try { $proc.Kill() } catch { }; Write-ServerLog '超过 50 分钟，已中止' }
     foreach ($f in $tmpOut, $tmpErr) {
         if (Test-Path $f) {
