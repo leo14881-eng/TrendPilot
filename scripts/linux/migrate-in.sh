@@ -11,6 +11,10 @@ chown -R "$RUN_USER:$RUN_USER" "$APP_DIR"
 check=$(sudo -u "$RUN_USER" sqlite3 "$DB" 'PRAGMA integrity_check;' 2>&1)
 [ "$check" = ok ] || { echo "数据库校验没通过：$check"; exit 1; }
 rm -f "$BIN/disabled.flag"
+APP_LOG="$APP_DIR/logs/trendpilot.log"
+takeovers() { local n; n=$(grep -c '负责运行（原运行机器' "$APP_LOG" 2>/dev/null); echo "${n:-0}"; }
+before=$(takeovers)
+restarted=0
 since=$(date +%s)
 systemctl restart trendpilot.service
 for _ in $(seq 1 300); do
@@ -18,6 +22,14 @@ for _ in $(seq 1 300); do
     if [ "$(last_monitor_ok)" -ge "$since" ]; then
         echo "服务器上的服务已运行，Monitor 正常"
         exit 0
+    fi
+    # 以待命身份启动、中途接管运行的进程，Monitor 不会恢复（2026-10-18 迁移时电脑和服务器都出现过）。
+    # 看到接管后重启一次：租约已经是本机的，重启后直接以运行身份启动。
+    if [ "$restarted" -eq 0 ] && [ "$(takeovers)" -gt "$before" ]; then
+        echo "已接管运行，重启一次让定时任务完整启动"
+        restarted=1
+        since=$(date +%s)
+        systemctl restart trendpilot.service
     fi
 done
 echo "启动后 25 分钟内没有成功的 Monitor"
