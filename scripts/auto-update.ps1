@@ -255,12 +255,12 @@ function Set-NoSleep {
 
 # 电源诊断：支持的睡眠状态、当前电源计划、合盖设置、最近的睡眠/唤醒/待机事件（排查"插着电合盖仍睡眠"）
 function Write-PowerDiag {
+    $ErrorActionPreference = 'Continue'   # powercfg 写 stderr 时不要直接抛出
     $out = Join-Path $AppDir 'logs\power-diag.txt'
     $lines = @("==== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ====")
     $lines += (& powercfg.exe /a 2>&1 | Out-String)
     $lines += (& powercfg.exe /getactivescheme 2>&1 | Out-String)
     $lines += (& powercfg.exe /q SCHEME_CURRENT SUB_BUTTONS 2>&1 | Out-String)
-    $lines += (& powercfg.exe /requests 2>&1 | Out-String)
     $lines += (& powercfg.exe /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE 2>&1 | Out-String)
     try {
         $ev = Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 1, 42, 506, 507, 566 } -MaxEvents 30 -ErrorAction Stop
