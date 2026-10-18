@@ -104,6 +104,8 @@ if (-not $mutex.WaitOne(0)) { exit 0 }
 try {
     # 心跳：自动更新据此确认守护任务确实在运行
     Set-Content (Join-Path $Bin 'watchdog-last.txt') ((Get-Date).ToString('o'))
+    # 本机已停用（服务由云服务器运行）：不拉起
+    if (Test-Path (Join-Path $Bin 'disabled.flag')) { exit 0 }
     # 自动更新正在换版本时不干预；但如果写标记的更新程序已经不在了（中途被结束），标记作废，照常检查和拉起
     if ((Test-Path $Updating) -and ((Get-Item $Updating).LastWriteTime -gt (Get-Date).AddMinutes(-30))) {
         $owner = 0

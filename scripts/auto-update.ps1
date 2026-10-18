@@ -188,6 +188,104 @@ function Invoke-Git([string[]]$GitArgs) {
     return $output.Trim()
 }
 
+# ---------- 服务器桥：本机通过 SSH 维护云服务器（用户 2026-10-18 同意；密钥在 ssh\，服务器 IP 在 app\server-ip.txt） ----------
+# app\server.request 写一个固定动作名（只允许下面几种，不执行任意命令），执行后删除请求文件，输出写 logs\server.log：
+#   check      检查服务器能否访问 Binance / Bybit / Telegram / GitHub
+#   install    在服务器上安装或重装（从 GitHub 拉取 scripts/linux/install.sh 执行）
+#   status     服务器上服务状态、版本、最近日志
+#   migrate    迁移到服务器：平滑停掉本机服务并停用，上传本机配置和数据库，启动服务器上的服务
+#   fallback   切回本机：停用服务器上的服务，启用并启动本机服务
+$Disabled = Join-Path $Bin 'disabled.flag'
+$BootClone = 'command -v git >/dev/null || { apt-get update -qq && apt-get install -y -qq git >/dev/null; }; rm -rf /tmp/tp-boot && git clone -q --depth 1 https://github.com/leo14881-eng/TrendPilot.git /tmp/tp-boot'
+$ServerScripts = @{
+    check    = "$BootClone && bash /tmp/tp-boot/scripts/linux/install.sh --check"
+    install  = "$BootClone && bash /tmp/tp-boot/scripts/linux/install.sh"
+    status   = 'bash /opt/trendpilot/scripts/linux/status.sh'
+    migrate  = 'bash /opt/trendpilot/scripts/linux/migrate-in.sh'
+    fallback = 'mkdir -p /opt/trendpilot/app && touch /opt/trendpilot/app/disabled.flag && systemctl stop trendpilot.service && echo "服务器上的服务已停止并停用"'
+}
+
+function Write-ServerLog($msg) {
+    Add-Content -Path (Join-Path $AppDir 'logs\server.log') -Value ('{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg) -Encoding UTF8
+}
+
+# 运行 ssh / scp（最多 50 分钟），标准输出和错误按 UTF-8 追加到 logs\server.log，返回退出码
+function Invoke-ServerTool($exe, $argLine, $stdinText) {
+    $tmpIn = Join-Path $Bin 'server-in.tmp'; $tmpOut = Join-Path $Bin 'server-out.tmp'; $tmpErr = Join-Path $Bin 'server-err.tmp'
+    $p = @{ FilePath = $exe; ArgumentList = $argLine; NoNewWindow = $true; PassThru = $true
+        RedirectStandardOutput = $tmpOut; RedirectStandardError = $tmpErr }
+    if ($stdinText) {
+        [IO.File]::WriteAllText($tmpIn, $stdinText + "`n", (New-Object Text.UTF8Encoding $false))
+        $p.RedirectStandardInput = $tmpIn
+    }
+    $proc = Start-Process @p
+    if (-not $proc.WaitForExit(50 * 60 * 1000)) { try { $proc.Kill() } catch { }; Write-ServerLog '超过 50 分钟，已中止' }
+    foreach ($f in $tmpOut, $tmpErr) {
+        if (Test-Path $f) {
+            $text = [IO.File]::ReadAllText($f, [Text.Encoding]::UTF8).TrimEnd()
+            if ($text) { Add-Content -Path (Join-Path $AppDir 'logs\server.log') -Value $text -Encoding UTF8 }
+        }
+    }
+    Remove-Item $tmpIn, $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+    return $proc.ExitCode
+}
+
+function Invoke-ServerRequest {
+    $ErrorActionPreference = 'Continue'
+    $request = Join-Path $Bin 'server.request'
+    if (-not (Test-Path $request)) { return }
+    $action = (Read-Text $request).ToLower()
+    Remove-Item $request -Force -ErrorAction SilentlyContinue
+    if (-not $ServerScripts.ContainsKey($action)) { Write-ServerLog "未知动作：$action"; return }
+    $ip = Read-Text (Join-Path $Bin 'server-ip.txt')
+    if ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { Write-ServerLog "服务器 IP 无效：$ip"; return }
+    $sshDir = Join-Path $AppDir 'ssh'
+    $key = Join-Path $sshDir 'id_ed25519'
+    $ssh = Join-Path $env:WINDIR 'System32\OpenSSH\ssh.exe'
+    $scp = Join-Path $env:WINDIR 'System32\OpenSSH\scp.exe'
+    if (-not (Test-Path $key) -or -not (Test-Path $ssh)) { Write-ServerLog '无法执行：密钥或系统自带的 ssh 不存在'; return }
+    & icacls.exe $key /inheritance:r /grant:r "$($env:USERNAME):F" 2>&1 | Out-Null   # OpenSSH 要求私钥只有本人可读
+    $opts = "-i `"$key`" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o `"UserKnownHostsFile=$(Join-Path $sshDir 'known_hosts')`" -o ConnectTimeout=20 -o ServerAliveInterval=30"
+    Write-ServerLog "== $action"
+    if ($action -eq 'migrate') {
+        # 先平滑停掉本机（数据库写完整），再传配置和数据库；任何一步失败都恢复本机运行
+        Set-Content $Disabled (Get-Date).ToString('o')
+        if (-not (Stop-TrendPilot)) {
+            Remove-Item $Disabled -ErrorAction SilentlyContinue
+            Write-ServerLog '本机服务停不下来，取消迁移'
+            return
+        }
+        Write-ServerLog '本机服务已停止并停用'
+        $files = @(, @('config\application-local.yml', '/opt/trendpilot/config/application-local.yml'))
+        foreach ($n in 'trendpilot.db', 'trendpilot.db-wal', 'trendpilot.db-shm') {
+            if (Test-Path (Join-Path $AppDir "data\$n")) { $files += , @("data\$n", "/opt/trendpilot/data/$n") }
+        }
+        $ok = (Invoke-ServerTool $ssh "$opts root@$ip bash -s" 'rm -f /opt/trendpilot/data/trendpilot.db*') -eq 0
+        foreach ($f in $files) {
+            if (-not $ok) { break }
+            $code = Invoke-ServerTool $scp "$opts -q `"$(Join-Path $AppDir $f[0])`" root@${ip}:$($f[1])" $null
+            Write-ServerLog "上传 $($f[0])：退出码 $code"
+            $ok = $code -eq 0
+        }
+        if ($ok) { $ok = (Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts.migrate) -eq 0 }
+        if ($ok) {
+            Write-ServerLog '迁移完成'
+            Send-Telegram '✅ 已迁移到云服务器运行，电脑上的服务已停用（只保留自动更新）'
+        } else {
+            Remove-Item $Disabled -ErrorAction SilentlyContinue
+            if (Start-TrendPilot) { Write-ServerLog '迁移没有完成，本机服务已恢复运行' }
+            Send-Telegram '⚠️ 迁移到服务器没有完成，已恢复由电脑运行'
+        }
+    } elseif ($action -eq 'fallback') {
+        Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts.fallback | Out-Null
+        Remove-Item $Disabled -ErrorAction SilentlyContinue
+        if (Start-TrendPilot) { Write-ServerLog '本机服务已启动'; Send-Telegram '✅ 已切回电脑运行' }
+    } else {
+        $code = Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts[$action]
+        Write-ServerLog "退出码 $code"
+    }
+}
+
 # 接电源时不睡眠、不休眠：电脑睡着服务就停了。普通用户可以改当前电源计划；每天检查一次（防止被改回去），失败只提醒一次。
 # GitHub Actions 在 Windows 上跑测试的结果（公开仓库，匿名接口，每小时 60 次额度，只在有新提交时才查）。
 # 返回 success / failure / pending / unknown（查不到或这个提交没有 CI 记录）。
@@ -306,7 +404,7 @@ try {
     }
     # 远程用：app\restart.request 存在时在空档重启一次服务（例如本机配置改了之后），先删请求文件，避免反复重启
     $restartRequest = Join-Path $Bin 'restart.request'
-    if (Test-Path $restartRequest) {
+    if ((Test-Path $restartRequest) -and -not (Test-Path $Disabled)) {
         Remove-Item $restartRequest -Force -ErrorAction SilentlyContinue
         Write-Log '收到重启请求，等待空档重启服务'
         Wait-QuietWindow
@@ -317,6 +415,7 @@ try {
             Report-StopDenied '按请求重启服务'
         }
     }
+    try { Invoke-ServerRequest } catch { Write-Log "服务器请求执行出错：$($_.Exception.Message)" }
 
     # ---------- 2. 检查新提交 ----------
     if (-not (Test-Path (Join-Path $SrcDir '.git'))) {
@@ -377,6 +476,15 @@ try {
     }
 
     # ---------- 4. 等空档 → 平滑停机 → 替换 → 启动 → 等一次成功的 Monitor（期间守护任务不干预） ----------
+    # 本机已停用（服务由云服务器运行）：只更新文件，不启动
+    if (Test-Path $Disabled) {
+        if (Test-Path $Jar) { Copy-Item $Jar $PrevJar -Force }
+        Copy-Item $newJar $Jar -Force
+        & robocopy.exe $SrcDir $AppDir /E /NFL /NDL /NJH /NJS /NP /XD .git .mvn data logs target app ssh /XF application-local.yml | Out-Null
+        Set-Content $Version $latest
+        Write-Log "已更新到 $short（本机已停用，未启动服务）"
+        exit 0
+    }
     # 标记里写本进程 PID：更新程序中途被结束时，守护任务发现这个进程不在了就立刻接手，不用等 30 分钟
     Set-Content $Updating "$PID $((Get-Date).ToString('o'))"
     Wait-QuietWindow
@@ -387,7 +495,7 @@ try {
     }
     if (Test-Path $Jar) { Copy-Item $Jar $PrevJar -Force }
     Copy-Item $newJar $Jar -Force
-    & robocopy.exe $SrcDir $AppDir /E /NFL /NDL /NJH /NJS /NP /XD .git .mvn data logs target app /XF application-local.yml | Out-Null
+    & robocopy.exe $SrcDir $AppDir /E /NFL /NDL /NJH /NJS /NP /XD .git .mvn data logs target app ssh /XF application-local.yml | Out-Null
 
     $startedUtc = (Get-Date).ToUniversalTime()
     $started = Start-TrendPilot
