@@ -10,5 +10,9 @@ free -m | awk 'NR==2{print "内存已用 "$3"M / "$2"M"}'
 df -h / | awk 'NR==2{print "硬盘已用 "$3" / "$2}'
 echo "--- auto-update.log"
 tail -n 8 "$LOG_FILE" 2>/dev/null
+echo "--- 最近的任务记录（job_run）"
+sqlite3 -readonly "$DB" "SELECT job, started_at, program_status, substr(data_status,1,60) FROM job_run ORDER BY id DESC LIMIT 8;" 2>&1 | head -n 8
+echo "--- 运行权（租约）"
+grep -E '接管|待命|租约' "$APP_DIR/logs/trendpilot.log" 2>/dev/null | tail -n 5 | cut -c1-220
 echo "--- trendpilot.log 最近警告"
 grep -E 'WARN|ERROR' "$APP_DIR/logs/trendpilot.log" 2>/dev/null | tail -n 8 | cut -c1-220
