@@ -32,7 +32,7 @@ class TelegramCommandsTest {
         HoldingsReport report = mock(HoldingsReport.class);
         when(report.markdown(any(Instant.class))).thenReturn("# TrendPilot V2 日报 2026-10-15\n## 二、持仓明细\n| ABC | BINANCE |");
         TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), notifier,
-                state, report, mock(ObjectProvider.class), true, true);
+                state, report, mock(StatusText.class), mock(ObjectProvider.class), true, true);
 
         c.handle("""
                 {"ok":true,"result":[
@@ -58,7 +58,7 @@ class TelegramCommandsTest {
         when(report.markdown(any(Instant.class))).thenThrow(new IllegalStateException("Failed to obtain JDBC Connection"))
                 .thenReturn("# TrendPilot V2 日报");
         TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), notifier,
-                state, report, mock(ObjectProvider.class), true, true);
+                state, report, mock(StatusText.class), mock(ObjectProvider.class), true, true);
         String batch = """
                 {"ok":true,"result":[{"update_id":20,"message":{"chat":{"id":42},"text":"/V2"}}]}""";
         Instant now = Instant.parse("2026-10-15T01:00:00Z");
@@ -77,5 +77,61 @@ class TelegramCommandsTest {
         c.handle(bad, now);
         assertThat(c.offset()).isEqualTo(31L);
         verify(report, times(7)).markdown(any(Instant.class));
+    }
+    @Test
+    @SuppressWarnings("unchecked")
+    void holdingsAndStatusCommands() {
+        Notifier notifier = mock(Notifier.class);
+        HoldingsReport report = mock(HoldingsReport.class);
+        StatusText status = mock(StatusText.class);
+        when(report.markdown(any(Instant.class))).thenReturn("# TrendPilot V2 日报 2026-10-18");
+        when(status.text(any(Instant.class))).thenReturn("📟 运行状态\n持仓数：V2 0");
+        TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), notifier,
+                mock(AppState.class), report, status, mock(ObjectProvider.class), true, true);
+
+        c.handle("""
+                {"ok":true,"result":[
+                 {"update_id":40,"message":{"chat":{"id":42},"text":"/holdings"}},
+                 {"update_id":41,"message":{"chat":{"id":42},"text":"/status@TrendPilotBot"}},
+                 {"update_id":42,"message":{"chat":{"id":7},"text":"/status"}},
+                 {"update_id":43,"message":{"chat":{"id":42},"text":"/foo"}}
+                ]}""", Instant.parse("2026-10-18T10:00:00Z"));
+
+        verify(notifier).send(eq("cmd:40"), contains("V2 日报"));
+        verify(notifier).send(eq("cmd:41"), contains("运行状态"));
+        verify(notifier, never()).send(eq("cmd:42"), anyString());
+        verify(notifier).send(eq("cmd:43"), contains("/holdings"));
+        assertThat(c.offset()).isEqualTo(44L);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void standbyInstanceDoesNotReadCommands() {
+        ObjectProvider<ActiveLease> provider = mock(ObjectProvider.class);
+        ActiveLease lease = mock(ActiveLease.class);
+        when(provider.getIfAvailable()).thenReturn(lease);
+        TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(),
+                mock(Notifier.class), mock(AppState.class), mock(HoldingsReport.class), mock(StatusText.class), provider, true, true);
+        when(lease.active()).thenReturn(false);
+        assertThat(c.shouldPoll()).isFalse();
+        when(lease.active()).thenReturn(true);
+        assertThat(c.shouldPoll()).isTrue();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void repliesNotAvailableWhenCommandKeepsFailing() {
+        Notifier notifier = mock(Notifier.class);
+        HoldingsReport report = mock(HoldingsReport.class);
+        when(report.markdown(any(Instant.class))).thenThrow(new IllegalStateException("数据库正忙"));
+        TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), notifier,
+                mock(AppState.class), report, mock(StatusText.class), mock(ObjectProvider.class), true, true);
+        String bad = """
+                {"ok":true,"result":[{"update_id":50,"message":{"chat":{"id":42},"text":"/holdings"}}]}""";
+        Instant now = Instant.parse("2026-10-18T10:00:00Z");
+        for (int i = 0; i < 4; i++) assertThatThrownBy(() -> c.handle(bad, now));
+        c.handle(bad, now);
+        verify(notifier).send(eq("cmd:50"), contains("暂时取不到"));
+        assertThat(c.offset()).isEqualTo(51L);
     }
 }
