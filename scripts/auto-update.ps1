@@ -260,7 +260,7 @@ function Write-PowerDiag {
     $lines = @("==== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ====")
     $lines += (& powercfg.exe /a 2>&1 | Out-String)
     $lines += (& powercfg.exe /getactivescheme 2>&1 | Out-String)
-    $lines += (& powercfg.exe /q SCHEME_CURRENT SUB_BUTTONS 2>&1 | Out-String)
+    $lines += (& powercfg.exe /qh SCHEME_CURRENT SUB_BUTTONS 2>&1 | Out-String)   # /qh 含隐藏项（部分笔记本把"合盖动作"隐藏了）
     $lines += (& powercfg.exe /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE 2>&1 | Out-String)
     try {
         $ev = Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 1, 42, 506, 507, 566 } -MaxEvents 30 -ErrorAction Stop
