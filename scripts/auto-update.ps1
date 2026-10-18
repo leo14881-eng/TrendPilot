@@ -194,6 +194,7 @@ function Invoke-Git([string[]]$GitArgs) {
 #   install    在服务器上安装或重装（从 GitHub 拉取 scripts/linux/install.sh 执行）
 #   status     服务器上服务状态、版本、最近日志
 #   migrate    迁移到服务器：平滑停掉本机服务并停用，上传本机配置和数据库，启动服务器上的服务
+#   migrate-fresh  同上，但只上传配置，服务器用全新的空数据库从头开始（本机数据库原样保留）
 #   fallback   切回本机：停用服务器上的服务，启用并启动本机服务
 $Disabled = Join-Path $Bin 'disabled.flag'
 $BootClone = 'command -v git >/dev/null || { apt-get update -qq && apt-get install -y -qq git >/dev/null; }; rm -rf /tmp/tp-boot && git clone -q --depth 1 https://github.com/leo14881-eng/TrendPilot.git /tmp/tp-boot'
@@ -202,6 +203,7 @@ $ServerScripts = @{
     install  = "$BootClone && bash /tmp/tp-boot/scripts/linux/install.sh"
     status   = 'bash /opt/trendpilot/scripts/linux/status.sh'
     migrate  = 'bash /opt/trendpilot/scripts/linux/migrate-in.sh'
+    'migrate-fresh' = 'touch /opt/trendpilot/data/trendpilot.db && bash /opt/trendpilot/scripts/linux/migrate-in.sh'
     fallback = 'mkdir -p /opt/trendpilot/app && touch /opt/trendpilot/app/disabled.flag && systemctl stop trendpilot.service && echo "服务器上的服务已停止并停用"'
 }
 
@@ -248,8 +250,9 @@ function Invoke-ServerRequest {
     & icacls.exe $key /inheritance:r /grant:r "$($env:USERNAME):F" 2>&1 | Out-Null   # OpenSSH 要求私钥只有本人可读
     $opts = "-i `"$key`" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o `"UserKnownHostsFile=$(Join-Path $sshDir 'known_hosts')`" -o ConnectTimeout=20 -o ServerAliveInterval=30"
     Write-ServerLog "== $action"
-    if ($action -eq 'migrate') {
-        # 先平滑停掉本机（数据库写完整），再传配置和数据库；任何一步失败都恢复本机运行
+    if ($action -eq 'migrate' -or $action -eq 'migrate-fresh') {
+        # 先平滑停掉本机（数据库写完整），再传配置和数据库（migrate-fresh 只传配置）；任何一步失败都恢复本机运行
+        $fresh = $action -eq 'migrate-fresh'
         Set-Content $Disabled (Get-Date).ToString('o')
         if (-not (Stop-TrendPilot)) {
             Remove-Item $Disabled -ErrorAction SilentlyContinue
@@ -259,7 +262,7 @@ function Invoke-ServerRequest {
         Write-ServerLog '本机服务已停止并停用'
         $files = @(, @('config\application-local.yml', '/opt/trendpilot/config/application-local.yml'))
         foreach ($n in 'trendpilot.db', 'trendpilot.db-wal', 'trendpilot.db-shm') {
-            if (Test-Path (Join-Path $AppDir "data\$n")) { $files += , @("data\$n", "/opt/trendpilot/data/$n") }
+            if (-not $fresh -and (Test-Path (Join-Path $AppDir "data\$n"))) { $files += , @("data\$n", "/opt/trendpilot/data/$n") }
         }
         $ok = (Invoke-ServerTool $ssh "$opts root@$ip bash -s" 'rm -f /opt/trendpilot/data/trendpilot.db*') -eq 0
         foreach ($f in $files) {
@@ -268,10 +271,14 @@ function Invoke-ServerRequest {
             Write-ServerLog "上传 $($f[0])：退出码 $code"
             $ok = $code -eq 0
         }
-        if ($ok) { $ok = (Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts.migrate) -eq 0 }
+        if ($ok) { $ok = (Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts[$action]) -eq 0 }
         if ($ok) {
             Write-ServerLog '迁移完成'
-            Send-Telegram '✅ 已迁移到云服务器运行，电脑上的服务已停用（只保留自动更新）'
+            if ($fresh) {
+                Send-Telegram '✅ 已迁移到云服务器运行，账本从零开始重新测试（旧记录保留在电脑上），电脑上的服务已停用（只保留自动更新）'
+            } else {
+                Send-Telegram '✅ 已迁移到云服务器运行，电脑上的服务已停用（只保留自动更新）'
+            }
         } else {
             Remove-Item $Disabled -ErrorAction SilentlyContinue
             if (Start-TrendPilot) { Write-ServerLog '迁移没有完成，本机服务已恢复运行' }
