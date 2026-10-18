@@ -30,6 +30,8 @@ import com.trendpilot.report.HoldingsReport;
  * <li>出错（例如数据库正忙、网络断开）最多等 15 秒就重试；处理失败的指令不跳过，下次重试，同一条最多试 5 次，
  *     仍失败就回复"暂时取不到"。</li>
  * </ul>
+ * 指令菜单：负责运行的那台启动后用 setMyCommands 注册一次（内容没变就跳过），在 Telegram 输入"/"或点"菜单"就能看到指令和说明；
+ * 菜单和 /help 用同一份定义 {@link #MENU}，不会对不上。注册失败只记日志，稍后再试，不影响指令本身。
  * trendpilot.telegram-commands.enabled=false 可关闭。
  */
 @Component
@@ -40,7 +42,21 @@ public class TelegramCommands {
     /** 出错后重试的最长等待：指令要尽快恢复响应，不能像后台任务一样退避到几分钟。 */
     static final long MAX_BACKOFF_MS = 15_000;
     static final int MAX_TRIES = 5;
-    static final String HELP = "可用指令：\n/holdings 当前持仓、当天盈亏和资金情况（/v2 同）\n/status 运行状态：版本、运行机器、最近一次持仓检查、各账本持仓数\n/help 指令列表";
+    static final String MENU_KEY = "telegram:menu";
+
+    /** 一条指令：名字（不带 /）和说明。 */
+    record Cmd(String name, String description) {
+    }
+
+    /** 指令菜单和 /help 的唯一来源。 */
+    static final java.util.List<Cmd> MENU = java.util.List.of(
+            new Cmd("holdings", "当前持仓、当天盈亏和资金情况"),
+            new Cmd("v2", "同 /holdings"),
+            new Cmd("status", "运行状态：版本、运行机器、最近一次持仓检查、各账本持仓数"),
+            new Cmd("help", "指令列表"));
+
+    static final String HELP = "可用指令：\n" + String.join("\n",
+            MENU.stream().map(c -> "/" + c.name() + " " + c.description()).toList());
 
     private final TelegramProperties props;
     private final ObjectMapper json;
@@ -54,6 +70,8 @@ public class TelegramCommands {
     /** 下一条要读的消息编号；内存里为准，数据库只做重启后的恢复（写失败不影响读指令）。 */
     private Long offset;
     private final Map<Long, Integer> tries = new java.util.HashMap<>();
+    /** 下次可以尝试注册菜单的时间（毫秒）；注册成功或内容没变后设为 Long.MAX_VALUE。 */
+    private long nextMenuTry = 0;
 
     public TelegramCommands(TelegramProperties props, ObjectMapper json, Notifier notifier, AppState state,
                             HoldingsReport report, StatusText status, ObjectProvider<ActiveLease> lease,
@@ -88,6 +106,7 @@ public class TelegramCommands {
                     Thread.sleep(30_000); // 待命机器不读指令，由运行的那台回应
                     continue;
                 }
+                registerMenuIfDue(System.currentTimeMillis());
                 poll();
                 backoff = 2_000;
             } catch (InterruptedException e) {
@@ -107,6 +126,59 @@ public class TelegramCommands {
     boolean shouldPoll() {
         ActiveLease l = lease.getIfAvailable();
         return l == null || l.active();
+    }
+
+    /** setMyCommands 的请求内容。 */
+    static Map<String, Object> menuRequest() {
+        return Map.of("commands", MENU.stream()
+                .map(c -> Map.of("command", c.name(), "description", c.description())).toList());
+    }
+
+    private static String menuFingerprint() {
+        return MENU.stream().map(c -> c.name() + "=" + c.description()).collect(java.util.stream.Collectors.joining("|"));
+    }
+
+    /** 注册指令菜单（到时间才试；内容和上次注册的一样就跳过）。失败只记日志，10 分钟后再试；429 按 retry_after 等。 */
+    void registerMenuIfDue(long nowMs) {
+        if (nowMs < nextMenuTry) return;
+        String fp = menuFingerprint();
+        try {
+            if (state.get(MENU_KEY).filter(fp::equals).isPresent()) {
+                nextMenuTry = Long.MAX_VALUE;
+                return;
+            }
+        } catch (RuntimeException e) {
+            log.debug("读取指令菜单记录失败，照常注册：{}", e.toString());
+        }
+        try {
+            http.post().uri("/bot{token}/setMyCommands", props.botToken()).body(menuRequest()).retrieve().toBodilessEntity();
+            nextMenuTry = Long.MAX_VALUE;
+            log.info("Telegram 指令菜单已注册（{} 条）", MENU.size());
+            try {
+                state.put(MENU_KEY, fp);
+            } catch (RuntimeException e) {
+                log.debug("保存指令菜单记录失败（下次启动会再注册一次）：{}", e.toString());
+            }
+        } catch (org.springframework.web.client.HttpClientErrorException.TooManyRequests e) {
+            long wait = retryAfterSeconds(e.getResponseBodyAsString()) * 1000L;
+            nextMenuTry = nowMs + Math.max(wait, 60_000);
+            log.warn("注册 Telegram 指令菜单遇到 429，{} 秒后再试", Math.max(wait, 60_000) / 1000);
+        } catch (RuntimeException e) {
+            nextMenuTry = nowMs + 600_000;
+            log.warn("注册 Telegram 指令菜单没有成功，10 分钟后再试：{}", Notifier.maskText(e.getMessage()));
+        }
+    }
+
+    private long retryAfterSeconds(String body) {
+        try {
+            return json.readTree(body).path("parameters").path("retry_after").asLong(60);
+        } catch (Exception e) {
+            return 60;
+        }
+    }
+
+    void useClient(RestClient client) {
+        this.http = client;
     }
 
     void poll() {

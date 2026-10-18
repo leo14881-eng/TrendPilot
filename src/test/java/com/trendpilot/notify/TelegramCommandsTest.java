@@ -134,4 +134,67 @@ class TelegramCommandsTest {
         verify(notifier).send(eq("cmd:50"), contains("暂时取不到"));
         assertThat(c.offset()).isEqualTo(51L);
     }
+
+    @Test
+    void helpTextAndMenuComeFromTheSameDefinition() {
+        for (TelegramCommands.Cmd c : TelegramCommands.MENU) {
+            assertThat(TelegramCommands.HELP).contains("/" + c.name() + " " + c.description());
+            assertThat(c.name()).matches("[a-z0-9_]{1,32}"); // Telegram 对指令名的要求
+            assertThat(c.description()).isNotBlank().hasSizeLessThanOrEqualTo(256);
+        }
+        assertThat(TelegramCommands.MENU).extracting(TelegramCommands.Cmd::name)
+                .containsExactly("holdings", "v2", "status", "help");
+        @SuppressWarnings("unchecked")
+        java.util.List<java.util.Map<String, String>> cmds =
+                (java.util.List<java.util.Map<String, String>>) TelegramCommands.menuRequest().get("commands");
+        assertThat(cmds).hasSize(4);
+        assertThat(cmds.get(0)).containsEntry("command", "holdings").containsEntry("description", "当前持仓、当天盈亏和资金情况");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void menuIsRegisteredOnceAndSkippedWhenUnchanged() {
+        AppState state = mock(AppState.class);
+        when(state.get(TelegramCommands.MENU_KEY)).thenReturn(java.util.Optional.empty());
+        TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), mock(Notifier.class),
+                state, mock(HoldingsReport.class), mock(StatusText.class), mock(ObjectProvider.class), true, true);
+        org.springframework.web.client.RestClient.Builder b = org.springframework.web.client.RestClient.builder();
+        org.springframework.test.web.client.MockRestServiceServer server =
+                org.springframework.test.web.client.MockRestServiceServer.bindTo(b).build();
+        c.useClient(b.baseUrl("https://tg.test").build());
+
+        // 第一次 429：不抛出，按 retry_after 等
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(org.hamcrest.Matchers.endsWith("/setMyCommands")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withStatus(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .body("{\"ok\":false,\"parameters\":{\"retry_after\":120}}"));
+        c.registerMenuIfDue(1_000);
+        c.registerMenuIfDue(60_000); // 还没到 120 秒，不请求
+        server.verify();
+        server.reset();
+
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(org.hamcrest.Matchers.endsWith("/setMyCommands")))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.commands[0].command").value("holdings"))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.commands[2].command").value("status"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withSuccess("{\"ok\":true,\"result\":true}", org.springframework.http.MediaType.APPLICATION_JSON));
+        c.registerMenuIfDue(130_000);
+        server.verify();
+        verify(state).put(eq(TelegramCommands.MENU_KEY), anyString());
+        c.registerMenuIfDue(999_999); // 注册过了，不再请求
+        server.verify();
+
+        // 新实例：记录和当前菜单一样就跳过，不发请求
+        org.mockito.ArgumentCaptor<String> fp = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(state).put(eq(TelegramCommands.MENU_KEY), fp.capture());
+        AppState state2 = mock(AppState.class);
+        when(state2.get(TelegramCommands.MENU_KEY)).thenReturn(java.util.Optional.of(fp.getValue()));
+        TelegramCommands c2 = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), mock(Notifier.class),
+                state2, mock(HoldingsReport.class), mock(StatusText.class), mock(ObjectProvider.class), true, true);
+        server.reset();
+        c2.useClient(b.baseUrl("https://tg.test").build());
+        c2.registerMenuIfDue(1);
+        server.verify();
+    }
 }
