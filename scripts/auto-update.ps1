@@ -304,6 +304,19 @@ try {
         try { Write-PowerDiag } catch { Write-Log "电源诊断记录出错：$($_.Exception.Message)" }
         Remove-Item $diagRequest -Force -ErrorAction SilentlyContinue
     }
+    # 远程用：app\restart.request 存在时在空档重启一次服务（例如本机配置改了之后），先删请求文件，避免反复重启
+    $restartRequest = Join-Path $Bin 'restart.request'
+    if (Test-Path $restartRequest) {
+        Remove-Item $restartRequest -Force -ErrorAction SilentlyContinue
+        Write-Log '收到重启请求，等待空档重启服务'
+        Wait-QuietWindow
+        if (Stop-TrendPilot) {
+            if (Start-TrendPilot) { Write-Log '按请求重启完成' }
+            else { Send-Telegram '⚠️ 按请求重启后服务没有正常启动，守护任务会继续尝试' }
+        } else {
+            Report-StopDenied '按请求重启服务'
+        }
+    }
 
     # ---------- 2. 检查新提交 ----------
     if (-not (Test-Path (Join-Path $SrcDir '.git'))) {
