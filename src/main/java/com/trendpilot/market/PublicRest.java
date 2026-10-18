@@ -42,6 +42,8 @@ final class PublicRest {
     private final long minGapMs;
     private long nextSlotMs;
     private volatile long pausedUntilMs;
+    /** 当前暂停的原因，写进失败信息：交易所限流、IP 封禁和网络连续不通分开说明，便于判断是不是请求太多。 */
+    private volatile String pauseLabel = "限流暂停中";
     private int consecutiveFailures;
 
     PublicRest(String name, int maxConcurrency, long minGapMs) {
@@ -57,7 +59,7 @@ final class PublicRest {
             long now = System.currentTimeMillis();
             long slot = Math.max(Math.max(now, nextSlotMs), pausedUntilMs);
             if (slot - now > MAX_WAIT_MS) {
-                throw new MarketDataException(name + " 限流暂停中，" + (slot - now) / 1000 + " 秒后恢复：" + what);
+                throw new MarketDataException(name + " " + pauseLabel + "，" + (slot - now) / 1000 + " 秒后恢复：" + what);
             }
             nextSlotMs = slot + minGapMs;
             wait = slot - now;
@@ -66,11 +68,17 @@ final class PublicRest {
     }
 
     private void pause(long ms) {
+        pause(ms, "限流暂停中");
+    }
+
+    private void pause(long ms, String label) {
+        pauseLabel = label;
         pausedUntilMs = Math.max(pausedUntilMs, System.currentTimeMillis() + Math.min(MAX_PAUSE_MS, ms));
     }
 
     /** 不设上限的暂停（418 封禁）。 */
     private void ban(long ms) {
+        pauseLabel = "IP 被封禁暂停中";
         pausedUntilMs = Math.max(pausedUntilMs, System.currentTimeMillis() + ms);
     }
 
@@ -82,7 +90,7 @@ final class PublicRest {
     private synchronized void failed(String what) {
         if (++consecutiveFailures >= BREAKER_FAILURES) {
             consecutiveFailures = 0;
-            pause(BREAKER_MS);
+            pause(BREAKER_MS, "网络或交易所连续不通，暂停中（不是限流）");
             log.warn("{} 连续失败 {} 次，熔断 {} 秒：{}", name, BREAKER_FAILURES, BREAKER_MS / 1000, what);
         }
     }
@@ -159,6 +167,9 @@ final class PublicRest {
         while (root.getCause() != null && root.getCause() != root) root = root.getCause();
         String msg = root.getMessage();
         String type = root.getClass().getSimpleName();
+        if (root instanceof java.nio.channels.UnresolvedAddressException || root instanceof java.net.UnknownHostException) {
+            return "网络不通（域名解析失败）" + (msg == null || msg.isBlank() ? "" : "：" + msg);
+        }
         if (msg == null || msg.isBlank()) return type;
         msg = msg.length() > 120 ? msg.substring(0, 120) : msg;
         return type + "：" + msg;

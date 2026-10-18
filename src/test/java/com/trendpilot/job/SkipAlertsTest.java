@@ -31,5 +31,7 @@ class SkipAlertsTest {
     void causeUsesRootMessageOnOneLine() {
         Exception e = new RuntimeException("wrap", new java.io.IOException("HTTP 429\n  too many"));
         assertThat(MonitorJob.cause(e)).isEqualTo("HTTP 429 too many");
+        Exception dns = new RuntimeException("io", new java.nio.channels.UnresolvedAddressException());
+        assertThat(MonitorJob.cause(dns)).isEqualTo("网络不通（域名解析失败）");
     }
 }

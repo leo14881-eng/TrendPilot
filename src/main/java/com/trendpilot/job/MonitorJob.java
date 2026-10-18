@@ -186,6 +186,9 @@ public class MonitorJob {
     static String cause(Throwable ex) {
         Throwable t = ex;
         while (t.getCause() != null && t.getCause() != t) t = t.getCause();
+        if (t instanceof java.nio.channels.UnresolvedAddressException || t instanceof java.net.UnknownHostException) {
+            return "网络不通（域名解析失败）";
+        }
         String msg = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
         msg = msg.replaceAll("\\s+", " ").strip();
         return msg.length() > 120 ? msg.substring(0, 120) + "…" : msg;
