@@ -75,9 +75,8 @@ public class HoldingsReport {
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         java.time.LocalDate day = now.minusSeconds(60).atZone(zone).toLocalDate(); // 刚结束的那一天
         try {
-            String md = markdown(day, now);
-            write(day, md);
-            notifier.send("v2-daily:" + day, telegram(md));
+            write(day, markdown(day, now));
+            notifier.send("v2-daily:" + day, telegram(markdown(day, now, false)));
         } catch (Exception e) {
             log.warn("V2 日报生成失败：{}", e.getMessage());
         }
@@ -130,13 +129,25 @@ public class HoldingsReport {
         }
     }
 
-    /** 当天（越南时间）从 0 点到现在的版本。 */
+    /** 当天（越南时间）从 0 点到现在的版本（网页用，V1 附最好、最差各 5 个）。 */
     public String markdown(Instant now) {
         return markdown(now.atZone(zone).toLocalDate(), now);
     }
 
-    /** day 那一天的日报：持仓和资金是 now 时刻的状态，盈利明细统计 day 当天（越南时间 0 点到 24 点，不晚于 now）。 */
+    /** Telegram 用：V1 只给汇总，不逐个列持仓（V1 持仓常有上百个，用户 2026-10-18 要求）。 */
+    public String telegramText(Instant now) {
+        return telegram(markdown(now.atZone(zone).toLocalDate(), now, false));
+    }
+
     public String markdown(java.time.LocalDate day, Instant now) {
+        return markdown(day, now, true);
+    }
+
+    /**
+     * day 那一天的日报：持仓和资金是 now 时刻的状态，盈利明细统计 day 当天（越南时间 0 点到 24 点，不晚于 now）。
+     * v1Detail = false 时 V1 只有汇总行。
+     */
+    public String markdown(java.time.LocalDate day, Instant now, boolean v1Detail) {
         ZonedDateTime local = now.atZone(zone);
         Instant dayStart = day.atStartOfDay(zone).toInstant();
         Instant dayEnd = day.plusDays(1).atStartOfDay(zone).toInstant();
@@ -251,13 +262,17 @@ public class HoldingsReport {
         long v1losers = v1rows.stream().filter(r -> r.net() < 0).count();
         out.add("## 六、V1 宽口径观察（对照用，按参考价记账）");
         out.add("");
-        out.add(String.format(Locale.ROOT, "**合计（已实现 + 浮动）%s U**%s。%d 个仓位，总成本 %s U，浮动净盈亏 %s U（%s），%d 个浮亏、%d 个浮盈。已实现累计 %s U，当天 %s U。",
+        List<Sell> v1sells = sells(ObservationBook.BOOK, dayStart, dayEnd);
+        long v1wins = v1sells.stream().filter(x -> x.pnl() > 0).count();
+        out.add(String.format(Locale.ROOT, "**合计（已实现 + 浮动）%s U**%s。%d 个仓位，总成本 %s U，浮动净盈亏 %s U（%s），%d 个浮亏、%d 个浮盈。已实现累计 %s U，当天 %s U。"
+                        + "当天开仓 %d 笔，平仓 %d 笔（盈利 %d 笔）。",
                 signed(v1.realizedPnl() + v1net), dayChange(ObservationBook.BOOK, dayStart, v1.realizedPnl() + v1net),
                 v1rows.size(), money(v1cost), signed(v1net), pct(v1cost == 0 ? 0 : v1net / v1cost * 100), v1losers,
                 v1rows.size() - v1losers, signed(v1.realizedPnl()),
-                signed(sells(ObservationBook.BOOK, dayStart, dayEnd).stream().mapToDouble(Sell::pnl).sum())));
+                signed(v1sells.stream().mapToDouble(Sell::pnl).sum()),
+                buys(ObservationBook.BOOK, dayStart, dayEnd).size(), v1sells.size(), v1wins));
         out.add("");
-        if (!v1rows.isEmpty()) {
+        if (v1Detail && !v1rows.isEmpty()) {
             List<Row> sorted = v1rows.stream().sorted(Comparator.comparingDouble(Row::pct)).toList();
             out.add("| | 代码 | 交易所 | 成本 | 浮动盈亏 | 收益率 | 持有 |");
             out.add("|---|---|---|---:|---:|---:|---:|");

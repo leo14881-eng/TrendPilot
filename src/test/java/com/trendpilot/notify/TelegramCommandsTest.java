@@ -30,7 +30,7 @@ class TelegramCommandsTest {
         Notifier notifier = mock(Notifier.class);
         AppState state = mock(AppState.class);
         HoldingsReport report = mock(HoldingsReport.class);
-        when(report.markdown(any(Instant.class))).thenReturn("# TrendPilot V2 日报 2026-10-15\n## 二、持仓明细\n| ABC | BINANCE |");
+        when(report.telegramText(any(Instant.class))).thenReturn("📊 TrendPilot V2 日报 2026-10-15\n【二、持仓明细】\nABC · BINANCE");
         TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), notifier,
                 state, report, mock(StatusText.class), mock(ObjectProvider.class), true, true);
 
@@ -55,8 +55,8 @@ class TelegramCommandsTest {
         Notifier notifier = mock(Notifier.class);
         AppState state = mock(AppState.class);
         HoldingsReport report = mock(HoldingsReport.class);
-        when(report.markdown(any(Instant.class))).thenThrow(new IllegalStateException("Failed to obtain JDBC Connection"))
-                .thenReturn("# TrendPilot V2 日报");
+        when(report.telegramText(any(Instant.class))).thenThrow(new IllegalStateException("Failed to obtain JDBC Connection"))
+                .thenReturn("📊 TrendPilot V2 日报");
         TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), notifier,
                 state, report, mock(StatusText.class), mock(ObjectProvider.class), true, true);
         String batch = """
@@ -70,13 +70,13 @@ class TelegramCommandsTest {
         assertThat(c.offset()).isEqualTo(21L);
 
         // 一直失败的指令：第 5 次放弃，不卡住后面的指令
-        when(report.markdown(any(Instant.class))).thenThrow(new IllegalStateException("坏了"));
+        when(report.telegramText(any(Instant.class))).thenThrow(new IllegalStateException("坏了"));
         String bad = """
                 {"ok":true,"result":[{"update_id":30,"message":{"chat":{"id":42},"text":"/v2"}}]}""";
         for (int i = 0; i < 4; i++) assertThatThrownBy(() -> c.handle(bad, now));
         c.handle(bad, now);
         assertThat(c.offset()).isEqualTo(31L);
-        verify(report, times(7)).markdown(any(Instant.class));
+        verify(report, times(7)).telegramText(any(Instant.class));
     }
     @Test
     @SuppressWarnings("unchecked")
@@ -84,7 +84,7 @@ class TelegramCommandsTest {
         Notifier notifier = mock(Notifier.class);
         HoldingsReport report = mock(HoldingsReport.class);
         StatusText status = mock(StatusText.class);
-        when(report.markdown(any(Instant.class))).thenReturn("# TrendPilot V2 日报 2026-10-18");
+        when(report.telegramText(any(Instant.class))).thenReturn("📊 TrendPilot V2 日报 2026-10-18");
         when(status.text(any(Instant.class))).thenReturn("📟 运行状态\n持仓数：V2 0");
         TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), notifier,
                 mock(AppState.class), report, status, mock(ObjectProvider.class), true, true);
@@ -123,7 +123,7 @@ class TelegramCommandsTest {
     void repliesNotAvailableWhenCommandKeepsFailing() {
         Notifier notifier = mock(Notifier.class);
         HoldingsReport report = mock(HoldingsReport.class);
-        when(report.markdown(any(Instant.class))).thenThrow(new IllegalStateException("数据库正忙"));
+        when(report.telegramText(any(Instant.class))).thenThrow(new IllegalStateException("数据库正忙"));
         TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), notifier,
                 mock(AppState.class), report, mock(StatusText.class), mock(ObjectProvider.class), true, true);
         String bad = """

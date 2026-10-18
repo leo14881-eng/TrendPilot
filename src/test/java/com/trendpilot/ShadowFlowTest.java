@@ -218,6 +218,11 @@ class ShadowFlowTest {
                 "## 四、资金情况", "V1 宽口径观察", "BTC 每日短线");
         String tg = com.trendpilot.report.HoldingsReportTestAccess.telegram(md);
         assertThat(tg).contains("📊 TrendPilot V2 日报", "【二、持仓明细】", "ABC · BINANCE").doesNotContain("|---");
+        // Telegram 版：V1 只有汇总，不逐个列持仓；网页版仍列最好、最差
+        if (!v1Book.positions().isEmpty()) assertThat(md).contains("| 最好 |");
+        String compact = holdings.telegramText(t0.plusSeconds(60));
+        assertThat(compact).contains("📊 TrendPilot V2 日报", "【六、V1 宽口径观察", "当天开仓", "ABC · BINANCE")
+                .doesNotContain("最好 ·").doesNotContain("最差 ·");
 
         // 同一 generation 再跑不会重复买入（加仓条件不满足），K 线全部命中缓存，交易对信息也走缓存
         DiscoveryJob.Report again = discovery.runOnce(t0);

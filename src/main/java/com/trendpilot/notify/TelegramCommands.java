@@ -152,7 +152,7 @@ public class TelegramCommands {
         String text = raw.trim().toLowerCase(Locale.ROOT);
         String cmd = text.split("[\\s@]", 2)[0];
         switch (cmd) {
-            case "/holdings", "/v2", "v2" -> notifier.send("cmd:" + id, HoldingsReport.telegram(report.markdown(now)));
+            case "/holdings", "/v2", "v2" -> notifier.send("cmd:" + id, report.telegramText(now));
             case "/status" -> notifier.send("cmd:" + id, status.text(now));
             case "/help", "/start" -> notifier.send("cmd:" + id, HELP);
             default -> {
