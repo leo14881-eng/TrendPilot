@@ -34,7 +34,8 @@ public final class BtcGridStudy {
     /** 一次回放的结果。 */
     public record Run(String name, int rounds, int wins, double realized, double endUnrealized, double total,
                       double maxDd, double maxFloatLoss, long maxHoldDays, int tradeDays, int days, int skipped, int heldDays,
-                      double[] roundPnls, Map<String, double[]> cat, Map<Integer, double[]> byYear) {
+                      double[] roundPnls, Map<String, double[]> cat, Map<Integer, double[]> byYear,
+                      java.util.Set<java.time.YearMonth> winMonths) {
 
         double meanRound() {
             return roundPnls.length == 0 ? 0 : Arrays.stream(roundPnls).average().orElse(0);
@@ -70,6 +71,7 @@ public final class BtcGridStudy {
         Map<String, double[]> cat = new LinkedHashMap<>(); // {轮数, 盈亏, 最差 MAE%}
         for (String c : CATS) cat.put(c, new double[3]);
         Map<Integer, double[]> byYear = new LinkedHashMap<>(); // {轮数, 已实现}
+        java.util.Set<java.time.YearMonth> winMonths = new java.util.TreeSet<>();
         String openCat = "";
         int days = 0, tradeDays = 0, skipped = 0, heldDays = 0;
         LocalDate lastBuyDay = null, lastDay = null;
@@ -105,6 +107,7 @@ public final class BtcGridStudy {
                 } else if (book.lastRound != null) {
                     Book.Round r = book.lastRound;
                     pnls.add(r.pnl());
+                    if (r.pnl() > 0) winMonths.add(java.time.YearMonth.from(day));
                     double[] c = cat.get(openCat);
                     c[0]++;
                     c[1] += r.pnl();
@@ -131,7 +134,7 @@ public final class BtcGridStudy {
         }
         return new Run(name, book.rounds(), book.wins(), book.realized(), endU, book.realized() + endU, maxDd,
                 book.maxFloatLoss(), maxHold, tradeDays, days, skipped, heldDays,
-                pnls.stream().mapToDouble(Double::doubleValue).toArray(), cat, byYear);
+                pnls.stream().mapToDouble(Double::doubleValue).toArray(), cat, byYear, winMonths);
     }
 
     static String category(LocalDate day, Set<LocalDate> crash, String regime) {
