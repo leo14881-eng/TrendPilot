@@ -37,6 +37,7 @@ public final class BtcPlanStudy {
             String entry = switch (family) {
                 case "F2" -> String.format(Locale.ROOT, "开盘−%.2fATR", e1);
                 case "V2B" -> "现行买法(开盘−0.25/0.6ATR,下跌趋势不开)";
+                case "V2K" -> String.format(Locale.ROOT, "现行买法 第1档 强%.2f/弱%.2fATR", e1, e2);
                 case "F3" -> String.format(Locale.ROOT, "%d日高−%.0fATR", (int) e1, e2);
                 case "F4" -> String.format(Locale.ROOT, "SMA%d上 回EMA20或−%.1fATR", (int) e1, e2);
                 case "F5" -> String.format(Locale.ROOT, "月开−%.0f%%", e1);
@@ -72,7 +73,7 @@ public final class BtcPlanStudy {
     public record Run(String name, int rounds, int wins, double realized, double endUnrealized, double total, double maxDd,
                       double maxFloatLoss, long maxHoldDays, int days, int heldDays, int opened, double utilization,
                       double[] roundPnls, double[] roundPcts, Map<String, double[]> cat, Set<YearMonth> winMonths,
-                      Map<Integer, double[]> byYear, EqTracker eq, double endQty) {
+                      Map<Integer, double[]> byYear, EqTracker eq, double endQty, int eligibleDays) {
     }
 
     /** 预先算好的每日指标（只用当天之前已收盘的日线）。 */
@@ -178,7 +179,7 @@ public final class BtcPlanStudy {
         int idx = -1;
         double limit = Double.NaN, realized = 0, profitUsed = 0, peakEq = 0, maxDd = 0, maxFloat = 0, lastClose = 0;
         boolean canOpen = false;
-        int rounds = 0, wins = 0, days = 0, held = 0, opened = 0;
+        int rounds = 0, wins = 0, days = 0, held = 0, opened = 0, eligible = 0;
         long maxHold = 0, barsN = 0;
         double util = 0;
         List<Double> pnls = new ArrayList<>(), pcts = new ArrayList<>();
@@ -203,12 +204,15 @@ public final class BtcPlanStudy {
                     case "F2" -> dd.open[idx] - c.e1() * atr;
                     case "V2B" -> dd.down[idx] ? Double.NaN
                             : dd.open[idx] - (dd.prevClose(idx) > dd.ema20[idx] ? 0.25 : 0.6) * atr;
+                    case "V2K" -> dd.down[idx] ? Double.NaN
+                            : dd.open[idx] - (dd.prevClose(idx) > dd.ema20[idx] ? c.e1() : c.e2()) * atr;
                     case "F3" -> dd.hh[hk][idx] - c.e2() * atr;
                     case "F4" -> dd.prevClose(idx) > (c.e1() == 50 ? dd.sma50[idx] : dd.sma100[idx])
                             ? Math.max(dd.ema20[idx], dd.open[idx] - c.e2() * atr) : Double.NaN;
                     case "F5" -> dd.monthOpen[idx] * (1 - c.e1() / 100);
                     default -> dd.open[idx];
                 };
+                if (canOpen && !Double.isNaN(limit)) eligible++;
             }
             if (idx < 0) continue;
             double atr = dd.atr[idx];
@@ -323,7 +327,7 @@ public final class BtcPlanStudy {
         }
         return new Run(c.label(), rounds, wins, realized, endU, realized + endU, maxDd, maxFloat, maxHold, days, held, opened,
                 barsN == 0 ? 0 : util / barsN, pnls.stream().mapToDouble(Double::doubleValue).toArray(),
-                pcts.stream().mapToDouble(Double::doubleValue).toArray(), cat, winMonths, byYear, eq, pos == null ? 0 : pos.qty);
+                pcts.stream().mapToDouble(Double::doubleValue).toArray(), cat, winMonths, byYear, eq, pos == null ? 0 : pos.qty, eligible);
     }
 
     /** 最低卖出挂价：成交价（扣滑点后）不低于含费均价 × (1 + 手续费 + 0.3%)。 */
