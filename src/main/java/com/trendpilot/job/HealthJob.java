@@ -48,6 +48,7 @@ public class HealthJob {
     private final JdbcClient jdbc;
     private final ApiStats api;
     private final Path snapshots;
+    private final Path reports;
 
     static final Duration KLINE_STALE = Duration.ofMinutes(45);
     static final int API_LIMITED_PER_HOUR = 3;
@@ -71,6 +72,7 @@ public class HealthJob {
         this.jdbc = jdbc;
         this.api = api;
         this.snapshots = Path.of(dataDir, "snapshots");
+        this.reports = Path.of(dataDir, "reports");
         this.runs = runs;
         this.notifier = notifier;
         this.book = book;
@@ -213,46 +215,142 @@ public class HealthJob {
                 : job + " 上次运行在 " + minutes + " 分钟前"));
     }
 
+    /** 每日汇总正文上限（Telegram 单条 4096，扣掉项目名前缀后留余量）。 */
+    static final int BRIEF_MAX = 3000;
+    /** 正文里最多列出的 V2 持仓 / 被套行数，其余见附件。 */
+    static final int BRIEF_MAX_ROWS = 20;
+
+    /** 每日汇总：brief 发 Telegram 正文（只列 V2），full 是完整明细（Markdown，作附件发送并存档）。 */
+    public record Digest(String brief, String full) {
+    }
+
     @Scheduled(cron = "0 0 21 * * *", zone = "${trendpilot.zone}")
     public void dailySummary() {
         Instant now = Instant.now();
-        List<Position> positions = book.positions();
-        List<String> lines = new ArrayList<>();
-        lines.add("📊 TrendPilot 每日汇总（影子账本 V2）");
-        lines.add(String.format(Locale.ROOT, "持仓 %d 个，占用成本 %.2f U，已实现盈亏 %.2f U",
-                positions.size(), book.deployedCost(), book.realizedPnl()));
-        positions.forEach(p -> lines.add(String.format(Locale.ROOT, "· %s %d 笔，成本 %.2f U%s%s", p.symbol(),
-                p.tranches(), p.costBasis().doubleValue(), p.protectArmed() ? "，利润保护中" : "",
-                p.lossRecovery() ? "，LOSS_RECOVERY" : "")));
-        lines.add("");
-        lines.add("📈 V1 / V2 对比（累计）");
-        lines.add(book.stats().line());
-        lines.add(v1.stats().line());
-        lines.add(depthVariant.stats().line() + "（深度门槛放宽到 15000 时多买的币，对照用）");
-        lines.add("注：V2 按全数量盘口模拟成交，V1 按参考价 + 手续费记账，V1 收益不能当作可执行收益；最大回撤含浮亏。");
-        List<String> under = new ArrayList<>();
-        for (var ledger : List.of(book, v1)) {
-            for (Position p : ledger.positions()) {
-                double net = ledger.markNet(p.symbol());
-                if (net >= 0) continue;
-                under.add(String.format(Locale.ROOT, "· %s %s%s 浮亏 %.2f U（%.1f%%），已持有 %.1f 天", ledger.book(),
-                        p.symbol(), Messages.venueTag(p.venue()), net, net / p.costBasis().doubleValue() * 100,
-                        Duration.between(p.openedAt(), now).toHours() / 24.0));
-            }
-        }
-        lines.add("");
-        lines.add(under.isEmpty() ? "被套持仓：无" : "被套持仓（浮亏中，" + under.size() + " 个）");
-        lines.addAll(under);
-        lines.add("");
+        java.time.LocalDate day = now.atZone(zone).toLocalDate();
+        Digest d = digest(now);
+        notifier.send("daily:" + day, d.brief());
         try {
-            lines.addAll(tracking.lines(tracking.summary(now), false));
-        } catch (RuntimeException e) {
-            lines.add("信号跟踪统计暂不可用：" + e.getMessage());
+            Files.createDirectories(reports);
+            Files.writeString(reports.resolve("daily-summary-" + day + ".md"), d.full());
+        } catch (java.io.IOException e) {
+            org.slf4j.LoggerFactory.getLogger(HealthJob.class).warn("每日汇总明细写文件失败：{}", e.getMessage());
         }
-        lines.add("");
-        lines.addAll(healthLines(now));
+        notifier.sendDocument("daily-doc:" + day, "TrendPilot-daily-summary-" + day + ".md", d.full(),
+                "每日汇总完整明细（含 V1 全部持仓、运行情况）");
+    }
+
+    public Digest digest(Instant now) {
+        List<Position> positions = book.positions();
+        String head = String.format(Locale.ROOT, "持仓 %d 个，占用成本 %.2f U，已实现盈亏 %.2f U",
+                positions.size(), book.deployedCost(), book.realizedPnl());
+        List<String> v2Rows = positions.stream().map(p -> String.format(Locale.ROOT, "· %s %d 笔，成本 %.2f U%s%s", p.symbol(),
+                p.tranches(), p.costBasis().doubleValue(), p.protectArmed() ? "，利润保护中" : "",
+                p.lossRecovery() ? "，LOSS_RECOVERY" : "")).toList();
+        List<String> v2Under = underwater(book, now);
+        List<String> v1Under = underwater(v1, now);
+        var v2Stats = book.stats();
+        var v1Stats = v1.stats();
+        var dStats = depthVariant.stats();
+        String tracking;
+        List<String> trackingFull;
+        try {
+            var summary = this.tracking.summary(now);
+            tracking = String.join(" ", this.tracking.lines(summary, false));
+            trackingFull = this.tracking.lines(summary, false);
+        } catch (RuntimeException e) {
+            tracking = "信号跟踪统计暂不可用：" + e.getMessage();
+            trackingFull = List.of(tracking);
+        }
         List<String> problems = problems(now).stream().map(Problem::text).toList();
-        lines.add(problems.isEmpty() ? "自检：全部正常" : "自检异常：" + String.join("；", problems));
-        notifier.send("daily:" + now.atZone(zone).toLocalDate(), Messages.lines(lines));
+        String selfCheck = problems.isEmpty() ? "自检：全部正常" : "自检异常：" + String.join("；", problems);
+
+        // 正文：只列 V2，其余一行汇总
+        List<String> b = new ArrayList<>();
+        b.add("📊 TrendPilot 每日汇总（影子账本 V2）");
+        b.add(head);
+        addCapped(b, v2Rows);
+        b.add("");
+        b.add(v2Under.isEmpty() ? "V2 被套持仓：无" : "V2 被套持仓（浮亏中，" + v2Under.size() + " 个）");
+        addCapped(b, v2Under);
+        b.add("");
+        b.add("📈 累计对比");
+        b.add(v2Stats.shortLine());
+        b.add(dStats.shortLine() + "（深度门槛放宽，对照用）");
+        b.add(v1Stats.shortLine() + "（观察账本，按参考价记账）");
+        b.add("");
+        b.add(tracking);
+        b.add(selfCheck);
+        b.add("完整明细（V1 全部持仓、被套列表、运行情况）见附件 .md");
+        String brief = cap(Messages.lines(b));
+
+        // 完整明细（Markdown）
+        List<String> f = new ArrayList<>();
+        f.add("# TrendPilot 每日汇总 " + now.atZone(zone).toLocalDate());
+        f.add("");
+        f.add("## V2 持仓");
+        f.add(head);
+        f.add("");
+        v2Rows.forEach(r -> f.add(md(r)));
+        f.add("");
+        f.add("## 累计对比");
+        f.add("- " + v2Stats.line());
+        f.add("- " + v1Stats.line());
+        f.add("- " + dStats.line() + "（深度门槛放宽到 15000 时多买的币，对照用）");
+        f.add("");
+        f.add("注：V2 按全数量盘口模拟成交，V1 按参考价 + 手续费记账，V1 收益不能当作可执行收益；最大回撤含浮亏。");
+        f.add("");
+        f.add("## 被套持仓（浮亏中，" + (v2Under.size() + v1Under.size()) + " 个）");
+        f.add("");
+        f.add("### V2（" + v2Under.size() + " 个）");
+        v2Under.forEach(r -> f.add(md(r)));
+        f.add("");
+        f.add("### V1（" + v1Under.size() + " 个）");
+        v1Under.forEach(r -> f.add(md(r)));
+        f.add("");
+        f.add("## V1 全部持仓（" + v1.positions().size() + " 个）");
+        f.add("");
+        for (Position p : v1.positions()) {
+            f.add(String.format(Locale.ROOT, "- %s%s 成本 %.2f U，浮动 %.2f U，已持有 %.1f 天", p.symbol(), Messages.venueTag(p.venue()),
+                    p.costBasis().doubleValue(), v1.markNet(p.symbol()), Duration.between(p.openedAt(), now).toHours() / 24.0));
+        }
+        f.add("");
+        f.add("## 信号跟踪");
+        trackingFull.forEach(f::add);
+        f.add("");
+        f.add("## 运行情况（24 小时）");
+        healthLines(now).stream().skip(1).forEach(r -> f.add(md(r)));
+        f.add("");
+        f.add(selfCheck);
+        return new Digest(brief, String.join("\n", f) + "\n");
+    }
+
+    private List<String> underwater(com.trendpilot.portfolio.Ledger ledger, Instant now) {
+        List<String> out = new ArrayList<>();
+        for (Position p : ledger.positions()) {
+            double net = ledger.markNet(p.symbol());
+            if (net >= 0) continue;
+            out.add(String.format(Locale.ROOT, "· %s%s 浮亏 %.2f U（%.1f%%），已持有 %.1f 天",
+                    p.symbol(), Messages.venueTag(p.venue()), net, net / p.costBasis().doubleValue() * 100,
+                    Duration.between(p.openedAt(), now).toHours() / 24.0));
+        }
+        return out;
+    }
+
+    private static void addCapped(List<String> out, List<String> rows) {
+        rows.stream().limit(BRIEF_MAX_ROWS).forEach(out::add);
+        if (rows.size() > BRIEF_MAX_ROWS) out.add("……另有 " + (rows.size() - BRIEF_MAX_ROWS) + " 个见附件");
+    }
+
+    static String cap(String text) {
+        if (text.length() <= BRIEF_MAX) return text;
+        String tail = "\n……完整内容见附件";
+        String cut = text.substring(0, BRIEF_MAX - tail.length());
+        int nl = cut.lastIndexOf('\n');
+        return (nl > 0 ? cut.substring(0, nl) : cut) + tail;
+    }
+
+    private static String md(String line) {
+        return line.startsWith("· ") ? "- " + line.substring(2) : line;
     }
 }

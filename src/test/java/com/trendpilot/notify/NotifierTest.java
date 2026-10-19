@@ -1,6 +1,7 @@
 package com.trendpilot.notify;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -44,6 +45,32 @@ class NotifierTest {
         assertThat(parts).allMatch(p -> p.length() <= Notifier.MAX_PART);
         assertThat(Notifier.split("x".repeat(9000), 4000)).hasSize(3);
         assertThat(Notifier.split("短消息", 4000)).containsExactly("短消息");
+    }
+
+    @Test
+    void sendsDocumentAsMultipartOnceAndRetriesAfter429() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        Notifier n = new Notifier(jdbc, new TelegramProperties("1:t", "9", "https://tg.test"), builder);
+        String url = "https://tg.test/bot1%3At/sendDocument";
+        server.expect(ExpectedCount.once(), requestTo(url))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withStatus(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS)
+                        .body("{\"ok\":false,\"parameters\":{\"retry_after\":0}}"));
+        server.expect(ExpectedCount.once(), requestTo(url))
+                .andExpect(content().contentTypeCompatibleWith(org.springframework.http.MediaType.MULTIPART_FORM_DATA))
+                .andExpect(content().string(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("filename=\"daily.md\""),
+                        org.hamcrest.Matchers.containsString("name=\"chat_id\""),
+                        org.hamcrest.Matchers.containsString("# 标题"))))
+                .andRespond(withSuccess());
+        assertThat(n.sendDocument("doc-test", "daily.md", "# 标题\n内容", "说明")).isTrue();
+        assertThat(n.sendDocument("doc-test", "daily.md", "# 标题\n内容", "说明")).isFalse();   // 同一事件只发一次
+        server.verify();
+        // 附件不进入正文的失败重试
+        assertThat(n.retryFailed(Instant.now())).isZero();
+        assertThat(Notifier.retryAfterSeconds("{\"parameters\":{\"retry_after\": 12}}")).isEqualTo(12);
+        assertThat(Notifier.retryAfterSeconds("x")).isEqualTo(5);
     }
 
     @Test

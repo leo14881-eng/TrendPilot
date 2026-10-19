@@ -41,6 +41,13 @@ public record BookStats(String book, int entries, int closed, int wins, double r
                 Double.isNaN(avgHoursToProfit) ? "-" : String.format(Locale.ROOT, "%.1f 小时", avgHoursToProfit));
     }
 
+    /** 一行简版：笔数、胜率、已实现、未实现、最大回撤、持仓（每日汇总正文用）。 */
+    public String shortLine() {
+        return String.format(Locale.ROOT, "%s：买入 %d，平仓 %d，胜率 %s，已实现 %+.2f U，未实现 %+.2f U，最大回撤 %.2f U，持仓 %d 个（浮亏 %d 个）",
+                book, entries, closed, Double.isNaN(winRatePct()) ? "-" : String.format(Locale.ROOT, "%.0f%%", winRatePct()),
+                realizedPnl, unrealizedPnl, maxDrawdown, openPositions, underwaterCount);
+    }
+
     private static String pct(double v) {
         return Double.isNaN(v) ? "-" : String.format(Locale.ROOT, "%.2f%%", v);
     }

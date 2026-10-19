@@ -11,6 +11,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.MediaType;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
@@ -118,7 +123,7 @@ public class Notifier {
         // PREPARED 超过 STRANDED_AFTER 还没发：写入 Outbox 后服务被重启/停止，来不及发出，一并补发
         List<Pending> pending = jdbc.sql("""
                 SELECT event_key, text, sent_parts, status FROM notification_outbox
-                WHERE (status = 'FAILED' OR (status = 'PREPARED' AND created_at < :stale))
+                WHERE channel = 'TELEGRAM' AND (status = 'FAILED' OR (status = 'PREPARED' AND created_at < :stale))
                   AND attempts < :max AND created_at >= :since ORDER BY id
                 """)
                 .param("max", MAX_ATTEMPTS).param("since", now.minus(Duration.ofHours(24)).toString())
@@ -154,6 +159,86 @@ public class Notifier {
             log.error("Telegram 发送失败：{}：{}", eventKey, msg);
             mark(eventKey, "FAILED", msg, done);
             return false;
+        }
+    }
+
+    /** 文件附件的最长等待（Telegram 429 的 retry_after），超过就放弃这次附件。 */
+    static final long MAX_DOC_WAIT_SECONDS = 60;
+
+    /**
+     * 以附件发送一个文本文件（例如完整日报 .md）。同一个 eventKey 只发一次；Outbox 只记文件名（channel = TELEGRAM_DOC），
+     * 不进入正文的失败重试。遇到 429 按 retry_after 等一次（最多 60 秒）再试；仍失败只记日志，不影响其他通知。
+     *
+     * @return 是否发出
+     */
+    public boolean sendDocument(String eventKey, String fileName, String content, String caption) {
+        int inserted = jdbc.sql("""
+                INSERT OR IGNORE INTO notification_outbox(event_key, channel, text, status, created_at)
+                VALUES (:key, 'TELEGRAM_DOC', :text, 'PREPARED', :now)
+                """)
+                .param("key", eventKey).param("text", fileName).param("now", Instant.now().toString()).update();
+        if (inserted == 0 || !props.configured()) return false;
+        if (!sendGate.getAsBoolean()) {
+            mark(eventKey, "STANDBY", null, 0);
+            return false;
+        }
+        byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                http.post()
+                        .uri("/bot{token}/sendDocument", props.botToken())
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .body(documentForm(fileName, bytes, caption))
+                        .retrieve()
+                        .toBodilessEntity();
+                mark(eventKey, "SENT", null, 1);
+                return true;
+            } catch (HttpClientErrorException e) {
+                long wait = e.getStatusCode().value() == 429 ? retryAfterSeconds(e.getResponseBodyAsString()) : -1;
+                if (attempt == 1 && wait >= 0 && wait <= MAX_DOC_WAIT_SECONDS) {
+                    log.warn("Telegram 附件限流，{} 秒后再试：{}", wait, eventKey);
+                    sleepSeconds(wait);
+                    continue;
+                }
+                return docFailed(eventKey, e);
+            } catch (RestClientException e) {
+                return docFailed(eventKey, e);
+            }
+        }
+        return false;
+    }
+
+    MultiValueMap<String, Object> documentForm(String fileName, byte[] bytes, String caption) {
+        MultiValueMap<String, Object> form = new LinkedMultiValueMap<>();
+        form.add("chat_id", props.chatId());
+        form.add("caption", PROJECT_TAG + caption);
+        form.add("document", new ByteArrayResource(bytes) {
+            @Override
+            public String getFilename() {
+                return fileName;
+            }
+        });
+        return form;
+    }
+
+    private boolean docFailed(String eventKey, Exception e) {
+        String msg = mask(e.getMessage());
+        log.error("Telegram 附件发送失败：{}：{}", eventKey, msg);
+        mark(eventKey, "FAILED", msg, 0);
+        return false;
+    }
+
+    /** Telegram 429 响应体里的 parameters.retry_after；读不到按 5 秒。 */
+    static long retryAfterSeconds(String body) {
+        var m = java.util.regex.Pattern.compile("\"retry_after\"\\s*:\\s*(\\d+)").matcher(body == null ? "" : body);
+        return m.find() ? Long.parseLong(m.group(1)) : 5;
+    }
+
+    private static void sleepSeconds(long s) {
+        try {
+            Thread.sleep(Duration.ofSeconds(s));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
