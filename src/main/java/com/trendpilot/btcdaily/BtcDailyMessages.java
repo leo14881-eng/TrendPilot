@@ -76,8 +76,9 @@ final class BtcDailyMessages {
     public static String sellRuleShort(BtcDailyProperties props) {
         BtcDailyProperties.Exit x = props.exit();
         if (x.trailB()) {
-            return "方案 B：涨 " + fmt(x.activatePct()) + "% 后跟踪，回落 " + fmt(x.giveAtr()) + "×ATR 卖；满 " + x.timeoutDays()
-                    + " 天成本 +" + fmt(x.floorPct()) + "% 以上卖；不卖亏";
+            return "方案 B：涨 " + fmt(x.activatePct()) + "% 后跟踪，回落 " + fmt(x.giveAtr()) + "×ATR 卖；"
+                    + (x.timeoutDays() > 0 ? "满 " + x.timeoutDays() + " 天成本 +" + fmt(x.timeoutTargetPct()) + "% 以上卖；"
+                    : "不设超时；") + "不卖亏";
         }
         return "卖法 " + x.mode() + "；不卖亏";
     }
@@ -98,13 +99,17 @@ final class BtcDailyMessages {
             if (!Double.isNaN(line)) {
                 sb.append("  正在跟踪：最高 ").append(money(b.trailPeak())).append("，跌到 ").append(money(line)).append(" 卖出\n");
             }
-            sb.append("  持有满 ").append(x.timeoutDays()).append(" 天还没卖：").append(money(BtcDailyRules.floorB(b, props)))
-                    .append("（含费成本 +").append(fmt(x.floorPct())).append("%）以上就卖\n");
+            if (x.timeoutDays() > 0) {
+                sb.append("  持有满 ").append(x.timeoutDays()).append(" 天还没卖：").append(money(BtcDailyRules.timeoutTargetB(b, props)))
+                        .append("（含费成本 +").append(fmt(x.timeoutTargetPct())).append("%）以上就卖\n");
+            }
             sb.append("  若加仓，均价、激活价和保底价按新均价重算\n");
         } else {
             sb.append("  买入后涨到均价 +").append(fmt(x.activatePct())).append("% 开始跟踪，从最高价回落 ").append(fmt(x.giveAtr()))
                     .append("×ATR（约 ").append(money(x.giveAtr() * p.atr())).append("）全部卖出\n");
-            sb.append("  持有满 ").append(x.timeoutDays()).append(" 天还没卖：含费成本 +").append(fmt(x.floorPct())).append("% 以上就卖\n");
+            if (x.timeoutDays() > 0) {
+                sb.append("  持有满 ").append(x.timeoutDays()).append(" 天还没卖：含费成本 +").append(fmt(x.timeoutTargetPct())).append("% 以上就卖\n");
+            }
         }
         sb.append("  不止损、绝不卖亏；跌了按档位继续加仓\n");
     }
@@ -200,8 +205,7 @@ final class BtcDailyMessages {
                 "PARTIAL", "先卖一半、剩下跟踪：到止盈价卖 " + fmt(x.partialPct()) + "%，剩下回落 " + fmt(x.partialTrailAtr())
                         + "×ATR 卖（最低按原止盈价，可跨天）、不止损",
                 "STOP", "现行 + 跌 " + fmt(x.hardStopPct()) + "% 止损",
-                "TRAIL_B", "方案 B：涨 " + fmt(x.activatePct()) + "% 后跟踪，回落 " + fmt(x.giveAtr()) + "×ATR 卖，满 "
-                        + x.timeoutDays() + " 天成本 +" + fmt(x.floorPct()) + "% 以上卖、不卖亏");
+                "TRAIL_B", sellRuleShort(props));
         StringBuilder sb = new StringBuilder("【BTC 每日短线】卖出方式回测对比（近一年，同一套买入和过滤规则）\n");
         BtcDailyBacktest.Result any = exits.values().iterator().next();
         sb.append("区间 ").append(any.from()).append(" ~ ").append(any.to()).append("，同期持有 BTC ").append(pct(any.buyHoldPct())).append('\n');
@@ -236,9 +240,7 @@ final class BtcDailyMessages {
                 "V3+TREND", "V3 + 趋势转跌就卖（行情变成下跌当天开盘卖）",
                 "V3+TIME", "V3 + 持有满 " + props.v3().guardDays() + " 天就卖",
                 "V3+STOP", "V3 + 跌 " + fmt(props.v3().guardStopPct()) + "% 止损",
-                "V2-B", "V2 买法 + 方案 B 卖法（实盘）：涨 " + fmt(props.exit().activatePct()) + "% 后跟踪，回落 "
-                        + fmt(props.exit().giveAtr()) + "×ATR 卖，满 " + props.exit().timeoutDays() + " 天成本 +"
-                        + fmt(props.exit().floorPct()) + "% 以上卖，不卖亏",
+                "V2-B", "实盘买法 + " + sellRuleShort(props),
                 "V3", "新 V3：按行情挂单（上升满额 / 震荡深位减半 / 下跌不做），涨 " + fmt(props.v3().partialAtPct())
                         + "% 卖 1/3，剩下跟踪 " + fmt(props.v3().trailHourAtr()) + "×1h ATR");
         StringBuilder sb = new StringBuilder("【BTC 每日短线】策略回测对比（参数 " + props.version() + "，近一年，同一套过滤）\n");

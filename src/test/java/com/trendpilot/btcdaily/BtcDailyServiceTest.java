@@ -30,7 +30,10 @@ import com.trendpilot.support.FakeMarket;
 import com.trendpilot.support.TestData;
 
 /** 端到端：生成当天计划并推送 → 后续 15m K 线触发买入、加仓、止盈，账本独立落库。 */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+// 这里测的是 V2 固定止盈的计划 / 成交 / 回测选择流程；方案 B（线上配置）见 BtcDailyTrailBTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
+        "trendpilot.btc-daily.exit.mode=FIXED", "trendpilot.btc-daily.exit.require-backtest=true",
+        "trendpilot.btc-daily.first-open-pct=0"})
 @ActiveProfiles("test")
 class BtcDailyServiceTest {
 

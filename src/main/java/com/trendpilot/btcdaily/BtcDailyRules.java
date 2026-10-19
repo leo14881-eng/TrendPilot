@@ -337,7 +337,7 @@ public final class BtcDailyRules {
         return fills;
     }
 
-    private record Exit(double price, String reason, double fraction) {
+    record Exit(double price, String reason, double fraction) {
         Exit(double price, String reason) {
             this(price, reason, 1);
         }
@@ -371,9 +371,16 @@ public final class BtcDailyRules {
         return Math.max(floorB(book, p), book.trailPeak - p.exit().giveAtr() * plan.atr());
     }
 
-    /** 方案 B：是否已持有满 timeoutDays 天。 */
+    /** 方案 B：是否已持有满 timeoutDays 天（timeoutDays &lt; 0 = 永不超时）。 */
     public static boolean timeoutB(Book book, long barOpen, BtcDailyProperties p) {
-        return book.openedAt > 0 && barOpen - book.openedAt >= p.exit().timeoutDays() * 86_400_000L;
+        int d = p.exit().timeoutDays();
+        return d > 0 && book.openedAt > 0 && barOpen - book.openedAt >= d * 86_400_000L;
+    }
+
+    /** 方案 B 超时后的卖出目标（未扣滑点）：含费均价 × (1 + 手续费 + timeoutTargetPct%)，不低于保底价。 */
+    public static double timeoutTargetB(Book book, BtcDailyProperties p) {
+        double t = book.avgCost() * (1 + p.feeRate() + p.exit().timeoutTargetPct() / 100) / (1 - p.slippageBps() / 10_000);
+        return Math.max(t, floorB(book, p));
     }
 
     /** 按卖出方式判断这根 K 线是否全部卖出（价格未扣滑点）。 */
@@ -393,8 +400,9 @@ public final class BtcDailyRules {
                     double price = Math.min(line, bar.open());
                     if (price >= floor) out = new Exit(price, carried ? "跟踪止盈（跨天）" : "跟踪止盈");
                 }
-                if (out == null && timeoutB(book, bar.openTime(), p) && bar.high() >= floor) {
-                    out = new Exit(Math.max(floor, bar.open()), "持有满 " + x.timeoutDays() + " 天，成本以上卖出");
+                double tt = timeoutTargetB(book, p);
+                if (out == null && timeoutB(book, bar.openTime(), p) && bar.high() >= tt) {
+                    out = new Exit(Math.max(tt, bar.open()), "持有满 " + x.timeoutDays() + " 天，成本以上卖出");
                 }
                 book.trailPeak = Math.max(book.trailPeak, bar.high());
                 return out;

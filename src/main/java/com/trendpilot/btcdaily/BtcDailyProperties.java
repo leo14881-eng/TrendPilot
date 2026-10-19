@@ -98,7 +98,8 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
      * <li>STOP：现行规则 + 跌到均价 × (1 − hardStopPct%) 全部止损（只用于回测对比；用户硬规则绝不卖亏，实盘的卖出都要求有盈利）。</li>
      * <li>TRAIL_B（方案 B，用户 2026-10-20 选定）：涨到均价 + activatePct% 后启动跟踪，从买入以来最高价回落 giveAtr × 日线 ATR
      *     全部卖出；持有满 timeoutDays 天仍没卖，含费成本 + floorPct% 以上就卖。任何情况下成交价（扣滑点后）
-     *     ≥ 含费均价 × (1 + 手续费 + floorPct%)，绝不卖亏。跟踪期间照常加仓；不再有"跨天降为 carryTpPct"。</li>
+     *     ≥ 含费均价 × (1 + 手续费 + floorPct%)，绝不卖亏。跟踪期间照常加仓；不再有"跨天降为 carryTpPct"。
+     *     超时后的目标 = 含费均价 × (1 + 手续费 + timeoutTargetPct%)（默认等于 floorPct）；timeoutDays &lt; 0 时不降目标。</li>
      * <li>AUTO：上线回测从 candidates 里选"不比 FIXED 差"且总盈亏最高的一种；都不达标就用 FIXED。</li>
      * </ul>
      *
@@ -107,31 +108,52 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
      */
     public record Exit(String mode, double trailAtr, double hardStopPct, boolean requireBacktest, double partialPct,
                        double partialTrailAtr, List<String> candidates, double activatePct, double giveAtr,
-                       int timeoutDays, double floorPct) {
+                       int timeoutDays, double floorPct, double timeoutTargetPct) {
 
         public Exit {
             if (mode == null || mode.isBlank()) mode = "FIXED";
             if (activatePct <= 0) activatePct = 3.0;
             if (giveAtr <= 0) giveAtr = 3.0;
-            if (timeoutDays <= 0) timeoutDays = 30;
+            if (timeoutDays == 0) timeoutDays = 30; // 负数 = 不降目标，一直只按跟踪止盈卖
             if (floorPct <= 0) floorPct = 0.3;
+            if (timeoutTargetPct < floorPct) timeoutTargetPct = floorPct;
             if (partialPct <= 0 || partialPct >= 100) partialPct = 50;
             if (partialTrailAtr <= 0) partialTrailAtr = 1.0;
             if (candidates == null || candidates.isEmpty()) candidates = List.of("TRAIL", "PARTIAL");
         }
 
         public static Exit defaults() {
-            return new Exit("AUTO", 0.5, 8, true, 50, 1.0, List.of("TRAIL", "PARTIAL"), 3.0, 3.0, 30, 0.3);
+            return new Exit("AUTO", 0.5, 8, true, 50, 1.0, List.of("TRAIL", "PARTIAL"), 3.0, 3.0, 30, 0.3, 0.3);
         }
 
         public Exit withMode(String m) {
             return new Exit(m, trailAtr, hardStopPct, requireBacktest, partialPct, partialTrailAtr, candidates,
-                    activatePct, giveAtr, timeoutDays, floorPct);
+                    activatePct, giveAtr, timeoutDays, floorPct, timeoutTargetPct);
+        }
+
+        /** 同一套参数，换超时规则：days 天未卖后，含费成本 + targetPct% 以上就卖（days &lt; 0 = 不降目标）。 */
+        public Exit withTimeout(int days, double targetPct) {
+            return new Exit(mode, trailAtr, hardStopPct, requireBacktest, partialPct, partialTrailAtr, candidates,
+                    activatePct, giveAtr, days, floorPct, targetPct);
         }
 
         public boolean trailB() {
             return "TRAIL_B".equals(mode);
         }
+    }
+
+    /** 同一套参数，换第 1 档深度（开盘 −pct%）。 */
+    public BtcDailyProperties withFirstOpenPct(double pct) {
+        return new BtcDailyProperties(enabled, version, symbol, capUsdt, capUntil, tranches, kStrong, kWeak, stepAtr,
+                tpAtrMult, tpMinPct, carryTpPct, feeRate, slippageBps, atrDays, emaDays, backtestDays, filters,
+                stopCandidatesPct, exit, strategy, v3, pct);
+    }
+
+    /** 同一套参数，换方案 B 的超时规则。 */
+    public BtcDailyProperties withExitTimeout(int days, double targetPct) {
+        return new BtcDailyProperties(enabled, version, symbol, capUsdt, capUntil, tranches, kStrong, kWeak, stepAtr,
+                tpAtrMult, tpMinPct, carryTpPct, feeRate, slippageBps, atrDays, emaDays, backtestDays, filters,
+                stopCandidatesPct, exit.withTimeout(days, targetPct), strategy, v3, firstOpenPct);
     }
 
     /** 同一套参数，换一种卖出方式（回测对比用）。 */

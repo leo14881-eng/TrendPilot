@@ -191,17 +191,18 @@ trendpilot.research:
 # 改参数时同时改 version（会自动重新回测一次）
 trendpilot.btc-daily:
   enabled: true
-  version: btc-v3.2-2026-10-15-v2   # 影子实盘固定 V2（用户 2026-10-15 决定：V3 回测一年只开 1 仓，证据不足）；V3 上线还须回测完成 ≥10 轮，回测对比照常跑，实盘仍不止损
+  version: btc-v4-2026-10-20   # 用户 2026-10-20 选定：第 1 档开盘 −0.1% + 方案 B 卖法（见 docs/策略变更记录.md）；回滚：version 改回 btc-v3.2-2026-10-15-v2、first-open-pct 0、exit.mode FIXED、require-backtest true
   symbol: BTCUSDT
   cap-usdt: 10000
   cap-until: "2026-11-14"         # 第一个月上限，到期按数据复评
   tranches: [3000, 3000, 4000]   # 各档金额（含手续费），合计 ≤ cap-usdt
+  first-open-pct: 0.1            # 第 1 档 = 开盘 × (1 − 0.1%)，强弱日一样（用户 2026-10-20 指定）；0 = 用下面两行的 k × ATR
   k-strong: 0.25                 # 昨收 > EMA20：第 1 档 = 开盘 − 0.25 × ATR
   k-weak: 0.6                    # 昨收 ≤ EMA20：第 1 档 = 开盘 − 0.6 × ATR
   step-atr: 0.5                  # 档距 0.5 × ATR
   tp-atr-mult: 0.5               # 止盈 = 均价 × (1 + max(0.5 × ATR%, 0.8%))
   tp-min-pct: 0.8
-  carry-tp-pct: 0.3              # 跨天未卖：止盈价降为均价 +0.3%（TRAIL 下到了先跟踪，最低按此价卖），不割肉
+  carry-tp-pct: 0.3              # 跨天未卖：止盈价降为均价 +0.3%（FIXED / TRAIL 用；方案 B 不再跨天就降，改为满 30 天才降）
   fee-rate: 0.001
   slippage-bps: 2
   atr-days: 14
@@ -227,9 +228,14 @@ trendpilot.btc-daily:
   # AUTO：上线回测从 candidates 里选不比 FIXED 差且总盈亏最高的一种。用户 2026-10-15 要求加大止盈空间
   # 回滚：mode 改回 FIXED（或指定 TRAIL / PARTIAL）并改 version
   exit:
-    mode: FIXED                    # V2 的卖出；回测里另跑 TRAIL 作为 V2.2 对比
+    mode: TRAIL_B                  # 方案 B（用户 2026-10-20 选定）：涨到均价 +3% 后跟踪，从最高价回落 3×ATR 卖；满 30 天成本 +0.3%（含费）以上卖；绝不卖亏
+    activate-pct: 3                # 跟踪启动：均价 +3%
+    give-atr: 3                    # 从最高价回落 3 × 日线 ATR14 卖出
+    timeout-days: 30               # 持有满 30 天未卖：成交价 ≥ 含费均价 × (1 + 手续费 + floor-pct%) 就卖
+    floor-pct: 0.3                 # 任何卖出的最低价（扣滑点后）= 含费均价 × (1 + 手续费 + 0.3%)
+    timeout-target-pct: 0.3        # 超时后的卖出目标：含费均价 × (1 + 手续费 + 0.3%)；timeout-days 设为 -1 则不降目标
     candidates: [TRAIL, PARTIAL]
-    require-backtest: true         # 回测确认前和都不达标时按 FIXED
+    require-backtest: false        # 用户选定直接生效（回测照常跑、只作对照）；改回 FIXED 时恢复 true
     trail-atr: 0.5                 # TRAIL：从最高价回落 0.5 × ATR 全卖，最低按原止盈价
     partial-pct: 50                # PARTIAL：到止盈价先卖 50%
     partial-trail-atr: 1.0         # PARTIAL：剩下的从最高价回落 1 × ATR 再卖，最低按原止盈价，可跨天
