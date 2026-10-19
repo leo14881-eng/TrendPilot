@@ -38,6 +38,7 @@ public final class BtcPlanStudy {
                 case "F2" -> String.format(Locale.ROOT, "开盘−%.2fATR", e1);
                 case "V2B" -> "现行买法(开盘−0.25/0.6ATR,下跌趋势不开)";
                 case "V2K" -> String.format(Locale.ROOT, "现行买法 第1档 强%.2f/弱%.2fATR", e1, e2);
+                case "V2P" -> String.format(Locale.ROOT, "现行买法 第1档 开盘−%.2f%%", e1);
                 case "F3" -> String.format(Locale.ROOT, "%d日高−%.0fATR", (int) e1, e2);
                 case "F4" -> String.format(Locale.ROOT, "SMA%d上 回EMA20或−%.1fATR", (int) e1, e2);
                 case "F5" -> String.format(Locale.ROOT, "月开−%.0f%%", e1);
@@ -204,6 +205,7 @@ public final class BtcPlanStudy {
                     case "F2" -> dd.open[idx] - c.e1() * atr;
                     case "V2B" -> dd.down[idx] ? Double.NaN
                             : dd.open[idx] - (dd.prevClose(idx) > dd.ema20[idx] ? 0.25 : 0.6) * atr;
+                    case "V2P" -> dd.down[idx] ? Double.NaN : dd.open[idx] * (1 - c.e1() / 100);
                     case "V2K" -> dd.down[idx] ? Double.NaN
                             : dd.open[idx] - (dd.prevClose(idx) > dd.ema20[idx] ? c.e1() : c.e2()) * atr;
                     case "F3" -> dd.hh[hk][idx] - c.e2() * atr;

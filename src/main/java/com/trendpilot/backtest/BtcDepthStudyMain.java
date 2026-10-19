@@ -70,6 +70,8 @@ public final class BtcDepthStudyMain {
 
         // 第 1 档深度网格 × 方案 B 卖法（V2K 0.25/0.6 = 现行深度）
         List<Cfg> cfgs = new ArrayList<>();
+        // 用户 2026-10-20 指定：第 1 档 = 开盘 −0.1%（强弱日一样）；对照：现行深度 0.25/0.6×ATR + 方案 B，以及深度网格
+        cfgs.add(new Cfg("V2P", 0.1, 0, 3, "C0.5", "V2", "STOP", "TRAIL", 3.0, 3.0, 30, 10_000));
         for (double ks : new double[]{0, 0.1, 0.25})
             for (double kw : new double[]{0, 0.1, 0.25, 0.4, 0.6})
                 cfgs.add(new Cfg("V2K", ks, kw, 3, "C0.5", "V2", "STOP", "TRAIL", 3.0, 3.0, 30, 10_000));
@@ -105,7 +107,7 @@ public final class BtcDepthStudyMain {
         }
 
         StringBuilder md = new StringBuilder();
-        md.append("# BTC 短线第 1 档挂单深度（方案 B 卖法）\n\n");
+        md.append("# BTC 短线第 1 档挂单深度（方案 B 卖法；线上采用 V2P 开盘 −0.1%）\n\n");
         md.append(String.format(Locale.ROOT, "数据 %s ～ %s（%.1f 年），15m 撮合；卖出成交价始终 ≥ 含费均价 ×（1 + 手续费 + 0.3%%），出现亏损卖出会直接报错（本次 0 笔）。"
                 + "资金 10000 U，只做现货，满额后不再加仓。买法：现行买法（开盘 − 0.25/0.6×ATR，档距 0.5×ATR，3000/3000/4000，下跌趋势不开新一轮）、"
                 + "F2（开盘 − 0.1×ATR，6 档等额，档距 1×ATR 或递增 1/1.5/2…×ATR），加仓都跨天有效。每个组合都列出，检查结果只标注、不剔除，由用户决定。\n\n",

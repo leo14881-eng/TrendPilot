@@ -162,7 +162,7 @@ public final class BtcGridStudy {
                 kStrong, kWeak, step, tpAtr, filters ? "F" : "N"), base.symbol(), base.capUsdt(), base.capUntil(),
                 base.tranches(), kStrong, kWeak, step, tpAtr, base.tpMinPct(), base.carryTpPct(), base.feeRate(),
                 base.slippageBps(), base.atrDays(), base.emaDays(), base.backtestDays(), nf, base.stopCandidatesPct(),
-                base.exit().withMode("FIXED"), "V2", base.v3());
+                base.exit().withMode("FIXED"), "V2", base.v3(), 0);
     }
 
     /** 过滤上下文：已知 FOMC 日为事件日；其余宏观数据历史上缺失，按回测口径不触发。 */

@@ -209,6 +209,9 @@ public class BtcDailyService {
             }
             p = props.withStrategy(s == null ? "V2" : s);
         }
+        // 硬规则（用户 2026-10-20）：BTC 绝不卖亏。止损类卖法和 V3 被套保护只在回测里对比，实盘一律不用
+        if (!"NONE".equals(p.v3().guard())) p = p.withGuard("NONE");
+        if ("STOP".equals(p.exit().mode())) p = p.withExitMode("FIXED");
         BtcDailyProperties.Exit x = p.exit();
         if ("FIXED".equals(x.mode()) || (!x.requireBacktest() && !"AUTO".equals(x.mode()))) return p;
         String mode = liveExit;
@@ -325,6 +328,9 @@ public class BtcDailyService {
         for (String g : List.of("TREND", "TIME", "STOP")) {
             runs.put("V3+" + g, BtcDailyBacktest.run(daily, bars, hourly, v3.withGuard(g), context::context));
         }
+        if (props.exit().trailB()) { // 方案 B（用户选定的卖法）与现行固定止盈同一买法、同一时段对照
+            runs.put("V2-B", BtcDailyBacktest.run(daily, bars, hourly, props.withStrategy("V2").withExitMode("TRAIL_B"), context::context));
+        }
         String chosen = "AUTO".equals(props.strategy())
                 ? (notWorse(runs.get("V3"), runs.get("V2")) ? "V3" : "V2") : props.strategy();
         String exit = decideExit(props.exit(), Map.of("FIXED", runs.get("V2")));
@@ -337,6 +343,11 @@ public class BtcDailyService {
     }
 
     /** /api/btc-daily 和每日快照用。 */
+    /** 一行卖法说明（/status 用）。 */
+    public String sellRuleShort() {
+        return BtcDailyMessages.sellRuleShort(live());
+    }
+
     public Map<String, Object> summary(Instant now) {
         BtcDailyStore.State st = store.state();
         Book b = st.book();
@@ -358,6 +369,13 @@ public class BtcDailyService {
         pos.put("avgCost", BtcDailyRules.round2(b.avgCost()));
         pos.put("buys", b.buys());
         pos.put("openedDay", b.openedDay());
+        s.put("sellRule", BtcDailyMessages.sellRuleShort(p));
+        if (b.holding() && plan != null && p.exit().trailB() && !plan.v3()) {
+            pos.put("activatePrice", BtcDailyRules.round2(BtcDailyRules.activateB(b, p)));
+            pos.put("floorPrice", BtcDailyRules.round2(BtcDailyRules.floorB(b, p)));
+            double line = BtcDailyRules.trailLineB(b, plan, p);
+            if (!Double.isNaN(line)) pos.put("trailLine", BtcDailyRules.round2(line));
+        }
         if (b.holding() && plan != null) {
             pos.put("takeProfitPrice", BtcDailyRules.round2(BtcDailyRules.takeProfitPrice(plan, b, p)));
             if (b.trailPeak > 0) pos.put("trailPeak", BtcDailyRules.round2(b.trailPeak));

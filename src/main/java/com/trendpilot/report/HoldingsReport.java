@@ -250,6 +250,12 @@ public class HoldingsReport {
                             pos.getOrDefault("unrealized", "-"), pos.get("buys"))
                             : "当前空仓。",
                     s.get("realized"), s.get("rounds"), s.get("wins")));
+            StringBuilder rule = new StringBuilder("卖法：" + s.getOrDefault("sellRule", "-"));
+            if (pos.get("activatePrice") != null) {
+                rule.append(String.format(Locale.ROOT, "。激活价 %s，保底价 %s%s", pos.get("activatePrice"), pos.get("floorPrice"),
+                        pos.get("trailLine") != null ? "，当前跟踪线 " + pos.get("trailLine") : "（未到激活价，未开始跟踪）"));
+            }
+            out.add(rule.append('。').toString());
         } catch (RuntimeException e) {
             out.add("暂时读不到：" + e.getMessage());
         }

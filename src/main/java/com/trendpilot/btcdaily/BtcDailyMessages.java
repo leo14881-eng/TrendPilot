@@ -24,7 +24,8 @@ final class BtcDailyMessages {
         if (p.levels().isEmpty()) {
             sb.append(b.holding() && p.v3() ? "  已有持仓，不加仓、不开新一轮，等卖出\n"
                     : p.skipNew() && !b.holding() ? "  今天不开新一轮（见上面的原因）\n"
-                    : b.trailPeak() > 0 ? "  持仓正在跟踪止盈，今天不加仓\n" : "  资金已用满，今天不再买入，等待止盈\n");
+                    : b.trailPeak() > 0 && !props.exit().trailB() ? "  持仓正在跟踪止盈，今天不加仓\n"
+                    : "  资金已用满，今天不再买入，等待止盈\n");
         } else if (p.multiplier() < 1 && !p.carried()) {
             sb.append("  仓位按过滤结果乘 ").append(p.multiplier()).append('\n');
         }
@@ -34,6 +35,10 @@ final class BtcDailyMessages {
         }
         if (p.v3()) {
             sellV3(sb, p, b, props);
+            return tail(sb, b, yesterday, props);
+        }
+        if (props.exit().trailB()) {
+            sellB(sb, p, b, props);
             return tail(sb, b, yesterday, props);
         }
         String mode = props.exit().mode();
@@ -65,6 +70,43 @@ final class BtcDailyMessages {
             sb.append("  不止损；当天没卖掉的仓位，次日起目标降为均价 +").append(pct(props.carryTpPct())).append("，回本即走\n");
         }
         return tail(sb, b, yesterday, props);
+    }
+
+    /** 一行卖法说明（/status、日报用）。 */
+    public static String sellRuleShort(BtcDailyProperties props) {
+        BtcDailyProperties.Exit x = props.exit();
+        if (x.trailB()) {
+            return "方案 B：涨 " + fmt(x.activatePct()) + "% 后跟踪，回落 " + fmt(x.giveAtr()) + "×ATR 卖；满 " + x.timeoutDays()
+                    + " 天成本 +" + fmt(x.floorPct()) + "% 以上卖；不卖亏";
+        }
+        return "卖法 " + x.mode() + "；不卖亏";
+    }
+
+    /** 方案 B 的卖出说明（激活价、跟踪线、30 天保底）。 */
+    static void sellB(StringBuilder sb, DailyPlan p, Book b, BtcDailyProperties props) {
+        BtcDailyProperties.Exit x = props.exit();
+        sb.append("\n卖出策略（方案 B：涨 ").append(fmt(x.activatePct())).append("% 后跟踪，不卖亏）：\n");
+        if (b.holding()) {
+            long held = java.time.temporal.ChronoUnit.DAYS.between(b.openedDay(), p.day());
+            sb.append("  持仓 ").append(qty(b.qty())).append(" BTC，成本 ").append(money(b.cost()))
+                    .append("，均价 ").append(money(b.avgCost())).append("（").append(b.openedDay()).append(" 开始持有，已 ")
+                    .append(held).append(" 天）\n");
+            sb.append("  涨到 ").append(money(BtcDailyRules.activateB(b, props))).append("（均价 +").append(fmt(x.activatePct()))
+                    .append("%）后开始跟踪，从最高价回落 ").append(fmt(x.giveAtr())).append("×ATR（约 ")
+                    .append(money(x.giveAtr() * p.atr())).append("）全部卖出\n");
+            double line = BtcDailyRules.trailLineB(b, p, props);
+            if (!Double.isNaN(line)) {
+                sb.append("  正在跟踪：最高 ").append(money(b.trailPeak())).append("，跌到 ").append(money(line)).append(" 卖出\n");
+            }
+            sb.append("  持有满 ").append(x.timeoutDays()).append(" 天还没卖：").append(money(BtcDailyRules.floorB(b, props)))
+                    .append("（含费成本 +").append(fmt(x.floorPct())).append("%）以上就卖\n");
+            sb.append("  若加仓，均价、激活价和保底价按新均价重算\n");
+        } else {
+            sb.append("  买入后涨到均价 +").append(fmt(x.activatePct())).append("% 开始跟踪，从最高价回落 ").append(fmt(x.giveAtr()))
+                    .append("×ATR（约 ").append(money(x.giveAtr() * p.atr())).append("）全部卖出\n");
+            sb.append("  持有满 ").append(x.timeoutDays()).append(" 天还没卖：含费成本 +").append(fmt(x.floorPct())).append("% 以上就卖\n");
+        }
+        sb.append("  不止损、绝不卖亏；跌了按档位继续加仓\n");
     }
 
     private static void sellV3(StringBuilder sb, DailyPlan p, Book b, BtcDailyProperties props) {
@@ -103,7 +145,8 @@ final class BtcDailyMessages {
                     .append(money(f.usdt())).append(" USDT（含手续费 ").append(money(f.fee())).append("）\n");
             // 用这笔成交之后的持仓，而不是整批成交处理完之后的账本
             boolean carried = b.openedDay() != null && b.openedDay().isBefore(p.day());
-            double tpPct = p.v3() ? props.v3().partialAtPct() : carried ? props.carryTpPct() : p.tpPct();
+            double tpPct = p.v3() ? props.v3().partialAtPct() : props.exit().trailB() ? props.exit().activatePct()
+                    : carried ? props.carryTpPct() : p.tpPct();
             sb.append("持仓：成本 ").append(money(f.posCost())).append("，均价 ").append(money(f.posAvg()))
                     .append(p.v3() ? "，先卖 1/3 价 " : "FIXED".equals(props.exit().mode()) || "STOP".equals(props.exit().mode()) ? "，止盈价 " : "，开始跟踪价 ")
                     .append(money(f.posAvg() * (1 + tpPct / 100)));
@@ -156,7 +199,9 @@ final class BtcDailyMessages {
                 "TRAIL", "回本后跟踪：到了止盈价不立即卖，跟踪最高价，回落 " + fmt(x.trailAtr()) + "×ATR 卖（最低按原止盈价）、不止损",
                 "PARTIAL", "先卖一半、剩下跟踪：到止盈价卖 " + fmt(x.partialPct()) + "%，剩下回落 " + fmt(x.partialTrailAtr())
                         + "×ATR 卖（最低按原止盈价，可跨天）、不止损",
-                "STOP", "现行 + 跌 " + fmt(x.hardStopPct()) + "% 止损");
+                "STOP", "现行 + 跌 " + fmt(x.hardStopPct()) + "% 止损",
+                "TRAIL_B", "方案 B：涨 " + fmt(x.activatePct()) + "% 后跟踪，回落 " + fmt(x.giveAtr()) + "×ATR 卖，满 "
+                        + x.timeoutDays() + " 天成本 +" + fmt(x.floorPct()) + "% 以上卖、不卖亏");
         StringBuilder sb = new StringBuilder("【BTC 每日短线】卖出方式回测对比（近一年，同一套买入和过滤规则）\n");
         BtcDailyBacktest.Result any = exits.values().iterator().next();
         sb.append("区间 ").append(any.from()).append(" ~ ").append(any.to()).append("，同期持有 BTC ").append(pct(any.buyHoldPct())).append('\n');
@@ -191,6 +236,9 @@ final class BtcDailyMessages {
                 "V3+TREND", "V3 + 趋势转跌就卖（行情变成下跌当天开盘卖）",
                 "V3+TIME", "V3 + 持有满 " + props.v3().guardDays() + " 天就卖",
                 "V3+STOP", "V3 + 跌 " + fmt(props.v3().guardStopPct()) + "% 止损",
+                "V2-B", "V2 买法 + 方案 B 卖法（实盘）：涨 " + fmt(props.exit().activatePct()) + "% 后跟踪，回落 "
+                        + fmt(props.exit().giveAtr()) + "×ATR 卖，满 " + props.exit().timeoutDays() + " 天成本 +"
+                        + fmt(props.exit().floorPct()) + "% 以上卖，不卖亏",
                 "V3", "新 V3：按行情挂单（上升满额 / 震荡深位减半 / 下跌不做），涨 " + fmt(props.v3().partialAtPct())
                         + "% 卖 1/3，剩下跟踪 " + fmt(props.v3().trailHourAtr()) + "×1h ATR");
         StringBuilder sb = new StringBuilder("【BTC 每日短线】策略回测对比（参数 " + props.version() + "，近一年，同一套过滤）\n");
@@ -231,6 +279,9 @@ final class BtcDailyMessages {
             sb.append("\n⚠️ V3 没通过上线条件（完成不到 10 轮，或总盈亏、最大回撤、最长被套更差），影子实盘仍按 V2，等你决定。");
         } else {
             sb.append("\n影子实盘按配置的策略 ").append(live).append('。');
+        }
+        if (props.exit().trailB()) {
+            sb.append("\n卖法按你 2026-10-20 选定的方案 B（上面 V2-B 一行）；近一年对照只作参考，依据是 2020 年起的完整研究。回滚：exit.mode 改回 FIXED 并改版本号。");
         }
         return sb.toString();
     }

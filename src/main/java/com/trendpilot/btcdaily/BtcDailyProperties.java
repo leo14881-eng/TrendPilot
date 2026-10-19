@@ -16,6 +16,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param stepAtr       相邻两档间距（× ATR）
  * @param tpAtrMult     止盈幅度 = max(tpAtrMult × ATR%, tpMinPct)
  * @param tpMinPct      止盈幅度下限（%）
+ * @param firstOpenPct  &gt; 0 时第 1 档固定挂在 开盘价 × (1 − firstOpenPct%)，强弱日一样（用户 2026-10-20 指定 0.1）；0 = 按 kStrong / kWeak × ATR
  * @param carryTpPct    跨天未卖的仓位改用的止盈幅度（%），尽快回本离场，不割肉
  * @param slippageBps   模拟成交的滑点
  * @param backtestDays  上线回测覆盖的天数
@@ -28,7 +29,8 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
                                  List<Double> tranches, double kStrong, double kWeak, double stepAtr,
                                  double tpAtrMult, double tpMinPct, double carryTpPct, double feeRate,
                                  double slippageBps, int atrDays, int emaDays, int backtestDays, Filters filters,
-                                 List<Double> stopCandidatesPct, Exit exit, String strategy, V3 v3) {
+                                 List<Double> stopCandidatesPct, Exit exit, String strategy, V3 v3,
+                                 double firstOpenPct) {
 
     /**
      * v3 策略（2026-10-15 用户批准）：先按日线判断行情，再决定挂不挂单；卖出分批 + 跟踪，不止损。
@@ -71,7 +73,7 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
     public BtcDailyProperties withGuard(String g) {
         return new BtcDailyProperties(enabled, version, symbol, capUsdt, capUntil, tranches, kStrong, kWeak, stepAtr,
                 tpAtrMult, tpMinPct, carryTpPct, feeRate, slippageBps, atrDays, emaDays, backtestDays, filters,
-                stopCandidatesPct, exit, strategy, v3.withGuard(g));
+                stopCandidatesPct, exit, strategy, v3.withGuard(g), firstOpenPct);
     }
 
     public boolean isV3() {
@@ -82,7 +84,7 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
     public BtcDailyProperties withStrategy(String s) {
         return new BtcDailyProperties(enabled, version, symbol, capUsdt, capUntil, tranches, kStrong, kWeak, stepAtr,
                 tpAtrMult, tpMinPct, carryTpPct, feeRate, slippageBps, atrDays, emaDays, backtestDays, filters,
-                stopCandidatesPct, exit, s, v3);
+                stopCandidatesPct, exit, s, v3, firstOpenPct);
     }
 
     /**
@@ -93,7 +95,10 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
      *     回落到 max(最高价 − trailAtr × ATR, 原止盈价) 时全卖：保底就是原止盈价，再往上让盈利多跑。不止损。</li>
      * <li>PARTIAL：到了止盈价先卖 partialPct% 锁定利润，剩下的跟踪最高价，回落 partialTrailAtr × ATR 再卖，
      *     最低按原止盈价；跟踪期间不加仓，剩余仓位可跨天继续跑。</li>
-     * <li>STOP：现行规则 + 跌到均价 × (1 − hardStopPct%) 全部止损。</li>
+     * <li>STOP：现行规则 + 跌到均价 × (1 − hardStopPct%) 全部止损（只用于回测对比；用户硬规则绝不卖亏，实盘的卖出都要求有盈利）。</li>
+     * <li>TRAIL_B（方案 B，用户 2026-10-20 选定）：涨到均价 + activatePct% 后启动跟踪，从买入以来最高价回落 giveAtr × 日线 ATR
+     *     全部卖出；持有满 timeoutDays 天仍没卖，含费成本 + floorPct% 以上就卖。任何情况下成交价（扣滑点后）
+     *     ≥ 含费均价 × (1 + 手续费 + floorPct%)，绝不卖亏。跟踪期间照常加仓；不再有"跨天降为 carryTpPct"。</li>
      * <li>AUTO：上线回测从 candidates 里选"不比 FIXED 差"且总盈亏最高的一种；都不达标就用 FIXED。</li>
      * </ul>
      *
@@ -101,21 +106,31 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
      *                        之前和不达标时都按 FIXED 运行（回滚：把 mode 改回 FIXED 并改版本号）
      */
     public record Exit(String mode, double trailAtr, double hardStopPct, boolean requireBacktest, double partialPct,
-                       double partialTrailAtr, List<String> candidates) {
+                       double partialTrailAtr, List<String> candidates, double activatePct, double giveAtr,
+                       int timeoutDays, double floorPct) {
 
         public Exit {
             if (mode == null || mode.isBlank()) mode = "FIXED";
+            if (activatePct <= 0) activatePct = 3.0;
+            if (giveAtr <= 0) giveAtr = 3.0;
+            if (timeoutDays <= 0) timeoutDays = 30;
+            if (floorPct <= 0) floorPct = 0.3;
             if (partialPct <= 0 || partialPct >= 100) partialPct = 50;
             if (partialTrailAtr <= 0) partialTrailAtr = 1.0;
             if (candidates == null || candidates.isEmpty()) candidates = List.of("TRAIL", "PARTIAL");
         }
 
         public static Exit defaults() {
-            return new Exit("AUTO", 0.5, 8, true, 50, 1.0, List.of("TRAIL", "PARTIAL"));
+            return new Exit("AUTO", 0.5, 8, true, 50, 1.0, List.of("TRAIL", "PARTIAL"), 3.0, 3.0, 30, 0.3);
         }
 
         public Exit withMode(String m) {
-            return new Exit(m, trailAtr, hardStopPct, requireBacktest, partialPct, partialTrailAtr, candidates);
+            return new Exit(m, trailAtr, hardStopPct, requireBacktest, partialPct, partialTrailAtr, candidates,
+                    activatePct, giveAtr, timeoutDays, floorPct);
+        }
+
+        public boolean trailB() {
+            return "TRAIL_B".equals(mode);
         }
     }
 
@@ -123,7 +138,7 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
     public BtcDailyProperties withExitMode(String mode) {
         return new BtcDailyProperties(enabled, version, symbol, capUsdt, capUntil, tranches, kStrong, kWeak, stepAtr,
                 tpAtrMult, tpMinPct, carryTpPct, feeRate, slippageBps, atrDays, emaDays, backtestDays, filters,
-                stopCandidatesPct, exit.withMode(mode), strategy, v3);
+                stopCandidatesPct, exit.withMode(mode), strategy, v3, firstOpenPct);
     }
 
     /**
@@ -191,6 +206,6 @@ public record BtcDailyProperties(boolean enabled, String version, String symbol,
     public static BtcDailyProperties defaults() {
         return new BtcDailyProperties(true, "btc-v3.2-2026-10-15", "BTCUSDT", 10_000, "2026-11-14",
                 List.of(3000.0, 3000.0, 4000.0), 0.25, 0.6, 0.5, 0.5, 0.8, 0.3, 0.001, 2, 14, 20, 365,
-                Filters.defaults(), List.of(3.0, 5.0, 8.0, 12.0), Exit.defaults().withMode("FIXED"), "AUTO", V3.defaults());
+                Filters.defaults(), List.of(3.0, 5.0, 8.0, 12.0), Exit.defaults().withMode("FIXED"), "AUTO", V3.defaults(), 0);
     }
 }

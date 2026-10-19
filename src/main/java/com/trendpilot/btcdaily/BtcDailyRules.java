@@ -14,6 +14,9 @@ import com.trendpilot.market.Kline;
  * <li>成交：用已收盘 K 线的最低/最高价判断；同一根 K 线里先算已有持仓的止盈，止盈了就不再买（保守）。</li>
  * <li>不止损：亏损时不卖，跨天后把止盈幅度降到 carryTpPct；TRAIL 模式下到了止盈价不立即卖，跟踪最高价，
  *     回落才卖、最低按原止盈价。每天最多完成一轮。</li>
+ * <li>TRAIL_B（方案 B）：均价 +3% 启动跟踪，从最高价回落 3×ATR 全卖；满 30 天未卖则含费成本 +0.3% 以上卖；
+ *     与研究引擎 BtcPlanStudy 的 TRAIL 卖法同一判断。</li>
+ * <li>硬规则（用户 2026-10-20）：BTC 绝不卖亏。任何卖出在成交前都检查到手金额 &gt; 对应成本，否则不卖。</li>
  * </ul>
  */
 public final class BtcDailyRules {
@@ -63,7 +66,8 @@ public final class BtcDailyRules {
         List<DailyPlan.Level> levels = new ArrayList<>();
         List<Double> tranches = p.tranches();
         if (!book.holding()) {
-            double first = open - (strong ? p.kStrong() : p.kWeak()) * atr;
+            double first = p.firstOpenPct() > 0 ? open * (1 - p.firstOpenPct() / 100)
+                    : open - (strong ? p.kStrong() : p.kWeak()) * atr;
             double spent = 0;
             for (int i = 0; i < tranches.size() && !gate.skipNew(); i++) {
                 double usdt = round2(tranches.get(i) * gate.multiplier());
@@ -71,7 +75,7 @@ public final class BtcDailyRules {
                 spent += usdt;
                 levels.add(new DailyPlan.Level(i, round2(first - i * p.stepAtr() * atr), usdt));
             }
-        } else if (book.trailPeak <= 0) { // 正在跟踪止盈的仓位不再加仓
+        } else if (book.trailPeak <= 0 || p.exit().trailB()) { // 正在跟踪止盈的仓位不再加仓（方案 B 照常加仓）
             double spent = book.cost;
             for (int i = book.buys, j = 1; i < tranches.size(); i++, j++) {
                 if (spent + tranches.get(i) > p.capUsdt() + 1e-6) break;
@@ -220,6 +224,7 @@ public final class BtcDailyRules {
     }
 
     public static double takeProfitPct(DailyPlan plan, Book book, BtcDailyProperties p) {
+        if (!plan.v3() && p.exit().trailB()) return p.exit().activatePct();
         boolean carried = book.openedDay != null && book.openedDay.isBefore(plan.day());
         return carried ? p.carryTpPct() : plan.tpPct();
     }
@@ -234,6 +239,8 @@ public final class BtcDailyRules {
         if (book.holding()) {
             track(book, bar, p);
             Exit e = exitSignal(plan, book, bar, p);
+            // 绝不卖亏（只有回测对比用的止损类卖法例外，实盘的 live() 不会用到它们）
+            if (e != null && !lossCompare(plan, p) && !profitable(book, e, slip, p)) e = null;
             if (e != null && e.fraction() < 1) {
                 double price = e.price() * (1 - slip);
                 double q = book.qty * e.fraction();
@@ -289,7 +296,7 @@ public final class BtcDailyRules {
             }
         }
         boolean newRoundBlocked = !book.holding() && day.equals(book.lastExitDay);
-        if (!newRoundBlocked && book.trailPeak <= 0) {
+        if (!newRoundBlocked && (book.trailPeak <= 0 || p.exit().trailB())) {
             for (DailyPlan.Level l : plan.levels()) {
                 if (l.index() != book.buys) continue;
                 double trigger = l.price();
@@ -307,6 +314,7 @@ public final class BtcDailyRules {
                 if (!book.holding()) {
                     book.openedDay = day;
                     book.openedAt = bar.openTime();
+                    if (p.exit().trailB() && !plan.v3()) book.trailPeak = price; // 方案 B：从买入价开始记最高价
                     book.openFilters = plan.reasons();
                     book.openRegime = plan.regime();
                 }
@@ -335,6 +343,39 @@ public final class BtcDailyRules {
         }
     }
 
+    /** 硬规则：卖出（扣滑点和手续费后）到手金额必须大于对应成本，否则不卖。 */
+    static boolean profitable(Book book, Exit e, double slip, BtcDailyProperties p) {
+        double q = book.qty * e.fraction();
+        double c = book.cost * e.fraction();
+        return q > 0 && q * e.price() * (1 - slip) * (1 - p.feeRate()) > c;
+    }
+
+    /** 回测里"如果止损会怎样"的对比卖法（STOP、V3 被套保护）：允许亏损卖出，实盘不使用。 */
+    static boolean lossCompare(DailyPlan plan, BtcDailyProperties p) {
+        return plan.v3() ? !"NONE".equals(p.v3().guard()) : "STOP".equals(p.exit().mode());
+    }
+
+    /** 方案 B 的最低卖出挂价（未扣滑点）：成交价 ≥ 含费均价 × (1 + 手续费 + floorPct%)。 */
+    public static double floorB(Book book, BtcDailyProperties p) {
+        return book.avgCost() * (1 + p.feeRate() + p.exit().floorPct() / 100) / (1 - p.slippageBps() / 10_000);
+    }
+
+    /** 方案 B 的跟踪启动价。 */
+    public static double activateB(Book book, BtcDailyProperties p) {
+        return book.avgCost() * (1 + p.exit().activatePct() / 100);
+    }
+
+    /** 方案 B 当前的跟踪卖出线（未启动返回 NaN）。 */
+    public static double trailLineB(Book book, DailyPlan plan, BtcDailyProperties p) {
+        if (book.trailPeak < activateB(book, p)) return Double.NaN;
+        return Math.max(floorB(book, p), book.trailPeak - p.exit().giveAtr() * plan.atr());
+    }
+
+    /** 方案 B：是否已持有满 timeoutDays 天。 */
+    public static boolean timeoutB(Book book, long barOpen, BtcDailyProperties p) {
+        return book.openedAt > 0 && barOpen - book.openedAt >= p.exit().timeoutDays() * 86_400_000L;
+    }
+
     /** 按卖出方式判断这根 K 线是否全部卖出（价格未扣滑点）。 */
     static Exit exitSignal(DailyPlan plan, Book book, Kline bar, BtcDailyProperties p) {
         BtcDailyProperties.Exit x = p.exit();
@@ -342,6 +383,22 @@ public final class BtcDailyRules {
         if (plan.v3()) return exitV3(plan, book, bar, p, carried);
         double target = takeProfitPrice(plan, book, p);
         switch (x.mode()) {
+            case "TRAIL_B" -> {
+                // 与 BtcPlanStudy 的 TRAIL 卖法一致：最高价（从买入价起）达到激活价后，回落到 max(最高价 − giveAtr×ATR, 保底) 卖；
+                // 满 timeoutDays 天未卖，碰到保底价就卖；本根的新高只影响下一根的判断（保守）
+                double floor = floorB(book, p);
+                Exit out = null;
+                double line = trailLineB(book, plan, p);
+                if (!Double.isNaN(line) && bar.low() <= line) {
+                    double price = Math.min(line, bar.open());
+                    if (price >= floor) out = new Exit(price, carried ? "跟踪止盈（跨天）" : "跟踪止盈");
+                }
+                if (out == null && timeoutB(book, bar.openTime(), p) && bar.high() >= floor) {
+                    out = new Exit(Math.max(floor, bar.open()), "持有满 " + x.timeoutDays() + " 天，成本以上卖出");
+                }
+                book.trailPeak = Math.max(book.trailPeak, bar.high());
+                return out;
+            }
             case "STOP" -> {
                 double stop = book.avgCost() * (1 - x.hardStopPct() / 100);
                 if (bar.low() <= stop) return new Exit(Math.min(stop, bar.open()), "止损 " + fmt(x.hardStopPct()) + "%");

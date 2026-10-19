@@ -34,6 +34,12 @@ public class StatusText {
     private final ObjectProvider<Ledger> books;
     private final ObjectProvider<ActiveLease> lease;
     private final Path versionFile;
+    private ObjectProvider<com.trendpilot.btcdaily.BtcDailyService> btc;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setBtc(ObjectProvider<com.trendpilot.btcdaily.BtcDailyService> btc) {
+        this.btc = btc;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     public StatusText(JdbcClient jdbc, StrategyParams params, ObjectProvider<Ledger> books, ObjectProvider<ActiveLease> lease) {
@@ -69,6 +75,9 @@ public class StatusText {
             Instant at = Instant.parse(t);
             return VN.format(at) + "（" + Math.max(0, Duration.between(at, now).toMinutes()) + " 分钟前）";
         }));
+        if (btc != null && btc.getIfAvailable() != null) {
+            lines.add("BTC 短线卖法：" + safe(() -> btc.getObject().sellRuleShort()));
+        }
         lines.add("持仓数：" + safe(() -> {
             List<String> parts = new ArrayList<>();
             books.orderedStream().forEach(b -> parts.add(b.book() + " " + b.positions().size()));
