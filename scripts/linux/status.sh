@@ -20,6 +20,16 @@ for pair in V2:position V2D15:v2d_position V1:v1_position V3:v3_position; do
     echo "$book 持仓 $(q "SELECT COUNT(*) FROM $table;")  今天开仓 $(q "SELECT COUNT(*) FROM shadow_event WHERE book='$book' AND type='BUY' AND created_at >= '$day_start';")  今天平仓 $(q "SELECT COUNT(*) FROM shadow_event WHERE book='$book' AND type='SELL' AND created_at >= '$day_start';")"
 done
 echo "BTC 短线 持仓 $(q "SELECT IFNULL((SELECT CASE WHEN qty > 0 THEN 1 ELSE 0 END FROM btc_daily_state WHERE id = 1), 0);")  今天成交 $(q "SELECT COUNT(*) FROM btc_daily_trade WHERE voided = 0 AND created_at >= '$day_start';")"
+echo "--- BTC 短线：最近 3 天计划（day version strategy regime open atr ema strong carried tp% levels skip_new multiplier reasons）"
+q "SELECT day, version, strategy, regime, ROUND(open,2), ROUND(atr,2), ROUND(ema,2), strong, carried, ROUND(tp_pct,3),
+        levels, skip_new, multiplier, reasons FROM btc_daily_plan ORDER BY day DESC LIMIT 3;" | sed 's/^/  /'
+echo "  当前持仓（qty cost buys last_buy opened_day realized rounds wins）：$(q "SELECT qty, ROUND(cost,2), buys, ROUND(last_buy_price,2), opened_day, ROUND(realized,2), rounds, wins FROM btc_daily_state WHERE id = 1;")"
+echo "  最近 5 笔成交（day side level price usdt pnl reason voided）："
+q "SELECT day, side, level, ROUND(price,2), ROUND(usdt,2), ROUND(pnl,2), reason, voided FROM btc_daily_trade ORDER BY id DESC LIMIT 5;" | sed 's/^/    /'
+utc_start_ms=$(( $(date -u -d "$(date -u +%F) 00:00" +%s) * 1000 ))
+echo "  今天（UTC 日）BINANCE BTCUSDT 15m（最低 最高 最新收盘 根数）：$(q "SELECT MIN(low), MAX(high),
+        (SELECT close FROM kline_15m WHERE venue='BINANCE' AND symbol='BTCUSDT' ORDER BY open_time DESC LIMIT 1), COUNT(*)
+   FROM kline_15m WHERE venue='BINANCE' AND symbol='BTCUSDT' AND open_time >= $utc_start_ms;")"
 echo "--- 最近 4 轮 Discovery（信号数 / 决策 / 买入）"
 q "SELECT j.started_at, j.data_status,
         (SELECT COUNT(*) FROM signal_log s WHERE s.generation = j.generation),
