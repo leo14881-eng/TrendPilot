@@ -35,7 +35,7 @@ public final class BtcGridStudy {
     public record Run(String name, int rounds, int wins, double realized, double endUnrealized, double total,
                       double maxDd, double maxFloatLoss, long maxHoldDays, int tradeDays, int days, int skipped, int heldDays,
                       double[] roundPnls, Map<String, double[]> cat, Map<Integer, double[]> byYear,
-                      java.util.Set<java.time.YearMonth> winMonths) {
+                      java.util.Set<java.time.YearMonth> winMonths, double[] roundPcts, EqTracker eq) {
 
         double meanRound() {
             return roundPnls.length == 0 ? 0 : Arrays.stream(roundPnls).average().orElse(0);
@@ -65,9 +65,11 @@ public final class BtcGridStudy {
             if (d1 <= -0.07 || d3 <= -0.10) crash.add(BtcDailyRules.dayOf(daily.get(i).openTime()));
         }
         Book book = new Book();
+        EqTracker eq = new EqTracker(p.capUsdt());
         DailyPlan plan = null;
         String planCat = "";
         List<Double> pnls = new ArrayList<>();
+        List<Double> pcts = new ArrayList<>();
         Map<String, double[]> cat = new LinkedHashMap<>(); // {轮数, 盈亏, 最差 MAE%}
         for (String c : CATS) cat.put(c, new double[3]);
         Map<Integer, double[]> byYear = new LinkedHashMap<>(); // {轮数, 已实现}
@@ -107,6 +109,7 @@ public final class BtcGridStudy {
                 } else if (book.lastRound != null) {
                     Book.Round r = book.lastRound;
                     pnls.add(r.pnl());
+                    pcts.add(r.pnlPct());
                     if (r.pnl() > 0) winMonths.add(java.time.YearMonth.from(day));
                     double[] c = cat.get(openCat);
                     c[0]++;
@@ -126,6 +129,7 @@ public final class BtcGridStudy {
             peak = Math.max(peak, book.realized() + book.unrealized(bar.close(), p.feeRate()));
             lastClose = bar.close();
             lastDay = day;
+            eq.on(day, bar.open(), p.capUsdt() + book.realized() + book.unrealized(bar.close(), p.feeRate()), bar.close());
         }
         double endU = book.unrealized(lastClose, p.feeRate());
         if (book.holding()) {
@@ -134,7 +138,7 @@ public final class BtcGridStudy {
         }
         return new Run(name, book.rounds(), book.wins(), book.realized(), endU, book.realized() + endU, maxDd,
                 book.maxFloatLoss(), maxHold, tradeDays, days, skipped, heldDays,
-                pnls.stream().mapToDouble(Double::doubleValue).toArray(), cat, byYear, winMonths);
+                pnls.stream().mapToDouble(Double::doubleValue).toArray(), cat, byYear, winMonths, pcts.stream().mapToDouble(Double::doubleValue).toArray(), eq);
     }
 
     static String category(LocalDate day, Set<LocalDate> crash, String regime) {

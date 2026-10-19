@@ -64,4 +64,26 @@ class BtcV4StudyTest {
         assertThat(none.rounds()).isZero();
         assertThat(none.total()).isZero();
     }
+
+    @Test
+    void planStudyFamiliesNeverSellBelowCostAndRespectCap() {
+        List<List<Kline>> data = synthetic(11, 0);
+        BtcDailyProperties p = BtcDailyProperties.defaults();
+        BtcPlanStudy.Days dd = new BtcPlanStudy.Days(data.get(0), p);
+        LocalDate from = LocalDate.of(2023, 6, 1), to = LocalDate.of(2024, 1, 31);
+        for (String fam : new String[]{"F2", "F3", "F4", "F5"}) {
+            double e1 = switch (fam) { case "F3" -> 20; case "F4" -> 50; case "F5" -> 5; default -> 0.1; };
+            for (String exit : new String[]{"BASE", "FIX", "TRAIL"}) {
+                BtcPlanStudy.Cfg c = new BtcPlanStudy.Cfg(fam, e1, fam.equals("F3") ? 2 : 0.5, 6, "INC", "INC", "PROFIT",
+                        exit, exit.equals("FIX") ? 5 : -1, 1, 14, 10_000);
+                BtcPlanStudy.Run r = BtcPlanStudy.run(c, dd, data.get(1), from, to, p, d -> true);
+                for (double pnl : r.roundPnls()) assertThat(pnl).isPositive();
+                assertThat(r.utilization()).isBetween(0.0, 1.0);
+                assertThat(r.cat().values().stream().mapToDouble(v -> v[0]).sum()).isEqualTo(r.rounds());
+            }
+        }
+        BtcPlanStudy.Cfg rnd = new BtcPlanStudy.Cfg("RND", 0, 0, 10, "C1", "EQ", "STOP", "BASE", 0, 0, 0, 10_000);
+        assertThat(BtcPlanStudy.run(rnd, dd, data.get(1), from, to, p, BtcGridStudy.randomDays(0, 1)).opened()).isZero();
+        assertThat(BtcPlanStudy.run(rnd, dd, data.get(1), from, to, p, d -> true).opened()).isPositive();
+    }
 }
