@@ -78,7 +78,7 @@ public final class BtcPlanStudyMain {
         StringBuilder md = new StringBuilder();
         md.append("# BTC 短线方案重研（研究，不改线上规则）\n\n");
         md.append(String.format(Locale.ROOT, "数据：data.binance.vision BTCUSDT 日线 + 15m。校准期 %s ～ %s（%.1f 年），验证期 %s ～ %s（%.1f 年）。"
-                + "全部只做现货、不止损（只在含费均价 +0.3%% 以上卖）、手续费 %.2f%%、滑点 %d bp；资金 10000 U（另报 20000 / 50000 作参考）。"
+                + "全部只做现货、绝不卖亏（卖出成交价 ≥ 含费均价 ×（1 + 手续费 + 0.3%%），出现亏损卖出即判方案无效）、手续费 %.2f%%、滑点 %.0f bp；资金 10000 U（另报 20000 / 50000 作参考）。"
                 + "月度盈利覆盖率 = 有盈利平仓的完整月份占比。年化 = （已实现 + 期末浮动）/ 资金 / 年数。\n\n",
                 t0, cEnd, yCal, vStart, lastDay, yVal, base.feeRate() * 100, base.slippageBps()));
 
@@ -90,6 +90,8 @@ public final class BtcPlanStudyMain {
         BtcGridStudy.Run f1Cal = BtcGridStudy.run("F1", daily, barsCal, t0, curP, BtcGridStudy.filterContext(curP));
         BtcGridStudy.Run f1Val = BtcGridStudy.run("F1", daily, bars, vStart, curP, BtcGridStudy.filterContext(curP));
         double f1CovCal = BtcPlanStudy.coverage(f1Cal.winMonths(), t0, cEnd);
+        long f1Loss = Arrays.stream(f1Val.roundPcts()).filter(x -> x <= 0).count() + Arrays.stream(f1Cal.roundPcts()).filter(x -> x <= 0).count();
+        md.append("F1 现行规则在校准期 + 验证期的亏损卖出笔数：" + f1Loss + "（必须为 0）。\n\n");
         double f1CovVal = BtcPlanStudy.coverage(f1Val.winMonths(), vStart, covEnd);
 
         // 网格

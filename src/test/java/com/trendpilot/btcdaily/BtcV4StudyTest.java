@@ -86,4 +86,28 @@ class BtcV4StudyTest {
         assertThat(BtcPlanStudy.run(rnd, dd, data.get(1), from, to, p, BtcGridStudy.randomDays(0, 1)).opened()).isZero();
         assertThat(BtcPlanStudy.run(rnd, dd, data.get(1), from, to, p, d -> true).opened()).isPositive();
     }
+
+    @Test
+    void minimumSellPriceCoversFeeAndMargin() {
+        double avg = 80_000, fee = 0.001, slip = 0.0002;
+        double floor = BtcPlanStudy.minSellPrice(avg, fee, slip);
+        assertThat(floor * (1 - slip)).isGreaterThanOrEqualTo(avg * (1 + fee + 0.003) - 1e-6);
+        assertThat(floor * (1 - slip) * (1 - fee)).isGreaterThan(avg);   // 扣完卖出手续费仍高于含费均价
+    }
+
+    @Test
+    void deepDownTrendWithAllModesNeverSellsAtLoss() {
+        List<List<Kline>> data = synthetic(5, -0.0006);
+        BtcDailyProperties p = BtcDailyProperties.defaults();
+        BtcPlanStudy.Days dd = new BtcPlanStudy.Days(data.get(0), p);
+        LocalDate from = LocalDate.of(2023, 6, 1), to = LocalDate.of(2024, 2, 1);
+        for (String exit : new String[]{"BASE", "ATR", "FIX", "HH", "TRAIL"})
+            for (int d : new int[]{0, 14, 30})
+                for (String after : new String[]{"STOP", "PROFIT"}) {
+                    BtcPlanStudy.Cfg c = new BtcPlanStudy.Cfg("F3", 20, 2, 10, "INC", "EQ", after, exit,
+                            exit.equals("TRAIL") ? 3 : 1, 2, d, 50_000);
+                    BtcPlanStudy.Run r = BtcPlanStudy.run(c, dd, data.get(1), from, to, p, x -> true); // 亏损卖出会直接抛异常
+                    for (double pct : r.roundPcts()) assertThat(pct).isGreaterThan(0.1);
+                }
+    }
 }

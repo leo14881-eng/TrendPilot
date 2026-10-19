@@ -78,7 +78,7 @@ public final class BtcV4StudyMain {
 
         StringBuilder md = new StringBuilder();
         md.append("# BTC 每日短线 V4 候选：ATR 阶梯挂单 + 跨天加仓（研究）\n\n");
-        md.append(String.format(Locale.ROOT, "数据：data.binance.vision BTCUSDT 日线 + 15m，%s ～ %s（%.1f 年）；近 1 年从 %s 起。不止损，只在含费均价以上卖；手续费 %.2f%%，滑点 %d bp。"
+        md.append(String.format(Locale.ROOT, "数据：data.binance.vision BTCUSDT 日线 + 15m，%s ～ %s（%.1f 年）；近 1 年从 %s 起。不止损，只在含费均价以上卖；手续费 %.2f%%，滑点 %.0f bp。"
                 + "月度覆盖率 = 有盈利平仓的月份 / 完整月份数（全期 %s ～ %s，近 1 年 %s ～ %s）。\n\n",
                 tradeFrom, lastDay, years, oneYear, base.feeRate() * 100, base.slippageBps(), YearMonth.from(tradeFrom),
                 YearMonth.from(covEnd), YearMonth.from(recentCovFrom), YearMonth.from(covEnd)));

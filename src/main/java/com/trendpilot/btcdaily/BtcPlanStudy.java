@@ -233,7 +233,8 @@ public final class BtcPlanStudy {
                 pos.minPrice = Math.min(pos.minPrice, bar.low());
                 if (!bought) {
                     double avg = pos.cost / pos.qty;
-                    double floor = avg * 1.003;
+                    // 硬规则（用户 2026-10-20）：绝不卖亏，成交价下限 = 含费均价 × (1 + 手续费 + 0.3%)，按滑点倒推挂价
+                    double floor = minSellPrice(avg, fee, slip);
                     double atrPct = atr / dd.open[idx];
                     boolean timeout = c.timeoutDays() > 0 && bar.openTime() - pos.openedAt >= c.timeoutDays() * 86_400_000L;
                     double sellAt = Double.NaN;
@@ -259,6 +260,9 @@ public final class BtcPlanStudy {
                     if (!Double.isNaN(sellAt) && sellAt >= floor) {
                         double px = sellAt * (1 - slip);
                         double pnl = pos.qty * px * (1 - fee) - pos.cost;
+                        if (px < avg * (1 + fee + 0.003) * (1 - 1e-9) || pnl <= 0) {
+                            throw new IllegalStateException("方案无效：出现亏损卖出 " + c.label() + " 均价 " + avg + " 卖价 " + px);
+                        }
                         realized += pnl;
                         rounds++;
                         if (pnl > 0) {
@@ -301,6 +305,11 @@ public final class BtcPlanStudy {
         return new Run(c.label(), rounds, wins, realized, endU, realized + endU, maxDd, maxFloat, maxHold, days, held, opened,
                 barsN == 0 ? 0 : util / barsN, pnls.stream().mapToDouble(Double::doubleValue).toArray(),
                 pcts.stream().mapToDouble(Double::doubleValue).toArray(), cat, winMonths, byYear, eq, pos == null ? 0 : pos.qty);
+    }
+
+    /** 最低卖出挂价：成交价（扣滑点后）不低于含费均价 × (1 + 手续费 + 0.3%)。 */
+    public static double minSellPrice(double avg, double fee, double slip) {
+        return avg * (1 + fee + 0.003) / (1 - slip);
     }
 
     private static void buy(Pos pos, double px, double usdt, double fee) {
