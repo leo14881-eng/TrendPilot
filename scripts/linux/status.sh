@@ -8,6 +8,18 @@ echo "服务 $(systemctl is-active trendpilot.service)  自动更新 $(systemctl
 echo "健康 $(curl -fsS -m 10 "$BASE/api/health" 2>/dev/null | head -c 600)"
 free -m | awk 'NR==2{print "内存已用 "$3"M / "$2"M"}'
 df -h / | awk 'NR==2{print "硬盘已用 "$3" / "$2}'
+# 只读的内存诊断：各进程常驻内存（RSS）前 8，以及 TrendPilot JVM 的堆使用和占用最多的对象类型
+echo "--- 进程内存（RSS MB，前 8）"
+ps -eo rss=,user=,comm= --sort=-rss | head -n 8 | awk '{printf "  %6.0f %-12s %s\n", $1/1024, $2, $3}'
+pid=$(systemctl show -p MainPID --value trendpilot.service 2>/dev/null)
+if [ -n "$pid" ] && [ "$pid" != 0 ]; then
+    echo "--- TrendPilot 堆（jcmd GC.heap_info）"
+    sudo -u "$RUN_USER" timeout 20 jcmd "$pid" GC.heap_info 2>&1 | head -n 12 | sed 's/^/  /'
+    echo "--- TrendPilot 对象占用前 15（jcmd GC.class_histogram，会触发一次完整 GC）"
+    sudo -u "$RUN_USER" timeout 40 jcmd "$pid" GC.class_histogram 2>&1 | sed -n '1,18p' | sed 's/^/  /'
+    echo "--- TrendPilot 堆（完整 GC 后）"
+    sudo -u "$RUN_USER" timeout 20 jcmd "$pid" GC.heap_info 2>&1 | head -n 4 | sed 's/^/  /'
+fi
 echo "--- auto-update.log"
 tail -n 8 "$LOG_FILE" 2>/dev/null
 echo "--- 最近的任务记录（job_run）"
