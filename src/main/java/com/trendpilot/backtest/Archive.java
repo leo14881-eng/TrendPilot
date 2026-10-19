@@ -50,6 +50,10 @@ public final class Archive {
     /** 同时最多这么多个下载，对公开数据站保持克制。 */
     private final Semaphore gate = new Semaphore(16);
 
+    Path root() {
+        return dir;
+    }
+
     public Archive(Path dir) {
         this(dir, "15m");
     }
