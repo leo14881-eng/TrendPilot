@@ -14,6 +14,8 @@ public final class EqTracker {
     public double startPrice = Double.NaN, lastPrice = Double.NaN, lastEq;
     /** 季度 → {期初权益 U, 期初价格, 期末权益 U, 期末价格} */
     public final Map<String, double[]> quarters = new LinkedHashMap<>();
+    /** 每天收盘时的 {权益 U, 价格} */
+    public final Map<LocalDate, double[]> days = new LinkedHashMap<>();
 
     public EqTracker(double cap) {
         this.cap = cap;
@@ -36,6 +38,21 @@ public final class EqTracker {
         q[3] = px;
         lastEq = eqU;
         lastPrice = px;
+        days.put(day, new double[]{eqU, px});
+    }
+
+    /** 区间 [f, t] 内：{权益 U 增量, BTC 涨幅, 捕获比例 = 权益增幅 / BTC 涨幅}；取不到返回 null。 */
+    public double[] segment(LocalDate f, LocalDate t) {
+        double[] a = null, b = null;
+        for (var e : days.entrySet()) {
+            if (e.getKey().isBefore(f.minusDays(1))) continue;
+            if (e.getKey().isAfter(t)) break;
+            if (a == null) a = e.getValue();
+            b = e.getValue();
+        }
+        if (a == null || b == null) return null;
+        double btc = b[1] / a[1] - 1;
+        return new double[]{b[0] - a[0], btc, btc == 0 ? 0 : (b[0] / a[0] - 1) / btc};
     }
 
     public double btcStart() {

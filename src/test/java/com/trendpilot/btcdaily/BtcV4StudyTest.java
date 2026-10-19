@@ -101,11 +101,14 @@ class BtcV4StudyTest {
         BtcDailyProperties p = BtcDailyProperties.defaults();
         BtcPlanStudy.Days dd = new BtcPlanStudy.Days(data.get(0), p);
         LocalDate from = LocalDate.of(2023, 6, 1), to = LocalDate.of(2024, 2, 1);
-        for (String exit : new String[]{"BASE", "ATR", "FIX", "HH", "TRAIL"})
+        for (String exit : new String[]{"BASE", "ATR", "FIX", "HH", "TRAIL", "ADAPT50", "ADAPT100"})
             for (int d : new int[]{0, 14, 30})
                 for (String after : new String[]{"STOP", "PROFIT"}) {
                     BtcPlanStudy.Cfg c = new BtcPlanStudy.Cfg("F3", 20, 2, 10, "INC", "EQ", after, exit,
-                            exit.equals("TRAIL") ? 3 : 1, 2, d, 50_000);
+                            exit.equals("TRAIL") ? 3 : 1, exit.equals("ADAPT100") ? -8 : 2, d, 50_000);
+                    BtcPlanStudy.Run v2b = BtcPlanStudy.run(new BtcPlanStudy.Cfg("V2B", 0, 0, 3, "C0.5", "V2", after, exit,
+                            -1, -5, d, 10_000), dd, data.get(1), from, to, p, x -> true);
+                    for (double pct : v2b.roundPcts()) assertThat(pct).isGreaterThan(0.1);
                     BtcPlanStudy.Run r = BtcPlanStudy.run(c, dd, data.get(1), from, to, p, x -> true); // 亏损卖出会直接抛异常
                     for (double pct : r.roundPcts()) assertThat(pct).isGreaterThan(0.1);
                 }

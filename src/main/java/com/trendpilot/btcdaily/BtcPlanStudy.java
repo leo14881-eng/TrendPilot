@@ -36,6 +36,7 @@ public final class BtcPlanStudy {
         public String label() {
             String entry = switch (family) {
                 case "F2" -> String.format(Locale.ROOT, "开盘−%.2fATR", e1);
+                case "V2B" -> "现行买法(开盘−0.25/0.6ATR,下跌趋势不开)";
                 case "F3" -> String.format(Locale.ROOT, "%d日高−%.0fATR", (int) e1, e2);
                 case "F4" -> String.format(Locale.ROOT, "SMA%d上 回EMA20或−%.1fATR", (int) e1, e2);
                 case "F5" -> String.format(Locale.ROOT, "月开−%.0f%%", e1);
@@ -46,11 +47,17 @@ public final class BtcPlanStudy {
                 case "ATR" -> String.format(Locale.ROOT, "止盈%.0fATR", exitArg);
                 case "FIX" -> String.format(Locale.ROOT, "止盈%.0f%%", exitArg);
                 case "HH" -> "止盈回到N日高";
-                default -> String.format(Locale.ROOT, "跟踪(激活%s 回落%.0fATR)", exitArg < 0 ? "1ATR" : "3%", trailGive);
+                case "ADAPT50", "ADAPT100" -> String.format(Locale.ROOT, "分行情跟踪(激活%s, 昨收>SMA%s 回落%s, 否则回落1ATR)",
+                        exitArg < 0 ? "1ATR" : "3%", exit.substring(5), give(trailGive));
+                default -> String.format(Locale.ROOT, "跟踪(激活%s 回落%s)", exitArg < 0 ? "1ATR" : "3%", give(trailGive));
             };
             return String.format(Locale.ROOT, "%s %s %d档%s%s %s%s %s%s", family, entry, levels, spacing, amounts,
                     "PROFIT".equals(after) ? "满额后用利润加 " : "", ex, timeoutDays > 0 ? timeoutDays + "天降" : "不降",
                     cap == 10_000 ? "" : String.format(Locale.ROOT, " 资金%.0f", cap));
+        }
+
+        static String give(double g) {
+            return g > 0 ? String.format(Locale.ROOT, "%.0fATR", g) : String.format(Locale.ROOT, "%.0f%%", -g);
         }
 
         public Cfg withCap(double c) {
@@ -74,6 +81,7 @@ public final class BtcPlanStudy {
         final double[] atr, ema20, sma50, sma100, open, monthOpen;
         final double[][] hh; // [N 10/20/30][i]
         final String[] cat;
+        final boolean[] down;
         final List<Kline> daily;
 
         public Days(List<Kline> daily, BtcDailyProperties p) {
@@ -87,6 +95,7 @@ public final class BtcPlanStudy {
             monthOpen = new double[n];
             hh = new double[3][n];
             cat = new String[n];
+            down = new boolean[n];
             Set<LocalDate> crash = new HashSet<>();
             for (int i = 3; i < n; i++) {
                 double d1 = daily.get(i).close() / daily.get(i - 1).close() - 1;
@@ -117,6 +126,7 @@ public final class BtcPlanStudy {
                     hh[k][i] = h;
                 }
                 cat[i] = BtcGridStudy.category(d, crash, BtcDailyRules.regime(before, p));
+                down[i] = BtcDailyRules.downtrend(before, p);
             }
         }
 
@@ -142,7 +152,7 @@ public final class BtcPlanStudy {
         double[] w = new double[c.levels()];
         double sum = 0;
         for (int i = 0; i < w.length; i++) {
-            w[i] = "INC".equals(c.amounts()) ? i + 1 : 1;
+            w[i] = "INC".equals(c.amounts()) ? i + 1 : "V2".equals(c.amounts()) ? (i == w.length - 1 ? 4 : 3) : 1;
             sum += w[i];
         }
         for (int i = 0; i < w.length; i++) w[i] = c.cap() * w[i] / sum;
@@ -152,6 +162,7 @@ public final class BtcPlanStudy {
     static double spacing(Cfg c, int filled) {
         return switch (c.spacing()) {
             case "C0.75" -> 0.75;
+            case "C0.5" -> 0.5;
             case "INC" -> 1 + 0.5 * (filled - 1);
             default -> 1.0;
         };
@@ -190,6 +201,8 @@ public final class BtcPlanStudy {
                 double atr = dd.atr[idx];
                 limit = switch (c.family()) {
                     case "F2" -> dd.open[idx] - c.e1() * atr;
+                    case "V2B" -> dd.down[idx] ? Double.NaN
+                            : dd.open[idx] - (dd.prevClose(idx) > dd.ema20[idx] ? 0.25 : 0.6) * atr;
                     case "F3" -> dd.hh[hk][idx] - c.e2() * atr;
                     case "F4" -> dd.prevClose(idx) > (c.e1() == 50 ? dd.sma50[idx] : dd.sma100[idx])
                             ? Math.max(dd.ema20[idx], dd.open[idx] - c.e2() * atr) : Double.NaN;
@@ -238,10 +251,16 @@ public final class BtcPlanStudy {
                     double atrPct = atr / dd.open[idx];
                     boolean timeout = c.timeoutDays() > 0 && bar.openTime() - pos.openedAt >= c.timeoutDays() * 86_400_000L;
                     double sellAt = Double.NaN;
-                    if ("TRAIL".equals(c.exit())) {
+                    if ("TRAIL".equals(c.exit()) || c.exit().startsWith("ADAPT")) {
                         double act = avg * (1 + (c.exitArg() < 0 ? atrPct : 0.03));
+                        double g = c.trailGive();
+                        if (c.exit().startsWith("ADAPT")) {
+                            double ma = "ADAPT50".equals(c.exit()) ? dd.sma50[idx] : dd.sma100[idx];
+                            if (dd.prevClose(idx) <= ma) g = 1; // 不在均线上方：窄跟踪 1×ATR
+                        }
+                        double give = g > 0 ? g * atr : pos.peak * -g / 100;
                         if (pos.peak >= act) {
-                            double stop = Math.max(floor, pos.peak - c.trailGive() * atr);
+                            double stop = Math.max(floor, pos.peak - give);
                             if (bar.low() <= stop) sellAt = Math.min(stop, bar.open());
                         }
                         if (Double.isNaN(sellAt) && timeout && bar.high() >= floor) sellAt = Math.max(floor, bar.open());
