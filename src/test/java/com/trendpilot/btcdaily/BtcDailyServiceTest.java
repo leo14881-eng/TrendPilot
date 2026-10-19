@@ -33,7 +33,7 @@ import com.trendpilot.support.TestData;
 // 这里测的是 V2 固定止盈的计划 / 成交 / 回测选择流程；方案 B（线上配置）见 BtcDailyTrailBTest
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
         "trendpilot.btc-daily.exit.mode=FIXED", "trendpilot.btc-daily.exit.require-backtest=true",
-        "trendpilot.btc-daily.first-open-pct=0"})
+        "trendpilot.btc-daily.first-open-pct=0", "trendpilot.btc-daily.k-weak=0.6"})
 @ActiveProfiles("test")
 class BtcDailyServiceTest {
 

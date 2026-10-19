@@ -155,7 +155,11 @@ class BtcDailyTrailBTest {
         }
         BtcDailyProperties live = org.springframework.boot.context.properties.bind.Binder.get(env)
                 .bind("trendpilot.btc-daily", BtcDailyProperties.class).get();
-        assertThat(live.firstOpenPct()).isEqualTo(0.1);
+        assertThat(live.firstOpenPct()).isEqualTo(0.0);
+        assertThat(live.kStrong()).isEqualTo(0.25);
+        assertThat(live.kWeak()).isEqualTo(0.4);
+        assertThat(live.exit().timeoutDays()).isEqualTo(30);
+        assertThat(live.exit().timeoutTargetPct()).isEqualTo(3.0);
         assertThat(live.exit().trailB()).isTrue();
         assertThat(live.exit().requireBacktest()).isFalse();
         assertThat(live.exit().activatePct()).isEqualTo(3.0);
