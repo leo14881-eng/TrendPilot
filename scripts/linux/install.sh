@@ -52,7 +52,7 @@ ConditionPathExists=!$BIN/disabled.flag
 [Service]
 User=$RUN_USER
 WorkingDirectory=$APP_DIR
-ExecStart=/usr/bin/java -Xmx1200m -jar $JAR
+ExecStart=/usr/bin/java -Xmx768m -jar $JAR
 Restart=always
 RestartSec=30
 StandardOutput=append:$APP_DIR/logs/console.log
