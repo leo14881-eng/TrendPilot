@@ -42,9 +42,9 @@ class BtcGridStudyTest {
         assertThat(r.cat().values().stream().mapToDouble(v -> v[0]).sum()).isEqualTo(r.rounds());
 
         BtcDailyProperties atOpen = BtcGridStudy.params(cur, 0, 0, 0.5, 0.5, true);
-        BtcGridStudy.Run none = BtcGridStudy.run("rnd0", daily, bars, from, atOpen, BtcGridStudy.randomContext(atOpen, 0, 1));
+        BtcGridStudy.Run none = BtcGridStudy.run("rnd0", daily, bars, from, atOpen, BtcGridStudy.filterContext(atOpen), BtcGridStudy.randomDays(0, 1));
         assertThat(none.tradeDays()).isZero();
-        BtcGridStudy.Run all = BtcGridStudy.run("rnd1", daily, bars, from, atOpen, BtcGridStudy.randomContext(atOpen, 1, 1));
+        BtcGridStudy.Run all = BtcGridStudy.run("rnd1", daily, bars, from, atOpen, null, BtcGridStudy.randomDays(1, 1));
         assertThat(all.tradeDays()).isPositive();
 
         double[] t = BtcGridStudy.touchRate(daily, from, 0.25, cur);

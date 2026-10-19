@@ -71,9 +71,9 @@ public final class BtcGridStudyMain {
         BtcGridStudy.Run curRecent = recent.getFirst();
 
         md.append("## 2. 现行规则（ks0.25 kw0.60 档距0.5 止盈0.5×ATR，过滤开）\n\n");
-        md.append(String.format(Locale.ROOT, "全期 %d 天：完成 %d 轮，胜率 %.0f%%，已实现 %.0f U，期末浮动 %.0f U，合计 %.0f U；最大回撤（含浮亏）%.0f U，最大浮亏 %.0f U，最长持仓 %d 天；有买入的天 %d，过滤不开新一轮 %d 天；平均每月触发 %.2f 天。\n\n",
+        md.append(String.format(Locale.ROOT, "全期 %d 天：完成 %d 轮，胜率 %.0f%%，已实现 %.0f U，期末浮动 %.0f U，合计 %.0f U；最大回撤（含浮亏）%.0f U，最大浮亏 %.0f U，最长持仓 %d 天；有买入的天 %d，过滤不开新一轮 %d 天，开盘时仍持仓（不开新一轮）%d 天；平均每月触发 %.2f 天。\n\n",
                 cur.days(), cur.rounds(), pct(cur.wins(), cur.rounds()), cur.realized(), cur.endUnrealized(), cur.total(),
-                cur.maxDd(), cur.maxFloatLoss(), cur.maxHoldDays(), cur.tradeDays(), cur.skipped(), cur.tradeDays() / (cur.days() / 30.44)));
+                cur.maxDd(), cur.maxFloatLoss(), cur.maxHoldDays(), cur.tradeDays(), cur.skipped(), cur.heldDays(), cur.tradeDays() / (cur.days() / 30.44)));
         md.append("按年（完成的轮）：\n\n| 年 | 轮数 | 已实现 U |\n|---|---:|---:|\n");
         for (Map.Entry<Integer, double[]> e : cur.byYear().entrySet()) {
             md.append(String.format(Locale.ROOT, "| %d | %.0f | %.0f |\n", e.getKey(), e.getValue()[0], e.getValue()[1]));
@@ -89,11 +89,23 @@ public final class BtcGridStudyMain {
         md.append("\n## 5. 随机基准（同期、同资金分批、同样卖法、不止损；随机日开盘即买第 1 档，其余档按同档距）\n\n");
         md.append("开新一轮的概率 q = 该方案有买入的天数 / 计划天数；随机 " + seeds + " 次，区间为 2.5%～97.5% 分位。每轮均值的 95% 区间：方案用 t 区间，随机用各次均值的分位。\n\n");
         md.append("| 方案 | 合计 U | 随机合计均值 | 随机合计 95% 区间 | 方案每轮均值（95% 区间） | 随机每轮均值（95% 区间） | 方案合计分位 |\n|---|---:|---:|---|---|---|---:|\n");
-        List<Integer> compare = new ArrayList<>(List.of(0));
+        // 现行、过滤关的现行、通过前几项检查的候选、全期合计最高的两个
+        List<Integer> compare = new ArrayList<>(List.of(0, grid.size() / 2));
+        for (int i = 1; i < grid.size(); i++) {
+            BtcGridStudy.Run a = full.get(i), b = recent.get(i);
+            if (a.total() > cur.total() && b.total() > curRecent.total() && a.maxDd() <= cur.maxDd() * 1.10
+                    && b.maxDd() <= Math.max(curRecent.maxDd() * 1.10, 1) && catsOk(a, cur) && catsOk(b, curRecent)
+                    && !compare.contains(i)) compare.add(i);
+        }
         List<Integer> order = new ArrayList<>();
         for (int i = 0; i < full.size(); i++) order.add(i);
         order.sort(Comparator.comparingDouble(i -> -full.get(i).total()));
-        for (int i : order) if (compare.size() < 4 && !compare.contains(i)) compare.add(i);
+        for (int i = 0, added = 0; i < order.size() && added < 2; i++) {
+            if (!compare.contains(order.get(i))) {
+                compare.add(order.get(i));
+                added++;
+            }
+        }
         for (int i : compare) {
             BtcDailyProperties p = grid.get(i);
             BtcGridStudy.Run r = full.get(i);
@@ -106,7 +118,7 @@ public final class BtcGridStudyMain {
                 for (int s = 0; s < seeds; s++) {
                     long seed = 1000L + s;
                     fs.add(pool.submit(() -> BtcGridStudy.run("rnd", daily, bars, tradeFrom, rp,
-                            BtcGridStudy.randomContext(rp, q, seed))));
+                            rp.filters().enabled() ? BtcGridStudy.filterContext(rp) : null, BtcGridStudy.randomDays(q, seed))));
                 }
                 for (int s = 0; s < seeds; s++) {
                     BtcGridStudy.Run x = fs.get(s).get();

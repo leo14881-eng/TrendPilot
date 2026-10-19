@@ -33,7 +33,7 @@ public final class BtcGridStudy {
 
     /** 一次回放的结果。 */
     public record Run(String name, int rounds, int wins, double realized, double endUnrealized, double total,
-                      double maxDd, double maxFloatLoss, long maxHoldDays, int tradeDays, int days, int skipped,
+                      double maxDd, double maxFloatLoss, long maxHoldDays, int tradeDays, int days, int skipped, int heldDays,
                       double[] roundPnls, Map<String, double[]> cat, Map<Integer, double[]> byYear) {
 
         double meanRound() {
@@ -49,6 +49,12 @@ public final class BtcGridStudy {
      */
     public static Run run(String name, List<Kline> daily, List<Kline> bars, LocalDate from, BtcDailyProperties p,
                           Function<LocalDate, MarketContext> ctx) {
+        return run(name, daily, bars, from, p, ctx, d -> true);
+    }
+
+    /** @param allowNew 某天是否允许开新一轮（随机基准用；已有仓位的加仓和止盈不受影响） */
+    public static Run run(String name, List<Kline> daily, List<Kline> bars, LocalDate from, BtcDailyProperties p,
+                          Function<LocalDate, MarketContext> ctx, java.util.function.Predicate<LocalDate> allowNew) {
         Map<LocalDate, Integer> dayIndex = new LinkedHashMap<>();
         for (int i = 0; i < daily.size(); i++) dayIndex.put(BtcDailyRules.dayOf(daily.get(i).openTime()), i);
         Set<LocalDate> crash = new HashSet<>();
@@ -65,7 +71,7 @@ public final class BtcGridStudy {
         for (String c : CATS) cat.put(c, new double[3]);
         Map<Integer, double[]> byYear = new LinkedHashMap<>(); // {轮数, 已实现}
         String openCat = "";
-        int days = 0, tradeDays = 0, skipped = 0;
+        int days = 0, tradeDays = 0, skipped = 0, heldDays = 0;
         LocalDate lastBuyDay = null, lastDay = null;
         long maxHold = 0;
         double peak = 0, maxDd = 0, lastClose = 0;
@@ -81,7 +87,13 @@ public final class BtcGridStudy {
                 List<Kline> before = daily.subList(idx - DAILY_WINDOW, idx);
                 MarketContext c = ctx == null ? null : ctx.apply(day);
                 plan = BtcDailyRules.plan(day, before, daily.get(idx).open(), book, p, c);
+                if (!book.holding() && !allowNew.test(day)) {
+                    plan = new DailyPlan(plan.day(), plan.version(), plan.open(), plan.atr(), plan.ema(), plan.prevClose(),
+                            plan.strong(), plan.carried(), plan.tpPct(), List.of(), true, 0, "随机未选中", plan.strategy(),
+                            plan.regime(), plan.hourAtr(), plan.addFloor());
+                }
                 if (plan.skipNew()) skipped++;
+                if (book.holding()) heldDays++;
                 planCat = category(day, crash, plan.regime());
                 days++;
             }
@@ -118,7 +130,7 @@ public final class BtcGridStudy {
             c[2] = Math.min(c[2], book.maePct());
         }
         return new Run(name, book.rounds(), book.wins(), book.realized(), endU, book.realized() + endU, maxDd,
-                book.maxFloatLoss(), maxHold, tradeDays, days, skipped,
+                book.maxFloatLoss(), maxHold, tradeDays, days, skipped, heldDays,
                 pnls.stream().mapToDouble(Double::doubleValue).toArray(), cat, byYear);
     }
 
@@ -156,15 +168,11 @@ public final class BtcGridStudy {
         return new MarketContext(d, event, null, null, null, null, null, null, null, null, List.of());
     }
 
-    /** 随机基准：每天以概率 q 允许开新一轮（其余日当作事件日不开），叠加同样的过滤。 */
-    public static Function<LocalDate, MarketContext> randomContext(BtcDailyProperties p, double q, long seed) {
-        Function<LocalDate, MarketContext> base = filterContext(p);
+    /** 随机基准：每天以概率 q 允许开新一轮（与过滤开关无关；过滤开时照样叠加同样的过滤）。 */
+    public static java.util.function.Predicate<LocalDate> randomDays(double q, long seed) {
         Map<LocalDate, Boolean> pick = new LinkedHashMap<>();
         Random rnd = new Random(seed);
-        return d -> {
-            boolean on = pick.computeIfAbsent(d, k -> rnd.nextDouble() < q);
-            return on ? base.apply(d) : withEvent(d, "随机未选中");
-        };
+        return d -> pick.computeIfAbsent(d, k -> rnd.nextDouble() < q);
     }
 
     /** 第 1 档价格（开盘 − k×ATR）被当天最低价触及的天数比例，按强弱分开（与计划同口径）。 */
