@@ -35,7 +35,8 @@ public final class BtcGridStudy {
     public record Run(String name, int rounds, int wins, double realized, double endUnrealized, double total,
                       double maxDd, double maxFloatLoss, long maxHoldDays, int tradeDays, int days, int skipped, int heldDays,
                       double[] roundPnls, Map<String, double[]> cat, Map<Integer, double[]> byYear,
-                      java.util.Set<java.time.YearMonth> winMonths, double[] roundPcts, EqTracker eq) {
+                      java.util.Set<java.time.YearMonth> winMonths, double[] roundPcts, EqTracker eq,
+                      int firstEligibleDays, int firstFilledDays, int lossSells) {
 
         double meanRound() {
             return roundPnls.length == 0 ? 0 : Arrays.stream(roundPnls).average().orElse(0);
@@ -75,7 +76,8 @@ public final class BtcGridStudy {
         Map<Integer, double[]> byYear = new LinkedHashMap<>(); // {轮数, 已实现}
         java.util.Set<java.time.YearMonth> winMonths = new java.util.TreeSet<>();
         String openCat = "";
-        int days = 0, tradeDays = 0, skipped = 0, heldDays = 0;
+        int days = 0, tradeDays = 0, skipped = 0, heldDays = 0, firstEligible = 0, firstFilled = 0, lossSells = 0;
+        boolean eligibleToday = false;
         LocalDate lastBuyDay = null, lastDay = null;
         long maxHold = 0;
         double peak = 0, maxDd = 0, lastClose = 0;
@@ -97,12 +99,20 @@ public final class BtcGridStudy {
                             plan.regime(), plan.hourAtr(), plan.addFloor());
                 }
                 if (plan.skipNew()) skipped++;
+                // 第 1 档当天成交率：开盘时空仓、当天挂了第 1 档的日子里，当天就成交的比例
+                eligibleToday = !book.holding() && plan.levels().stream().anyMatch(l -> l.index() == 0);
+                if (eligibleToday) firstEligible++;
                 if (book.holding()) heldDays++;
                 planCat = category(day, crash, plan.regime());
                 days++;
             }
             for (Fill f : BtcDailyRules.onBar(plan, book, bar, p)) {
+                if (f.side() == Fill.Side.SELL && f.pnl() <= 0) lossSells++;
                 if (f.side() == Fill.Side.BUY) {
+                    if (f.level() == 0 && eligibleToday) {
+                        firstFilled++;
+                        eligibleToday = false;
+                    }
                     if (!day.equals(lastBuyDay)) tradeDays++;
                     lastBuyDay = day;
                     if (f.level() == 0) openCat = planCat;
@@ -138,7 +148,8 @@ public final class BtcGridStudy {
         }
         return new Run(name, book.rounds(), book.wins(), book.realized(), endU, book.realized() + endU, maxDd,
                 book.maxFloatLoss(), maxHold, tradeDays, days, skipped, heldDays,
-                pnls.stream().mapToDouble(Double::doubleValue).toArray(), cat, byYear, winMonths, pcts.stream().mapToDouble(Double::doubleValue).toArray(), eq);
+                pnls.stream().mapToDouble(Double::doubleValue).toArray(), cat, byYear, winMonths, pcts.stream().mapToDouble(Double::doubleValue).toArray(), eq,
+                firstEligible, firstFilled, lossSells);
     }
 
     static String category(LocalDate day, Set<LocalDate> crash, String regime) {
