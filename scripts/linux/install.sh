@@ -53,10 +53,10 @@ ConditionPathExists=!$BIN/disabled.flag
 User=$RUN_USER
 WorkingDirectory=$APP_DIR
 # 内存（2026-10-20 实测：完整 GC 后堆约 23MB，进程常驻约 290MB，大部分是类元数据、编译代码和本机内存）：
-# 堆上限 768MB；小堆用 Serial GC 省去 G1 的额外本机内存；限制元空间和代码缓存；
+# 堆上限 768MB；用 G1 并每 5 分钟空闲时做一次回收、把不用的堆还给系统（实测 Serial GC 会让老年代涨到 130MB+，常驻反而更高）；限制元空间和代码缓存；
 # glibc 内存池限 2 个（线程多时默认会开很多池，常驻内存虚高）；真的内存不足时直接退出，由 systemd 30 秒后重启
 Environment=MALLOC_ARENA_MAX=2
-ExecStart=/usr/bin/java -Xmx768m -XX:+UseSerialGC -XX:MaxMetaspaceSize=192m -XX:ReservedCodeCacheSize=96m -XX:+ExitOnOutOfMemoryError -jar $JAR
+ExecStart=/usr/bin/java -Xmx768m -XX:+UseG1GC -XX:G1PeriodicGCInterval=300000 -XX:MaxMetaspaceSize=192m -XX:ReservedCodeCacheSize=96m -XX:+ExitOnOutOfMemoryError -jar $JAR
 Restart=always
 RestartSec=30
 StandardOutput=append:$APP_DIR/logs/console.log
