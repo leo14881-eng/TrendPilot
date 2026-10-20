@@ -49,6 +49,24 @@ q "SELECT j.started_at, j.data_status,
             (SELECT decision, COUNT(*) n FROM decision_log d WHERE d.generation = j.generation GROUP BY decision)),
         (SELECT COUNT(*) FROM decision_log d WHERE d.generation = j.generation AND d.funded = 1)
    FROM job_run j WHERE j.job = 'DISCOVERY' ORDER BY j.id DESC LIMIT 4;" | sed 's/^/  /'
+# 只读的资金诊断：批准了但没买（BUDGET_WAIT）时，看预算占用和风控状态
+echo "--- 最近 2 轮批准的买入/加仓（generation symbol action funded score reasons）"
+q "SELECT generation, symbol, action, funded, ROUND(score,1), reasons FROM decision_log
+   WHERE decision = 'BUY' AND generation IN (SELECT DISTINCT generation FROM decision_log ORDER BY id DESC LIMIT 2)
+   ORDER BY id DESC LIMIT 30;" | sed 's/^/  /'
+echo "--- V2 资金（持仓数 占用成本 浮动盈亏 已实现盈亏 24小时亏损卖出笔数）"
+echo "  $(q "SELECT (SELECT COUNT(*) FROM position), (SELECT ROUND(IFNULL(SUM(CAST(cost_basis AS REAL)),0),2) FROM position),
+        (SELECT ROUND(IFNULL(SUM(CAST(mark_net AS REAL)),0),2) FROM position),
+        (SELECT ROUND(IFNULL(SUM(CAST(pnl_usdt AS REAL)),0),2) FROM shadow_event WHERE book='V2' AND type='SELL' AND pnl_usdt IS NOT NULL),
+        (SELECT COUNT(*) FROM shadow_event WHERE book='V2' AND type='SELL' AND CAST(pnl_usdt AS REAL) < 0
+            AND created_at >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));")"
+echo "  额度参考：硬顶 20000 × 行情比例（RISK_OFF 0.60 / NEUTRAL 0.75 / CONSTRUCTIVE 0.85 / STRONG 0.95）× 恢复系数（正常 1，减半 0.5）− 占用成本 + 亏损部分"
+echo "  V2 各持仓（symbol tranches 成本 浮动净值）：$(q "SELECT GROUP_CONCAT(symbol || ':' || tranches || ':' || ROUND(CAST(cost_basis AS REAL),0) || ':' || ROUND(CAST(mark_net AS REAL),1), '  ') FROM position;")"
+echo "--- 风控状态（app_state）"
+q "SELECT key, substr(value,1,80) FROM app_state WHERE key LIKE '%regime%' OR key LIKE '%recover%' OR key LIKE '%streak%'
+   OR key LIKE '%freeze%' OR key LIKE '%shock%' OR key LIKE '%crash%' ORDER BY key LIMIT 15;" | sed 's/^/  /'
+echo "--- 日志里最近的冻结/减半/恢复/预算"
+grep -E 'LOSS_FREEZE|LOSS_HALF|RISK_RECOVERY|冻结|减半|预算|BUDGET' "$APP_DIR/logs/trendpilot.log" 2>/dev/null | tail -n 6 | cut -c1-220
 echo "--- 运行权（租约）"
 grep -E '接管|待命|租约' "$APP_DIR/logs/trendpilot.log" 2>/dev/null | tail -n 5 | cut -c1-220
 echo "--- trendpilot.log 最近警告"
