@@ -42,7 +42,11 @@ function Write-Log($msg) {
 }
 
 function Read-Text($path) {
-    if (Test-Path $path) { return ([string](Get-Content $path -Raw)).Trim() }
+    if (Test-Path $path) {
+        $raw = Get-Content $path -Raw   # 空文件时是 $null
+        if ($null -eq $raw) { return '' }
+        return ([string]$raw).Trim()
+    }
     return ''
 }
 
@@ -220,7 +224,9 @@ function Invoke-ServerTool($exe, $argLine, $stdinText) {
         [IO.File]::WriteAllText($tmpIn, $stdinText + "`n", (New-Object Text.UTF8Encoding $false))
         $p.RedirectStandardInput = $tmpIn
     }
-    $proc = Start-Process @p
+    $proc = $null
+    try { $proc = Start-Process @p } catch { Write-ServerLog "无法启动 ${exe}：$($_.Exception.Message)" }
+    if ($null -eq $proc) { Remove-Item $tmpIn, $tmpOut, $tmpErr -ErrorAction SilentlyContinue; return -1 }
     $null = $proc.Handle   # Windows PowerShell 5.1：不先取 Handle，进程退出后 ExitCode 读出来是空的
     if (-not $proc.WaitForExit(50 * 60 * 1000)) { try { $proc.Kill() } catch { }; Write-ServerLog '超过 50 分钟，已中止' }
     foreach ($f in $tmpOut, $tmpErr) {
@@ -230,6 +236,7 @@ function Invoke-ServerTool($exe, $argLine, $stdinText) {
         }
     }
     Remove-Item $tmpIn, $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+    if ($null -eq $proc.ExitCode) { return -1 }
     return $proc.ExitCode
 }
 
@@ -237,8 +244,9 @@ function Invoke-ServerRequest {
     $ErrorActionPreference = 'Continue'
     $request = Join-Path $Bin 'server.request'
     if (-not (Test-Path $request)) { return }
-    $action = (Read-Text $request).ToLower()
+    $action = ([string](Read-Text $request)).ToLower()
     Remove-Item $request -Force -ErrorAction SilentlyContinue
+    if (-not $action) { Write-ServerLog '请求文件为空，已忽略'; return }
     if (-not $ServerScripts.ContainsKey($action)) { Write-ServerLog "未知动作：$action"; return }
     $ip = Read-Text (Join-Path $Bin 'server-ip.txt')
     if ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { Write-ServerLog "服务器 IP 无效：$ip"; return }
