@@ -99,9 +99,29 @@ OnUnitInactiveSec=3min
 [Install]
 WantedBy=timers.target
 EOF
+    cat > /etc/systemd/system/trendpilot-status.service <<EOF
+[Unit]
+Description=Push TrendPilot status summary to GitHub branch server-status
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash $APP_DIR/scripts/linux/status-push.sh
+TimeoutStartSec=300
+EOF
+    cat > /etc/systemd/system/trendpilot-status.timer <<EOF
+[Unit]
+Description=Push TrendPilot status summary every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=5min
+
+[Install]
+WantedBy=timers.target
+EOF
     systemctl daemon-reload
-    systemctl enable trendpilot.service trendpilot-update.timer >/dev/null 2>&1
-    systemctl start trendpilot-update.timer
+    systemctl enable trendpilot.service trendpilot-update.timer trendpilot-status.timer >/dev/null 2>&1
+    systemctl start trendpilot-update.timer trendpilot-status.timer
 }
 
 case "${1:-}" in

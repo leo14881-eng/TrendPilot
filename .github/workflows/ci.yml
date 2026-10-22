@@ -5,7 +5,8 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    # 服务器状态摘要分支每 5 分钟推送一次，不需要跑测试
+    branches-ignore: ['server-status']
   pull_request:
 
 permissions:
