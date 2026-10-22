@@ -23,7 +23,10 @@ since_1h=$(date -d '-1 hour' '+%Y-%m-%dT%H')
 
 book() {
     local name=$1 table=$2
-    echo "| $name | $(num "$(q "SELECT COUNT(*) FROM $table;")") | $(num "$(q "SELECT COUNT(*) FROM shadow_event WHERE book='$name' AND type='BUY' AND created_at >= '$day_start';")") | $(num "$(q "SELECT COUNT(*) FROM shadow_event WHERE book='$name' AND type='SELL' AND created_at >= '$day_start';")") | $(num "$(q "SELECT ROUND(IFNULL(SUM(CAST(pnl_usdt AS REAL)),0),2) FROM shadow_event WHERE book='$name' AND type='SELL' AND pnl_usdt IS NOT NULL;")") |"
+    local realized unreal
+    realized=$(num "$(q "SELECT ROUND(IFNULL(SUM(CAST(pnl_usdt AS REAL)),0),2) FROM shadow_event WHERE book='$name' AND type='SELL' AND pnl_usdt IS NOT NULL;")")
+    unreal=$(num "$(q "SELECT ROUND(IFNULL(SUM(CAST(mark_net AS REAL)),0),2) FROM $table;")")
+    echo "| $name | $(num "$(q "SELECT COUNT(*) FROM $table;")") | $(num "$(q "SELECT COUNT(*) FROM shadow_event WHERE book='$name' AND type='BUY' AND created_at >= '$day_start';")") | $(num "$(q "SELECT COUNT(*) FROM shadow_event WHERE book='$name' AND type='SELL' AND created_at >= '$day_start';")") | $realized | $unreal | $(awk -v a="$realized" -v b="$unreal" 'BEGIN{if (a=="?"||b=="?") print "?"; else printf "%.2f", a+b}') |"
 }
 
 plan=$(q "SELECT day, ROUND(open,2), skip_new, multiplier FROM btc_daily_plan ORDER BY day DESC LIMIT 1;")
@@ -40,15 +43,15 @@ summary() {
     echo "- 内存：$(free -m | awk 'NR==2{print $3"M / "$2"M"}')，硬盘：$(df -h / | awk 'NR==2{print $3" / "$2" ("$5")"}')"
     echo "- 最近 1 小时 WARN/ERROR 条数：$(num "$errors")"
     echo
-    echo "| 账本 | 持仓 | 今天开仓 | 今天平仓 | 累计已实现 U |"
-    echo "|---|---:|---:|---:|---:|"
+    echo "| 账本 | 持仓 | 今天开仓 | 今天平仓 | 累计已实现 U | 未实现 U | 合计 U |"
+    echo "|---|---:|---:|---:|---:|---:|---:|"
     book V2 position
     book V2D15 v2d_position
     book V1 v1_position
     book V3 v3_position
     echo
     echo "- BTC 短线计划（日期 开盘 不开新一轮 金额倍数）：$plan；第 1 档挂单价：$level0"
-    echo "- BTC 短线持仓数量（BTC）：$(num "$(q "SELECT qty FROM btc_daily_state WHERE id = 1;")")，累计已实现 U：$(num "$(q "SELECT ROUND(realized,2) FROM btc_daily_state WHERE id = 1;")")，今天成交笔数：$(num "$(q "SELECT COUNT(*) FROM btc_daily_trade WHERE voided = 0 AND created_at >= '$day_start';")")"
+    echo "- BTC 短线持仓数量（BTC）：$(num "$(q "SELECT qty FROM btc_daily_state WHERE id = 1;")")，成本 U：$(num "$(q "SELECT ROUND(cost,2) FROM btc_daily_state WHERE id = 1;")")，未实现 U：$(num "$(q "SELECT ROUND(s.qty * (SELECT close FROM kline_15m WHERE venue='BINANCE' AND symbol='BTCUSDT' ORDER BY open_time DESC LIMIT 1) - s.cost, 2) FROM btc_daily_state s WHERE s.id = 1;")")，累计已实现 U：$(num "$(q "SELECT ROUND(realized,2) FROM btc_daily_state WHERE id = 1;")")，今天成交笔数：$(num "$(q "SELECT COUNT(*) FROM btc_daily_trade WHERE voided = 0 AND created_at >= '$day_start';")")"
     echo "- 今天（UTC 日）BTCUSDT 最低 / 最高：$(q "SELECT MIN(low), MAX(high) FROM kline_15m WHERE venue='BINANCE' AND symbol='BTCUSDT' AND open_time >= $utc_start_ms;")"
     echo "- 最近一轮扫描（时间 数据状态 批准 实际买入）：$(q "SELECT j.started_at, j.data_status,
         (SELECT COUNT(*) FROM decision_log d WHERE d.generation = j.generation AND d.decision = 'BUY'),
