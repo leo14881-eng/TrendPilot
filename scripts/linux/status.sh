@@ -67,6 +67,8 @@ q "SELECT key, substr(value,1,80) FROM app_state WHERE key LIKE '%regime%' OR ke
    OR key LIKE '%freeze%' OR key LIKE '%shock%' OR key LIKE '%crash%' ORDER BY key LIMIT 15;" | sed 's/^/  /'
 echo "--- 日志里最近的冻结/减半/恢复/预算"
 grep -E 'LOSS_FREEZE|LOSS_HALF|RISK_RECOVERY|冻结|减半|预算|BUDGET' "$APP_DIR/logs/trendpilot.log" 2>/dev/null | tail -n 6 | cut -c1-220
+echo "--- 状态推送公钥（加到 GitHub 仓库 Deploy keys，允许写入）"
+cat "$APP_DIR/ssh/status_ed25519.pub" 2>/dev/null || echo "  还没有生成"
 echo "--- 运行权（租约）"
 grep -E '接管|待命|租约' "$APP_DIR/logs/trendpilot.log" 2>/dev/null | tail -n 5 | cut -c1-220
 echo "--- trendpilot.log 最近警告"

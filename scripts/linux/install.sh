@@ -39,7 +39,21 @@ check_network() {
     return $fail
 }
 
+# 服务器状态推送用的 GitHub deploy key：只在服务器上生成，私钥不离开服务器；公钥由状态报告显示，
+# 用户加到 TrendPilot 仓库的 Deploy keys（允许写入）后，状态推送才会生效（用户 2026-10-22 同意）
+ensure_status_key() {
+    local dir="$APP_DIR/ssh"
+    mkdir -p "$dir"
+    if [ ! -f "$dir/status_ed25519" ]; then
+        ssh-keygen -q -t ed25519 -N "" -C "trendpilot-server-status" -f "$dir/status_ed25519"
+    fi
+    chown -R "$RUN_USER:$RUN_USER" "$dir"
+    chmod 700 "$dir"
+    chmod 600 "$dir/status_ed25519"
+}
+
 write_units() {
+    ensure_status_key
     cat > /etc/systemd/system/trendpilot.service <<EOF
 [Unit]
 Description=TrendPilot shadow trading service
