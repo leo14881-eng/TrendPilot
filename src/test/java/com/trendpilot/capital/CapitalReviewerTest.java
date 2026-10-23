@@ -88,6 +88,27 @@ class CapitalReviewerTest {
     }
 
     @Test
+    void strongVariantTradeSizeIsFilledOnTheSameBookAndSkippedWhenBookIsTooThin() {
+        double rel = strong.rel1h();
+        // 正常盘口：按 2,000U 重新算成交，不是 1,000U 的成交乘 2
+        ReviewInput in = input(goodBook, okRisk, ticker, null, null, null, true);
+        ReviewResult v2 = reviewer.review(in);
+        ReviewResult v5 = reviewer.review(in, 30_000, rel, 2000);
+        assertThat(v5.decision()).isEqualTo(Decision.BUY);
+        assertThat(v2.fill().notional().doubleValue()).isCloseTo(1000, org.assertj.core.data.Offset.offset(1e-6));
+        assertThat(v5.fill().notional().doubleValue()).isCloseTo(2000, org.assertj.core.data.Offset.offset(1e-6));
+        assertThat(v5.fill().complete()).isTrue();
+        // 盘口只有约 1,450U：1,000U 能成交，2,000U 吃不下 → V5 不买
+        OrderBook thin = TestData.book("ABCUSDT", 104, 2, 0.7, now);
+        ReviewInput thinIn = input(thin, okRisk, ticker, null, null, null, true);
+        assertThat(reviewer.review(thinIn, 500, rel, 1000).decision()).isEqualTo(Decision.BUY);
+        ReviewResult big = reviewer.review(thinIn, 500, rel, 2000);
+        assertThat(big.decision()).isEqualTo(Decision.REJECT);
+        assertThat(big.fill().complete()).isFalse();
+        assertThat(big.reasons()).anyMatch(x -> x.startsWith("SLIPPAGE_GT_"));
+    }
+
+    @Test
     void incompleteScanIsSystemBlocked() {
         ReviewResult r = reviewer.review(input(goodBook, okRisk, ticker, null, null, null, false));
         assertThat(r.decision()).isEqualTo(Decision.SYSTEM_BLOCKED);

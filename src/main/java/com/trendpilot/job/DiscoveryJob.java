@@ -356,7 +356,7 @@ public class DiscoveryJob {
                 // 正常深度门槛，另加新开仓 1h 相对 BTC 门槛重新审核；出错只记日志，不影响 V2
                 try {
                     var sb = strongVariant.book();
-                    if (sb.position(s.symbol()).isEmpty()) {
+                    if (sb.position(s.symbol()).isEmpty() && strongVariant.tradeUsdt() > 0) {
                         Instant sExit = sb.lastExit(s.symbol()).orElse(null);
                         int sEarly = sExit == null ? 0 : book.earlyObservationsSince(s.symbol(), sExit);
                         boolean sHit = sExit == null || !EarlySignalCalculator
@@ -364,7 +364,7 @@ public class DiscoveryJob {
                         strong.add(reviewer.review(new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
                                 books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), null,
                                 sExit, researched.get(s.symbol()), sEarly, sHit),
-                                params.review().minDepthUsdt(), strongVariant.minRel1h()));
+                                params.review().minDepthUsdt(), strongVariant.minRel1h(), strongVariant.tradeUsdt()));
                     }
                 } catch (RuntimeException e) {
                     log.warn("V5 {} 本轮审核出错，跳过：{}", s.symbol(), e.toString());

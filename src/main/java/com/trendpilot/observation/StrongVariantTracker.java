@@ -31,7 +31,7 @@ import com.trendpilot.universe.UniverseFilter;
  * 强信号对照（V5，2026-10-23 用户决定）：V2 保持原买入规则作为基准，强信号买入规则（1h 相对 BTC ≥ 5.855%）单独记一本影子账，同期对比半个月（约 11-07 评估）。
  * <ul>
  * <li>进入：每个候选独立判断（不只看 V2 的拒绝），V5 没有这个币时，用正常审核规则、正常深度门槛，另加新开仓 rel1h 门槛重新审核为 BUY，
- *     按审核时取到的真实盘口模拟买入（含滑点和手续费），每笔 1,000U。</li>
+ *     按审核时取到的真实盘口模拟买入（含滑点和手续费），每笔 trendpilot.variants.strong-trade-usdt（2,000U，按这个金额在同一盘口上重新模拟成交，盘口不够就不买）。</li>
  * <li>退出：与 V2 相同的退出规则和山寨止损，卖出按真实全数量盘口模拟成交（含滑点）。不加仓、不占 V2 资金、不发 Telegram。</li>
  * </ul>
  */
@@ -45,17 +45,25 @@ public class StrongVariantTracker {
     private final EarlySignalCalculator signals;
     private final ExitPolicy exitPolicy;
     private final double minRel1h;
+    private final double tradeUsdt;
     private final com.trendpilot.monitor.LossGuard guard;
 
     public StrongVariantTracker(StrongVariantBook book, Markets markets, EarlySignalCalculator signals,
                                ExitPolicy exitPolicy, com.trendpilot.monitor.LossGuard guard,
-                               @Value("${trendpilot.variants.strong-min-rel1h:5.855}") double minRel1h) {
+                               @Value("${trendpilot.variants.strong-min-rel1h:5.855}") double minRel1h,
+                               @Value("${trendpilot.variants.strong-trade-usdt:2000}") double tradeUsdt) {
+        this.tradeUsdt = tradeUsdt;
         this.guard = guard;
         this.book = book;
         this.markets = markets;
         this.signals = signals;
         this.exitPolicy = exitPolicy;
         this.minRel1h = minRel1h;
+    }
+
+    /** V5 每笔模拟买入金额（U），只作用于 V5（用户 2026-10-23 要求 2,000U）。 */
+    public double tradeUsdt() {
+        return tradeUsdt;
     }
 
     /** 新开仓要求的 1h 相对 BTC 收益（%）。 */

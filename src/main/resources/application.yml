@@ -31,6 +31,7 @@ server:
 trendpilot:
   variants:
     depth-min-usdt: 15000   # 深度门槛对照账本 V2D15 用的放宽深度（只做影子对比，不影响 V2）
+    strong-trade-usdt: 2000 # V5 每笔金额（U），只作用于 V5；V2 / V2D15 / V1 仍用 capital.trade-size（用户 2026-10-23 要求）
     strong-min-rel1h: 5.855 # 强信号对照账本 V5：新开仓要求 1h 相对 BTC 收益至少这么多（%），只做影子对比，不影响 V2（2026-10-23 起，约 11-07 评估）
   zone: Asia/Ho_Chi_Minh
   telegram:

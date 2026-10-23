@@ -40,6 +40,14 @@ public class CapitalReviewer {
      * rel1h 缺失（NaN）时视为不满足，不买入。
      */
     public ReviewResult review(ReviewInput in, double minDepthUsdt, double minBuyRel1h) {
+        return review(in, minDepthUsdt, minBuyRel1h, params.capital().tradeSize());
+    }
+
+    /**
+     * tradeUsdt：本笔模拟买入金额（V5 用自己的每笔金额，在同一个真实盘口上重新算成交、滑点和手续费）。
+     * 盘口覆盖不了这个金额时成交不完整，按滑点规则拒绝，不买入。
+     */
+    public ReviewResult review(ReviewInput in, double minDepthUsdt, double minBuyRel1h, double tradeUsdt) {
         StrategyParams.Review r = params.review();
         EarlySignal s = in.signal();
         Action action = in.position() == null ? Action.BUY : Action.ADD;
@@ -58,7 +66,7 @@ public class CapitalReviewer {
         double spread = in.book().spreadBps();
         double bidDepth = in.book().bidDepthWithin(r.depthBandPct());
         double askDepth = in.book().askDepthWithin(r.depthBandPct());
-        Fill fill = ExecutionSimulator.buy(in.book(), BigDecimal.valueOf(params.capital().tradeSize()), params.feeRate());
+        Fill fill = ExecutionSimulator.buy(in.book(), BigDecimal.valueOf(tradeUsdt), params.feeRate());
 
         // 2. 硬性拒绝
         List<String> reject = new ArrayList<>();

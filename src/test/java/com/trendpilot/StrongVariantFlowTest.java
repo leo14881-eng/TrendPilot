@@ -31,7 +31,7 @@ import com.trendpilot.support.FakeMarket;
 import com.trendpilot.support.TestData;
 
 /**
- * 强信号对照账本 V5：门槛压到测试信号（1h 相对 BTC 约 3%）以下，验证 V5 独立开仓、不加仓、按相同规则退出，
+ * 强信号对照账本 V5：门槛压到测试信号（1h 相对 BTC 约 3%）以下，验证 V5 按自己的每笔金额独立开仓、不加仓、按相同规则退出，
  * 且不动 V2 的持仓和资金。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -46,6 +46,7 @@ class StrongVariantFlowTest {
         r.add("trendpilot.telegram.bot-token", () -> "");
         r.add("trendpilot.telegram.chat-id", () -> "");
         r.add("trendpilot.variants.strong-min-rel1h", () -> "1.0");
+        r.add("trendpilot.variants.strong-trade-usdt", () -> "2000");
     }
 
     @TestConfiguration
@@ -100,12 +101,13 @@ class StrongVariantFlowTest {
 
         DiscoveryJob.Report d = discovery.runOnce(t0);
         assertThat(d.entries()).containsExactly("BUY:ABCUSDT");
-        // V5 自己开一笔 1,000U，与 V2 同一个审核盘口成交
+        // V5 自己开一笔 2,000U（同一个审核盘口按 2,000U 重新算成交），V2 仍是 1,000U
         Position p5 = v5.position("ABCUSDT").orElseThrow();
         Position p2 = v2.position("ABCUSDT").orElseThrow();
         assertThat(p5.tranches()).isEqualTo(1);
-        assertThat(p5.qty()).isEqualByComparingTo(p2.qty());
-        assertThat(p5.costBasis()).isEqualByComparingTo(p2.costBasis());
+        assertThat(p5.costBasis().doubleValue()).isBetween(2000.0, 2010.0);
+        assertThat(p2.costBasis().doubleValue()).isBetween(1000.0, 1005.0);
+        assertThat(p5.qty().doubleValue()).isGreaterThan(p2.qty().doubleValue() * 1.9);
         // V2 资金只算 V2 自己的一笔
         assertThat(v2.positions()).hasSize(1);
         assertThat(v2.deployedCost()).isCloseTo(p2.costBasis().doubleValue(), org.assertj.core.data.Offset.offset(1e-6));
@@ -137,6 +139,6 @@ class StrongVariantFlowTest {
         assertThat(v5.realizedPnl()).isPositive();
         assertThat(jdbc.sql("SELECT reason_code FROM shadow_event WHERE book = 'V5' AND type = 'SELL'")
                 .query(String.class).single()).isEqualTo("PROFIT_PROTECTION");
-        assertThat(v5.realizedPnl()).isCloseTo(v2.realizedPnl(), org.assertj.core.data.Offset.offset(1e-6));
+        assertThat(v5.realizedPnl()).isGreaterThan(v2.realizedPnl());
     }
 }
