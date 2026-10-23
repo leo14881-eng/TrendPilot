@@ -45,7 +45,7 @@ logging:
 
 # 策略参数（人工修改后请同时修改 version）
 trendpilot.strategy:
-  version: v3.4-2026-10-17-altstop
+  version: v3.5-2026-10-23-strong1h
   fee-rate: 0.001                 # 单边手续费 0.1%
   universe:
     quote-asset: USDT
@@ -83,7 +83,7 @@ trendpilot.strategy:
     max-upside-pct: 15
     reentry-cooldown-minutes: 60
     reentry-min-early-observations: 2   # 卖出后至少 2 个独立 generation 重新出现 EARLY，才允许再买
-    min-buy-rel1h: 0              # 新开仓要求 1h 相对 BTC 收益至少这么多（%）；0 = 不用。研究候选 5.855，见 docs/策略对比记录/2026-10-23-V2买入端.md
+    min-buy-rel1h: 5.855          # 新开仓要求 1h 相对 BTC 收益至少这么多（%）；0 = 不用。用户 2026-10-23 要求立即上线测试半个月（见 docs/策略对比记录/2026-10-23-V2买入端.md）；回滚：改回 0
   capital:
     hard-cap: 20000
     normal-pool: 17000
