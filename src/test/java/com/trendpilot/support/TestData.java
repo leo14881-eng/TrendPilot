@@ -48,6 +48,9 @@ public final class TestData {
     public static StrategyParams params() {
         try {
             var env = new StandardEnvironment();
+            // 单元测试按"不设强信号门槛"测其他审核逻辑；门槛本身由 minBuyRel1hRejectsWeakNewBuysOnlyWhenEnabled 单独测
+            env.getPropertySources().addFirst(new org.springframework.core.env.MapPropertySource("tests",
+                    java.util.Map.of("trendpilot.strategy.review.min-buy-rel1h", 0)));
             new YamlPropertySourceLoader().load("app", new ClassPathResource("application.yml"))
                     .forEach(ps -> env.getPropertySources().addLast(ps));
             return Binder.get(env).bind("trendpilot.strategy", StrategyParams.class).get();
