@@ -66,6 +66,14 @@ public final class B0Sim extends Sim {
         return this;
     }
 
+    /** 只在这些行情状态下开新仓（加仓不受限）；null = 不限（盈亏不对称研究，2026-10-23）。 */
+    private java.util.Set<com.trendpilot.risk.Regime> buyRegimes;
+
+    B0Sim buyOnlyIn(java.util.Set<com.trendpilot.risk.Regime> regimes) {
+        this.buyRegimes = regimes;
+        return this;
+    }
+
     /** 防洗盘止损研究（StopStudy）：叠加在现行退出规则之上的止损；null = 不止损。 */
     private StopRule stopRule;
     /** 每个持仓买入时算好的止损距离（比例）。 */
@@ -310,7 +318,7 @@ public final class B0Sim extends Sim {
             ReviewInput in = new ReviewInput(gen, Instant.ofEpochMilli(data.time(q)), now, true, s, t, book, risk,
                     seen == null ? null : BigDecimal.valueOf(seen[0]), pos, lastExit, verified(sym), earlySince, postExitHit);
             ReviewResult r = reviewer.review(in);
-            if (r.approved()) approved.add(r);
+            if (r.approved() && (buyRegimes == null || r.action() != Action.BUY || buyRegimes.contains(risk.regime()))) approved.add(r);
         }
         double unrealized = markNet.values().stream().mapToDouble(Double::doubleValue).sum();
         double deployed = positions.values().stream().mapToDouble(p -> p.costBasis().doubleValue()).sum();
