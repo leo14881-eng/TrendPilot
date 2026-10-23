@@ -57,6 +57,13 @@ summary() {
         (SELECT COUNT(*) FROM decision_log d WHERE d.generation = j.generation AND d.decision = 'BUY'),
         (SELECT COUNT(*) FROM decision_log d WHERE d.generation = j.generation AND d.funded = 1)
         FROM job_run j WHERE j.job = 'DISCOVERY' ORDER BY j.id DESC LIMIT 1;")"
+    echo
+    echo "## BTC 均线趋势（单独账本，影子）"
+    echo
+    echo "- 各份（均线 状态 USDT BTC 最近信号日）：$(q "SELECT GROUP_CONCAT('SMA' || sma || ' ' || state || ' ' || ROUND(usdt,2) || ' ' || ROUND(btc,6) || ' ' || IFNULL(last_signal_day,'-'), '；') FROM btc_trend_slot;")"
+    echo "- 总价值 U（按最新价）：$(q "SELECT ROUND(SUM(CASE WHEN state = 'BTC' THEN btc * (SELECT CAST(value AS REAL) FROM btc_trend_meta WHERE key = 'last_price') ELSE usdt END), 2) FROM btc_trend_slot;")"
+    echo "- 信号日 / 收盘 / SMA75 / SMA100 / SMA125 / SMA150：$(q "SELECT GROUP_CONCAT(value, ' / ') FROM (SELECT value FROM btc_trend_meta WHERE key IN ('signal_day','signal_close','sma75','sma100','sma125','sma150') ORDER BY CASE key WHEN 'signal_day' THEN 0 WHEN 'signal_close' THEN 1 WHEN 'sma75' THEN 2 WHEN 'sma100' THEN 3 WHEN 'sma125' THEN 4 ELSE 5 END);")"
+    echo "- 影子成交笔数：$(num "$(q "SELECT COUNT(*) FROM btc_trend_trade;")")"
 }
 
 as_user() { sudo -u "$RUN_USER" -H env GIT_SSH_COMMAND="ssh -i $KEY -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$APP_DIR/ssh/known_hosts" "$@"; }

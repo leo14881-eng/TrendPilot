@@ -53,6 +53,7 @@ public class TelegramCommands {
             new Cmd("holdings", "当前持仓、当天盈亏和资金情况"),
             new Cmd("v2", "同 /holdings"),
             new Cmd("status", "运行状态：版本、运行机器、最近一次持仓检查、各账本持仓数"),
+            new Cmd("trend", "BTC 均线趋势（4 条均线 × 4 份，单独账本）：各份状态、均线和买卖线、总价值"),
             new Cmd("help", "指令列表"));
 
     static final String HELP = "可用指令：\n" + String.join("\n",
@@ -66,6 +67,8 @@ public class TelegramCommands {
     private final StatusText status;
     private final ObjectProvider<ActiveLease> lease;
     private final boolean enabled;
+    /** BTC 均线趋势是单独的程序：只通过 /trend 查看，不并入 /holdings 和 /status。 */
+    private ObjectProvider<com.trendpilot.btctrend.BtcTrendService> trend;
     private RestClient http;
     /** 下一条要读的消息编号；内存里为准，数据库只做重启后的恢复（写失败不影响读指令）。 */
     private Long offset;
@@ -87,6 +90,11 @@ public class TelegramCommands {
         this.enabled = enabled && scheduling && props.configured();
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTrend(ObjectProvider<com.trendpilot.btctrend.BtcTrendService> trend) {
+        this.trend = trend;
+    }
+
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
         if (!enabled) return;
@@ -95,7 +103,7 @@ public class TelegramCommands {
         Thread t = new Thread(this::loop, "telegram-commands");
         t.setDaemon(true);
         t.start();
-        log.info("Telegram 指令已开启（/holdings、/status、/help）");
+        log.info("Telegram 指令已开启（/holdings、/status、/trend、/help）");
     }
 
     private void loop() {
@@ -220,12 +228,22 @@ public class TelegramCommands {
         }
     }
 
+    String trendText() {
+        try {
+            var t = trend == null ? null : trend.getIfAvailable();
+            return t == null ? "BTC 均线趋势暂时取不到。" : t.text(false, java.util.List.of());
+        } catch (RuntimeException e) {
+            return "BTC 均线趋势暂时取不到。";
+        }
+    }
+
     private void answer(long id, String raw, Instant now) {
         String text = raw.trim().toLowerCase(Locale.ROOT);
         String cmd = text.split("[\\s@]", 2)[0];
         switch (cmd) {
             case "/holdings", "/v2", "v2" -> notifier.send("cmd:" + id, report.telegramText(now));
             case "/status" -> notifier.send("cmd:" + id, status.text(now));
+            case "/trend" -> notifier.send("cmd:" + id, trendText());
             case "/help", "/start" -> notifier.send("cmd:" + id, HELP);
             default -> {
                 if (cmd.startsWith("/")) notifier.send("cmd:" + id, "不认识的指令。" + HELP);

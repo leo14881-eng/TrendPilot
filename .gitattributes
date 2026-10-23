@@ -1,0 +1,3 @@
+# 回测参考数据和对账基准：固定 LF，Windows 检出也不变
+*.csv text eol=lf
+*.py text eol=lf

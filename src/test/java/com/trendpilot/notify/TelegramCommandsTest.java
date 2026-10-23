@@ -143,11 +143,11 @@ class TelegramCommandsTest {
             assertThat(c.description()).isNotBlank().hasSizeLessThanOrEqualTo(256);
         }
         assertThat(TelegramCommands.MENU).extracting(TelegramCommands.Cmd::name)
-                .containsExactly("holdings", "v2", "status", "help");
+                .containsExactly("holdings", "v2", "status", "trend", "help");
         @SuppressWarnings("unchecked")
         java.util.List<java.util.Map<String, String>> cmds =
                 (java.util.List<java.util.Map<String, String>>) TelegramCommands.menuRequest().get("commands");
-        assertThat(cmds).hasSize(4);
+        assertThat(cmds).hasSize(5);
         assertThat(cmds.get(0)).containsEntry("command", "holdings").containsEntry("description", "当前持仓、当天盈亏和资金情况");
     }
 

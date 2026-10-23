@@ -12,6 +12,8 @@ trendpilot:
     enabled: false
   btc-daily:
     enabled: false
+  btc-trend:
+    enabled: false
 
 logging:
   file:
