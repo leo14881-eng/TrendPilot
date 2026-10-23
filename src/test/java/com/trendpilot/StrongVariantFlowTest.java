@@ -72,6 +72,7 @@ class StrongVariantFlowTest {
     @Autowired JdbcClient jdbc;
     @Autowired Markets markets;
     @Autowired ResearchService research;
+    @Autowired com.trendpilot.report.HoldingsReport holdings;
 
     @BeforeEach
     void reset() {
@@ -116,6 +117,15 @@ class StrongVariantFlowTest {
         // 不发 Telegram 买入消息：只有 V2 的一条 entry
         assertThat(jdbc.sql("SELECT COUNT(*) FROM notification_outbox WHERE event_key LIKE 'entry:%'")
                 .query(Integer.class).single()).isEqualTo(1);
+
+        // V2 日报：正文只有 V5 概览和对比一行，持仓明细只在 .md 版
+        String md = holdings.markdown(t0.plusSeconds(60));
+        String v5md = md.substring(md.indexOf("## 五、V5"), md.indexOf("## 六、BTC"));
+        assertThat(v5md).contains("持仓 1 个", "当天买入 1 笔", "对比（同口径，V5 / V2）", "| ABC | BINANCE |")
+                .doesNotContain("V5 暂无持仓");
+        String tg = holdings.telegramText(t0.plusSeconds(60));
+        String v5tg = tg.substring(tg.indexOf("【五、V5"), tg.indexOf("【六、BTC"));
+        assertThat(v5tg).contains("持仓 1 个", "对比（同口径，V5 / V2）").doesNotContain("ABC · BINANCE");
 
         // 再跑一轮：V5 不加仓
         discovery.runOnce(t0);

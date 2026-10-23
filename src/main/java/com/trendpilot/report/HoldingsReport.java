@@ -53,11 +53,20 @@ public class HoldingsReport {
     private final Path dir;
     private final com.trendpilot.notify.Notifier notifier;
     private final com.trendpilot.portfolio.TrendBook v3;
+    private final com.trendpilot.portfolio.StrongVariantBook v5;
+    private final double v5TradeUsdt;
+    private final double v5MinRel1h;
 
     public HoldingsReport(ShadowBook v2, ObservationBook v1, BtcDailyService btc, StrategyParams params, AppState state,
                           JdbcClient jdbc, @Value("${trendpilot.zone}") String zone,
                           @Value("${trendpilot.data-dir:./data}") String dataDir,
-                          com.trendpilot.notify.Notifier notifier, com.trendpilot.portfolio.TrendBook v3) {
+                          com.trendpilot.notify.Notifier notifier, com.trendpilot.portfolio.TrendBook v3,
+                          com.trendpilot.portfolio.StrongVariantBook v5,
+                          @Value("${trendpilot.variants.strong-trade-usdt:2000}") double v5TradeUsdt,
+                          @Value("${trendpilot.variants.strong-min-rel1h:5.855}") double v5MinRel1h) {
+        this.v5 = v5;
+        this.v5TradeUsdt = v5TradeUsdt;
+        this.v5MinRel1h = v5MinRel1h;
         this.notifier = notifier;
         this.v3 = v3;
         this.v2 = v2;
@@ -177,8 +186,8 @@ public class HoldingsReport {
                 wins, signed(realized)));
         out.add(String.format(Locale.ROOT, "- 持仓 %d 个，成本 %s U，浮动 %s U（%s），%d 个浮亏、%d 个浮盈", rows.size(), money(cost),
                 signed(net), pct(cost == 0 ? 0 : net / cost * 100), losers, rows.size() - losers));
-        out.add("- 说明：现行规则不止损，只有赚钱或利润保护时才卖，亏损仓一直拿着，所以平仓几乎全是盈利，"
-                + "单看已实现会偏乐观；判断好坏请看合计。");
+        out.add("- 说明：卖出规则有利润保护、上涨逻辑失效（有净利才卖）、8% 复核、3 天没赚钱反弹离场、"
+                + "山寨止损（日线波动 ×1.5，可能亏损卖出）；判断好坏请看合计（已实现 + 浮动）。");
         out.add("");
 
         // ---------- 二、持仓明细 ----------
@@ -235,8 +244,15 @@ public class HoldingsReport {
                 deductions < 0 ? String.format(Locale.ROOT, "（已扣累计亏损和浮亏 %s U）", signed(deductions)) : ""));
         out.add("- 风控：" + riskLine());
         out.add("");
+        // ---------- V5 强信号对照 ----------
+        try {
+            v5Section(out, dayStart, dayEnd, now, v1Detail, realized, net);
+        } catch (RuntimeException e) {
+            out.add("V5 暂时读不到：" + e.getMessage());
+            out.add("");
+        }
         // ---------- BTC 每日短线 ----------
-        out.add("## 五、BTC 每日短线（影子）");
+        out.add("## 六、BTC 每日短线（影子）");
         out.add("");
         try {
             Map<String, Object> s = btc.summary(now);
@@ -266,7 +282,7 @@ public class HoldingsReport {
         double v1cost = v1rows.stream().mapToDouble(Row::cost).sum();
         double v1net = v1rows.stream().mapToDouble(Row::net).sum();
         long v1losers = v1rows.stream().filter(r -> r.net() < 0).count();
-        out.add("## 六、V1 宽口径观察（对照用，按参考价记账）");
+        out.add("## 七、V1 宽口径观察（对照用，按参考价记账）");
         out.add("");
         List<Sell> v1sells = sells(ObservationBook.BOOK, dayStart, dayEnd);
         long v1wins = v1sells.stream().filter(x -> x.pnl() > 0).count();
@@ -293,7 +309,7 @@ public class HoldingsReport {
         double v3cost = v3rows.stream().mapToDouble(Row::cost).sum();
         double v3net = v3rows.stream().mapToDouble(Row::net).sum();
         List<Sell> v3sells = sells(com.trendpilot.portfolio.TrendBook.BOOK, dayStart, dayEnd);
-        out.add("## 七、V3 趋势跟踪（影子，大赚小亏试验）");
+        out.add("## 八、V3 趋势跟踪（影子，大赚小亏试验）");
         out.add("");
         out.add(String.format(Locale.ROOT, "**合计（已实现 + 浮动）%s U**%s。持仓 %d 个，占用 %s U，浮动 %s U；已实现累计 %s U，当天卖出 %d 笔 %s U。"
                         + "规则：大盘多头时买创 20 日新高的山寨，ATR 止损 + 跟踪止损，不设过早的利润保护；独立资金 20,000 U。",
@@ -309,6 +325,69 @@ public class HoldingsReport {
         }
         out.add("");
         return String.join("\n", out) + "\n";
+    }
+
+    /**
+     * V5 强信号对照：正文（detail = false）只放概览和与 V2 的对比一行；持仓明细、当天买卖明细只放 .md 版。
+     * v2Realized / v2Net：V2 的累计已实现和当前浮动，用于同口径对比。
+     */
+    private void v5Section(List<String> out, Instant dayStart, Instant dayEnd, Instant now, boolean detail,
+                           double v2Realized, double v2Net) {
+        String book = com.trendpilot.portfolio.StrongVariantBook.BOOK;
+        out.add(String.format(Locale.ROOT, "## 五、V5 强信号对照（影子，每笔 %s U，只买 1h 相对 BTC ≥ %s%%）",
+                String.format(Locale.ROOT, "%,.0f", v5TradeUsdt), num(v5MinRel1h)));
+        out.add("");
+        List<Row> rows = rows(v5);
+        double cost = rows.stream().mapToDouble(Row::cost).sum();
+        double net = rows.stream().mapToDouble(Row::net).sum();
+        long losers = rows.stream().filter(r -> r.net() < 0).count();
+        double realized = v5.realizedPnl();
+        List<Sell> sells = sells(book, dayStart, dayEnd);
+        List<String> buys = buys(book, dayStart, dayEnd);
+        double today = sells.stream().mapToDouble(Sell::pnl).sum();
+        out.add(String.format(Locale.ROOT, "- **合计（已实现 + 浮动）%s U**%s", signed(realized + net),
+                dayChange(book, dayStart, realized + net)));
+        out.add(rows.isEmpty() ? "- V5 暂无持仓"
+                : String.format(Locale.ROOT, "- 持仓 %d 个，成本 %s U，浮动 %s U（%s），%d 个浮亏、%d 个浮盈", rows.size(),
+                        money(cost), signed(net), pct(cost == 0 ? 0 : net / cost * 100), losers, rows.size() - losers));
+        out.add(String.format(Locale.ROOT, "- 当天买入 %d 笔，卖出 %d 笔（已实现 %s U）；累计已实现 %s U", buys.size(), sells.size(),
+                signed(today), signed(realized)));
+        out.add(String.format(Locale.ROOT, "- 对比（同口径，V5 / V2）：合计 %s / %s U；累计已实现 %s / %s U；浮动 %s / %s U；最大单笔亏损 %s / %s U",
+                signed(realized + net), signed(v2Realized + v2Net), signed(realized), signed(v2Realized), signed(net),
+                signed(v2Net), worstLoss(book), worstLoss(ShadowBook.BOOK)));
+        out.add("");
+        if (!detail) return;
+        if (!buys.isEmpty()) {
+            out.add("当天买入：" + String.join("，", buys) + "。");
+            out.add("");
+        }
+        if (!sells.isEmpty()) {
+            out.add("| 代码 | 交易所 | 卖出时间 | 净盈亏 | 卖出原因 |");
+            out.add("|---|---|---|---:|---|");
+            sells.forEach(x -> out.add(String.format(Locale.ROOT, "| %s | %s | %s | %s | %s |", x.symbol().replace("USDT", ""),
+                    x.venue(), HHMM.format(x.at().atZone(zone)), signed(x.pnl()), exitLabel(x.reason()))));
+            out.add("");
+        }
+        if (!rows.isEmpty()) {
+            out.add("| 代码 | 交易所 | 数量 | 成本 | 均价 | 现价 | 浮动盈亏 | 收益率 | 档数 | 持有 | 入场结构 |");
+            out.add("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|");
+            rows.stream().sorted(Comparator.comparingDouble(Row::pct)).forEach(r -> out.add(String.format(Locale.ROOT,
+                    "| %s | %s | %s | %s | %s | %s | %s | %s | %d | %s | %s |",
+                    r.p().symbol().replace("USDT", ""), r.p().venue(), num(r.p().qty().doubleValue()), money(r.cost()),
+                    num(r.p().avgEntryPrice().doubleValue()), Double.isNaN(r.price()) ? "-" : num(r.price()),
+                    signed(r.net()), pct(r.pct()), r.p().tranches(), hours(r.p().openedAt(), now),
+                    structure(book, r.p()) + (r.p().protectArmed() ? "；利润保护中" : ""))));
+            out.add("");
+        }
+    }
+
+    /** 累计最大单笔亏损（U）；没有亏损的平仓时显示"无"。 */
+    private String worstLoss(String book) {
+        return jdbc.sql("""
+                SELECT MIN(CAST(pnl_usdt AS REAL)) FROM shadow_event
+                WHERE book = :b AND type = 'SELL' AND pnl_usdt IS NOT NULL AND CAST(pnl_usdt AS REAL) < 0
+                """).param("b", book).query(Double.class).list().stream().filter(java.util.Objects::nonNull).findFirst()
+                .map(HoldingsReport::signed).orElse("无");
     }
 
     /** "，当天 ±x U"：合计相对当天 0 点（越南时间）前最后一个净值点的变化；没有当天之前的记录时不显示。 */

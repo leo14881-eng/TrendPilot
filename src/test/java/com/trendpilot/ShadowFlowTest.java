@@ -238,8 +238,12 @@ class ShadowFlowTest {
         // Telegram 版：V1 只有汇总，不逐个列持仓；网页版仍列最好、最差
         if (!v1Book.positions().isEmpty()) assertThat(md).contains("| 最好 |");
         String compact = holdings.telegramText(t0.plusSeconds(60));
-        assertThat(compact).contains("📊 TrendPilot V2 日报", "【六、V1 宽口径观察", "当天开仓", "ABC · BINANCE")
+        assertThat(compact).contains("📊 TrendPilot V2 日报", "【七、V1 宽口径观察", "当天开仓", "ABC · BINANCE")
                 .doesNotContain("最好 ·").doesNotContain("最差 ·");
+        // V5 没有持仓：照常显示一节，不报错
+        assertThat(compact).contains("【五、V5 强信号对照（影子，每笔 2,000 U，只买 1h 相对 BTC ≥ 5.855%）】", "V5 暂无持仓",
+                "对比（同口径，V5 / V2）", "最大单笔亏损 无 / 无", "【六、BTC 每日短线").doesNotContain("现行规则不止损");
+        assertThat(md).contains("## 五、V5 强信号对照", "V5 暂无持仓", "山寨止损（日线波动 ×1.5，可能亏损卖出）");
 
         // 同一 generation 再跑不会重复买入（加仓条件不满足），K 线全部命中缓存，交易对信息也走缓存
         DiscoveryJob.Report again = discovery.runOnce(t0);
