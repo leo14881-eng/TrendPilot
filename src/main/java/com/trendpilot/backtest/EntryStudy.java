@@ -93,6 +93,18 @@ public final class EntryStudy {
             for (int a = 8; a < args.length; a++) {
                 int eq = args[a].indexOf('=');
                 String name = args[a].substring(0, eq);
+                if (name.startsWith("cfgx_")) {
+                    // 多个线上配置项一起覆盖：cfgx_名字=review.min-buy-rel1h@5.855+capital.trade-size@1500（键相对 trendpilot.strategy），另配一个随机对照
+                    Map<String, Object> ov = new java.util.LinkedHashMap<>();
+                    for (String kv : args[a].substring(eq + 1).split("\\+")) {
+                        int at = kv.indexOf('@');
+                        ov.put("trendpilot.strategy." + kv.substring(0, at), kv.substring(at + 1));
+                    }
+                    StrategyParams pp = BacktestMain.loadParams(ov);
+                    todo.add(live(name, data, regimes, tape, pp, fromQ, size));
+                    todo.add(live(name + " 随机", data, regimes, tape, pp, fromQ, size).randomEntry(3000 + a));
+                    continue;
+                }
                 if (name.startsWith("cfg_")) {
                     // 用线上配置项跑（核对配置实现和研究过滤一致）
                     StrategyParams pp = BacktestMain.loadParams(Map.of("trendpilot.strategy.review.min-buy-rel1h", args[a].substring(eq + 1)));
