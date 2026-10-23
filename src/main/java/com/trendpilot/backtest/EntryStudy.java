@@ -47,7 +47,7 @@ public final class EntryStudy {
         LocalDate split = LocalDate.parse(args.length > 6 ? args[6] : "2025-06-15");
         int threads = args.length > 7 ? Integer.parseInt(args[7]) : 4;
         boolean explore = args.length <= 8 || args[8].equals("explore");
-        int seeds = explore && args.length > 9 ? Integer.parseInt(args[9]) : 3;
+        int seeds = explore && args.length > 9 ? Integer.parseInt(args[9]) : 2;
         Files.createDirectories(outDir);
 
         StrategyParams params = BacktestMain.loadParams();
@@ -93,7 +93,9 @@ public final class EntryStudy {
             for (int a = 8; a < args.length; a++) {
                 int eq = args[a].indexOf('=');
                 String name = args[a].substring(0, eq);
-                String expr = args[a].substring(eq + 1);
+                // 命令行里避开 shell 特殊字符：_ge_ _le_ _gt_ _lt_ _and_ _or_，开头 not_ 表示剔除
+                String expr = args[a].substring(eq + 1).replace("_ge_", ">=").replace("_le_", "<=").replace("_gt_", ">")
+                        .replace("_lt_", "<").replace("_and_", "&").replace("_or_", "|").replaceFirst("^not_", "NOT:");
                 todo.add(live(name, data, regimes, tape, params, fromQ, size).entryFilter(EntryFeat.parse(expr)));
                 todo.add(live(name + " 随机", data, regimes, tape, params, fromQ, size).entryFilter(EntryFeat.parse(expr)).randomEntry(2000 + a));
             }
