@@ -83,6 +83,7 @@ trendpilot.strategy:
     max-upside-pct: 15
     reentry-cooldown-minutes: 60
     reentry-min-early-observations: 2   # 卖出后至少 2 个独立 generation 重新出现 EARLY，才允许再买
+    min-buy-rel1h: 0              # 新开仓要求 1h 相对 BTC 收益至少这么多（%）；0 = 不用。研究候选 5.855，见 docs/策略对比记录/2026-10-23-V2买入端.md
   capital:
     hard-cap: 20000
     normal-pool: 17000

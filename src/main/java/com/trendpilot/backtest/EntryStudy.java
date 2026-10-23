@@ -93,6 +93,12 @@ public final class EntryStudy {
             for (int a = 8; a < args.length; a++) {
                 int eq = args[a].indexOf('=');
                 String name = args[a].substring(0, eq);
+                if (name.startsWith("cfg_")) {
+                    // 用线上配置项跑（核对配置实现和研究过滤一致）
+                    StrategyParams pp = BacktestMain.loadParams(Map.of("trendpilot.strategy.review.min-buy-rel1h", args[a].substring(eq + 1)));
+                    todo.add(live(name, data, regimes, tape, pp, fromQ, size));
+                    continue;
+                }
                 // 命令行里避开 shell 特殊字符：_ge_ _le_ _gt_ _lt_ _and_ _or_，开头 not_ 表示剔除
                 String expr = args[a].substring(eq + 1).replace("_ge_", ">=").replace("_le_", "<=").replace("_gt_", ">")
                         .replace("_lt_", "<").replace("_and_", "&").replace("_or_", "|").replaceFirst("^not_", "NOT:");

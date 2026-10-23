@@ -54,6 +54,22 @@ class CapitalReviewerTest {
     }
 
     @Test
+    void minBuyRel1hRejectsWeakNewBuysOnlyWhenEnabled() throws Exception {
+        assertThat(TestData.params().review().minBuyRel1h()).isZero();
+        var env = new org.springframework.core.env.StandardEnvironment();
+        env.getPropertySources().addFirst(new org.springframework.core.env.MapPropertySource("o",
+                java.util.Map.of("trendpilot.strategy.review.min-buy-rel1h", strong.rel1h() + 1)));
+        new org.springframework.boot.env.YamlPropertySourceLoader()
+                .load("app", new org.springframework.core.io.ClassPathResource("application.yml"))
+                .forEach(ps -> env.getPropertySources().addLast(ps));
+        var strict = org.springframework.boot.context.properties.bind.Binder.get(env)
+                .bind("trendpilot.strategy", com.trendpilot.config.StrategyParams.class).get();
+        ReviewResult r = new CapitalReviewer(strict).review(input(goodBook, okRisk, ticker, null, null, null, true));
+        assertThat(r.decision()).isEqualTo(Decision.REJECT);
+        assertThat(r.reasons()).anyMatch(x -> x.startsWith("BUY_REL1H_LT_"));
+    }
+
+    @Test
     void incompleteScanIsSystemBlocked() {
         ReviewResult r = reviewer.review(input(goodBook, okRisk, ticker, null, null, null, false));
         assertThat(r.decision()).isEqualTo(Decision.SYSTEM_BLOCKED);

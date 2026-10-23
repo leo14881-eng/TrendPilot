@@ -60,6 +60,8 @@ public class CapitalReviewer {
         if (!s.early()) reject.add("EARLY_HITS_LT_" + params.early().minHits());
         if (s.score() < r.minScore()) reject.add("SCORE_LT_" + r.minScore());
         if (s.rel1h() < r.minRel1h() && s.rel4h() < r.minRel4h()) reject.add("RELATIVE_STRENGTH_WEAK");
+        // 新开仓只买 1h 明显强于 BTC 的（买入端研究 2026-10-23）；0 = 不用，加仓不受影响
+        if (action == Action.BUY && r.minBuyRel1h() > 0 && s.rel1h() < r.minBuyRel1h()) reject.add("BUY_REL1H_LT_" + r.minBuyRel1h());
         if (age(in.signalAsOf(), in) > r.maxSignalAgeMinutes()) reject.add("SIGNAL_STALE");
         if (age(in.book().fetchedAt(), in) > r.maxSignalAgeMinutes()) reject.add("BOOK_STALE");
         if (spread > r.maxSpreadBps()) reject.add("SPREAD_GT_" + r.maxSpreadBps() + "BPS");
