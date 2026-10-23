@@ -14,10 +14,6 @@ trendpilot:
     enabled: false
   btc-trend:
     enabled: false
-  # 流程测试按"不设强信号门槛"跑；门槛本身由 CapitalReviewerTest 单独测
-  strategy:
-    review:
-      min-buy-rel1h: 0
 
 logging:
   file:

@@ -92,7 +92,7 @@ class ShadowFlowTest {
         bybit.reset();
         markets.invalidate();
         for (String t : new String[]{"position", "shadow_event", "early_seen", "notification_outbox", "app_state",
-                "kline_15m", "v1_position", "replay_outcome", "missed_replay", "signal_log", "signal_episode", "signal_track_bar", "signal_outcome", "signal_pullback", "exit_rule_eval", "variant_trade", "equity_curve", "decision_log"}) {
+                "kline_15m", "v1_position", "replay_outcome", "missed_replay", "signal_log", "signal_episode", "signal_track_bar", "signal_outcome", "signal_pullback", "exit_rule_eval", "variant_trade", "equity_curve", "decision_log", "v5_position"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
         // 身份资料：测试标的在 CoinGecko 上唯一对应一个项目（资料时间放在测试截面之后，不算过期）
@@ -178,6 +178,23 @@ class ShadowFlowTest {
         var stats = exitReplay.stats(exitReplay.latest());
         assertThat(stats).anyMatch(st -> st.ruleId().equals("B0"));
         assertThat(exitReplay.lines(stats, 3)).anyMatch(l -> l.contains("未达采纳门槛"));
+    }
+
+    @Autowired com.trendpilot.portfolio.StrongVariantBook v5Book;
+
+    @Test
+    void strongVariantSkipsV2BuysBelowItsThreshold() {
+        Instant t0 = Instant.parse("2026-10-14T10:17:00Z");
+        market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
+        for (String s : new String[]{"AAAUSDT", "BBBUSDT", "CCCUSDT"}) {
+            market.put(s, 2.0, TestData.flatQuarters(t0, 10), null);
+        }
+        // V2 按原买入规则买入（1h 相对 BTC 约 3%）；V5 门槛 5.855%，同一个信号不买
+        assertThat(discovery.runOnce(t0).entries()).containsExactly("BUY:ABCUSDT");
+        assertThat(book.positions()).hasSize(1);
+        assertThat(v5Book.positions()).isEmpty();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM shadow_event WHERE book = 'V5'").query(Integer.class).single()).isZero();
     }
 
     @Test

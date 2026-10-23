@@ -70,6 +70,24 @@ class CapitalReviewerTest {
     }
 
     @Test
+    void strongVariantReviewBuysOnlyWhenRel1hClearsItsThreshold() {
+        double depth = TestData.params().review().minDepthUsdt();
+        ReviewInput in = input(goodBook, okRisk, ticker, null, null, null, true);
+        // V2 原规则批准
+        assertThat(reviewer.review(in).decision()).isEqualTo(Decision.BUY);
+        // V5 门槛高于本信号的 rel1h：拒绝，原因格式与原门槛一致
+        ReviewResult high = reviewer.review(in, depth, strong.rel1h() + 0.01);
+        assertThat(high.decision()).isEqualTo(Decision.REJECT);
+        assertThat(high.reasons()).containsExactly("BUY_REL1H_LT_" + (strong.rel1h() + 0.01));
+        // 刚好达到门槛：与 V2 相同的结论和成交
+        ReviewResult ok = reviewer.review(in, depth, strong.rel1h());
+        assertThat(ok.decision()).isEqualTo(Decision.BUY);
+        assertThat(ok.fill().avgPrice()).isEqualByComparingTo(reviewer.review(in).fill().avgPrice());
+        // 门槛只管新开仓：0 表示不用
+        assertThat(reviewer.review(in, depth, 0).decision()).isEqualTo(Decision.BUY);
+    }
+
+    @Test
     void incompleteScanIsSystemBlocked() {
         ReviewResult r = reviewer.review(input(goodBook, okRisk, ticker, null, null, null, false));
         assertThat(r.decision()).isEqualTo(Decision.SYSTEM_BLOCKED);

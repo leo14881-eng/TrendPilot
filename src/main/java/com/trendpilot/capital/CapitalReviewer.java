@@ -32,6 +32,14 @@ public class CapitalReviewer {
 
     /** minDepthUsdt：盘口深度门槛（影子对照用放宽后的值重新审核，其余规则完全相同）。 */
     public ReviewResult review(ReviewInput in, double minDepthUsdt) {
+        return review(in, minDepthUsdt, params.review().minBuyRel1h());
+    }
+
+    /**
+     * minBuyRel1h：新开仓要求的 1h 相对 BTC 收益（%），0 = 不用（强信号对照账本 V5 用自己的门槛重新审核，其余规则完全相同）。
+     * rel1h 缺失（NaN）时视为不满足，不买入。
+     */
+    public ReviewResult review(ReviewInput in, double minDepthUsdt, double minBuyRel1h) {
         StrategyParams.Review r = params.review();
         EarlySignal s = in.signal();
         Action action = in.position() == null ? Action.BUY : Action.ADD;
@@ -61,7 +69,7 @@ public class CapitalReviewer {
         if (s.score() < r.minScore()) reject.add("SCORE_LT_" + r.minScore());
         if (s.rel1h() < r.minRel1h() && s.rel4h() < r.minRel4h()) reject.add("RELATIVE_STRENGTH_WEAK");
         // 新开仓只买 1h 明显强于 BTC 的（买入端研究 2026-10-23）；0 = 不用，加仓不受影响
-        if (action == Action.BUY && r.minBuyRel1h() > 0 && s.rel1h() < r.minBuyRel1h()) reject.add("BUY_REL1H_LT_" + r.minBuyRel1h());
+        if (action == Action.BUY && minBuyRel1h > 0 && !(s.rel1h() >= minBuyRel1h)) reject.add("BUY_REL1H_LT_" + minBuyRel1h);
         if (age(in.signalAsOf(), in) > r.maxSignalAgeMinutes()) reject.add("SIGNAL_STALE");
         if (age(in.book().fetchedAt(), in) > r.maxSignalAgeMinutes()) reject.add("BOOK_STALE");
         if (spread > r.maxSpreadBps()) reject.add("SPREAD_GT_" + r.maxSpreadBps() + "BPS");

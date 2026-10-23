@@ -47,6 +47,7 @@ summary() {
     echo "|---|---:|---:|---:|---:|---:|---:|"
     book V2 position
     book V2D15 v2d_position
+    book V5 v5_position
     book V1 v1_position
     book V3 v3_position
     echo

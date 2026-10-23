@@ -89,6 +89,7 @@ public class DiscoveryJob {
     private final SignalTracker tracker;
     private final com.trendpilot.market.KlineStore klineStore;
     private final com.trendpilot.observation.DepthVariantTracker depthVariant;
+    private final com.trendpilot.observation.StrongVariantTracker strongVariant;
 
     private final org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease;
     /** 锁外抓的盘口进入审核时最多这么旧。 */
@@ -107,8 +108,10 @@ public class DiscoveryJob {
                         JobRuns runs, AppState state, JdbcClient jdbc, StrategyParams params,
                         SignalTracker tracker, com.trendpilot.market.KlineStore klineStore,
                         org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease,
-                        com.trendpilot.observation.DepthVariantTracker depthVariant) {
+                        com.trendpilot.observation.DepthVariantTracker depthVariant,
+                        com.trendpilot.observation.StrongVariantTracker strongVariant) {
         this.depthVariant = depthVariant;
+        this.strongVariant = strongVariant;
         this.lease = lease;
         this.tracker = tracker;
         this.klineStore = klineStore;
@@ -318,6 +321,7 @@ public class DiscoveryJob {
             if (books.isEmpty() && !fetchedBooks.isEmpty()) log.warn("Discovery 盘口已超过 {} 秒，本轮不买入", MAX_BOOK_AGE.toSeconds());
             List<ReviewResult> results = new ArrayList<>();
             List<ReviewResult> relaxed = new ArrayList<>();
+            List<ReviewResult> strong = new ArrayList<>();
             Map<String, Venue> venueOf = new LinkedHashMap<>();
             for (Candidate c : candidates) {
                 EarlySignal s = c.signal();
@@ -348,6 +352,23 @@ public class DiscoveryJob {
                             books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), null,
                             vExit, researched.get(s.symbol()), vEarly, vHit), depthVariant.minDepthUsdt()));
                 }
+                // 强信号对照（V5）：每个候选独立判断（不看 V2 结论），V5 没有这个币时，用 V5 自己的卖出记录、
+                // 正常深度门槛，另加新开仓 1h 相对 BTC 门槛重新审核；出错只记日志，不影响 V2
+                try {
+                    var sb = strongVariant.book();
+                    if (sb.position(s.symbol()).isEmpty()) {
+                        Instant sExit = sb.lastExit(s.symbol()).orElse(null);
+                        int sEarly = sExit == null ? 0 : book.earlyObservationsSince(s.symbol(), sExit);
+                        boolean sHit = sExit == null || !EarlySignalCalculator
+                                .hitsAfter(pool.bars().bars().get(s.symbol()), s, sExit).isEmpty();
+                        strong.add(reviewer.review(new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
+                                books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), null,
+                                sExit, researched.get(s.symbol()), sEarly, sHit),
+                                params.review().minDepthUsdt(), strongVariant.minRel1h()));
+                    }
+                } catch (RuntimeException e) {
+                    log.warn("V5 {} 本轮审核出错，跳过：{}", s.symbol(), e.toString());
+                }
             }
             // 不在候选中的 EARLY 只记录首次出现价格
             early.stream().filter(c -> !candidates.contains(c))
@@ -376,6 +397,11 @@ public class DiscoveryJob {
                     .toList();
             v1Entries.addAll(v1.enter(gen, now, v1Candidates, v1Risk));
             depthVariant.enter(gen, now, venueOf, relaxed);
+            try {
+                strongVariant.enter(gen, now, venueOf, strong);
+            } catch (RuntimeException e) {
+                log.warn("V5 强信号对照本轮买入出错，跳过：{}", e.toString());
+            }
             for (ReviewResult r : results) {
                 logDecision(gen, venueOf.get(r.symbol()), r, alloc.funded().contains(r), alloc.unfunded().contains(r), now);
             }

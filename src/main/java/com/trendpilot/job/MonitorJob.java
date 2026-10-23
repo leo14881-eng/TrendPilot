@@ -63,14 +63,17 @@ public class MonitorJob {
     private final AppState state;
     private final ParallelExits parallel;
     private final com.trendpilot.observation.DepthVariantTracker depthVariant;
+    private final com.trendpilot.observation.StrongVariantTracker strongVariant;
     private final StreamHub hub;
 
     public MonitorJob(Markets markets, V1Tracker v1, EarlySignalCalculator signals,
                       ExitPolicy exitPolicy, ShadowBook book, PortfolioLock lock, Notifier notifier, JobRuns runs,
                       AppState state, ParallelExits parallel,
                       com.trendpilot.observation.DepthVariantTracker depthVariant, StreamHub hub,
-                      com.trendpilot.monitor.LossGuard guard) {
+                      com.trendpilot.monitor.LossGuard guard,
+                      com.trendpilot.observation.StrongVariantTracker strongVariant) {
         this.guard = guard;
+        this.strongVariant = strongVariant;
         this.depthVariant = depthVariant;
         this.hub = hub;
         this.parallel = parallel;
@@ -117,6 +120,14 @@ public class MonitorJob {
                 depthVariant.book().recordEquity(now);
             } catch (RuntimeException e) {
                 log.warn("V2D15 对照本轮失败：{}", e.getMessage());
+            }
+            // 强信号对照账本：同样锁外抓行情、锁内判断，出错只记日志，不影响 V2 / V1 / V2D15
+            try {
+                var sIn = strongVariant.fetch(now);
+                lock.run(() -> strongVariant.manage(gen, now, sIn));
+                strongVariant.book().recordEquity(now);
+            } catch (RuntimeException e) {
+                log.warn("V5 对照本轮未完成：{}", e.getMessage());
             }
             book.recordEquity(now);
             runs.record(JOB, gen, now, Instant.now(), "SUCCESS", r.dataStatus(),

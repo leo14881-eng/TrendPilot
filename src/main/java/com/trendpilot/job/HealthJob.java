@@ -45,6 +45,7 @@ public class HealthJob {
     private final ZoneId zone;
     private final TrackingReport tracking;
     private final com.trendpilot.portfolio.DepthVariantBook depthVariant;
+    private final com.trendpilot.portfolio.StrongVariantBook strongVariant;
     private final JdbcClient jdbc;
     private final ApiStats api;
     private final Path snapshots;
@@ -63,8 +64,10 @@ public class HealthJob {
                      @Value("${trendpilot.data-dir:./data}") String dataDir,
                      com.trendpilot.portfolio.DepthVariantBook depthVariant,
                      com.trendpilot.market.stream.StreamHub hub, com.trendpilot.market.stream.StreamProperties streamProps,
-                     com.trendpilot.btcdaily.BtcDailyProperties btcProps) {
+                     com.trendpilot.btcdaily.BtcDailyProperties btcProps,
+                     com.trendpilot.portfolio.StrongVariantBook strongVariant) {
         this.depthVariant = depthVariant;
+        this.strongVariant = strongVariant;
         this.hub = hub;
         this.streamEnabled = streamProps.enabled();
         this.btcEnabled = btcProps.enabled();
@@ -252,6 +255,7 @@ public class HealthJob {
         var v2Stats = book.stats();
         var v1Stats = v1.stats();
         var dStats = depthVariant.stats();
+        var sStats = strongVariant.stats();
         String tracking;
         List<String> trackingFull;
         try {
@@ -277,6 +281,7 @@ public class HealthJob {
         b.add("📈 累计对比");
         b.add(v2Stats.shortLine());
         b.add(dStats.shortLine() + "（深度门槛放宽，对照用）");
+        b.add(sStats.shortLine() + "（强信号买入，对照用）");
         b.add(v1Stats.shortLine() + "（观察账本，按参考价记账）");
         b.add("");
         b.add(tracking);
@@ -297,6 +302,7 @@ public class HealthJob {
         f.add("- " + v2Stats.line());
         f.add("- " + v1Stats.line());
         f.add("- " + dStats.line() + "（深度门槛放宽到 15000 时多买的币，对照用）");
+        f.add("- " + sStats.line() + "（只买 1h 相对 BTC 明显走强的币，与 V2 同期对比，对照用）");
         f.add("");
         f.add("注：V2 按全数量盘口模拟成交，V1 按参考价 + 手续费记账，V1 收益不能当作可执行收益；最大回撤含浮亏。");
         f.add("");

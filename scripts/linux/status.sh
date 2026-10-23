@@ -27,7 +27,7 @@ sqlite3 -readonly "$DB" "SELECT job, started_at, program_status, substr(data_sta
 q() { sqlite3 -readonly -separator ' ' "$DB" "$1" 2>/dev/null || echo "取不到"; }
 echo "--- 账本概况（今天按越南时间）"
 day_start=$(date -u -d "$(date +%F) 00:00" +%Y-%m-%dT%H:%M:%S 2>/dev/null)
-for pair in V2:position V2D15:v2d_position V1:v1_position V3:v3_position; do
+for pair in V2:position V2D15:v2d_position V5:v5_position V1:v1_position V3:v3_position; do
     book=${pair%%:*}; table=${pair#*:}
     echo "$book 持仓 $(q "SELECT COUNT(*) FROM $table;")  今天开仓 $(q "SELECT COUNT(*) FROM shadow_event WHERE book='$book' AND type='BUY' AND created_at >= '$day_start';")  今天平仓 $(q "SELECT COUNT(*) FROM shadow_event WHERE book='$book' AND type='SELL' AND created_at >= '$day_start';")"
 done
