@@ -74,6 +74,27 @@ public final class B0Sim extends Sim {
         return this;
     }
 
+    /** 买入端研究（EntryStudy）：开仓时的特征，key = symbol@entryQ。 */
+    final Map<String, EntryFeat> entryFeats = new HashMap<>();
+    /** 买入过滤：只对新开仓生效，false 就不买；null = 不过滤。 */
+    private java.util.function.Predicate<EntryFeat> entryFilter;
+    /** 随机对照：现行规则决定"这一轮买几笔、每笔多少钱"，但买的币换成同币池里随机一个没持有的币；null = 不用。 */
+    private java.util.Random random;
+
+    B0Sim entryFilter(java.util.function.Predicate<EntryFeat> filter) {
+        this.entryFilter = filter;
+        return this;
+    }
+
+    B0Sim randomEntry(long seed) {
+        this.random = new java.util.Random(seed);
+        return this;
+    }
+
+    private EntryFeat feat(String sym, int q, EarlySignal s, double quoteVol, RiskState risk) {
+        return EntryFeat.of(data, regimes, sym, q, s, quoteVol, risk.regime().name(), atrDaily(data.get(sym), q));
+    }
+
     /** 防洗盘止损研究（StopStudy）：叠加在现行退出规则之上的止损；null = 不止损。 */
     private StopRule stopRule;
     /** 每个持仓买入时算好的止损距离（比例）。 */
@@ -318,6 +339,8 @@ public final class B0Sim extends Sim {
             ReviewInput in = new ReviewInput(gen, Instant.ofEpochMilli(data.time(q)), now, true, s, t, book, risk,
                     seen == null ? null : BigDecimal.valueOf(seen[0]), pos, lastExit, verified(sym), earlySince, postExitHit);
             ReviewResult r = reviewer.review(in);
+            if (r.approved() && entryFilter != null && r.action() == Action.BUY
+                    && !entryFilter.test(feat(sym, q, s, t.quoteVolume(), risk))) continue;
             if (r.approved() && (buyRegimes == null || r.action() != Action.BUY || buyRegimes.contains(risk.regime()))) approved.add(r);
         }
         double unrealized = markNet.values().stream().mapToDouble(Double::doubleValue).sum();
@@ -326,12 +349,25 @@ public final class B0Sim extends Sim {
         for (ReviewResult r : alloc.funded()) {
             Fill f = r.fill();
             if (r.action() == Action.BUY) {
-                positions.put(r.symbol(), new Position(Venue.BINANCE, r.symbol(), f.qty(), f.totalCost(), f.notional(), 1,
+                String sym = r.symbol();
+                if (random != null) {
+                    sym = randomSymbol(universe, q);
+                    if (sym == null) continue;
+                    Series rs = data.get(sym);
+                    Ticker24h rt = data.ticker(sym, q);
+                    f = com.trendpilot.market.ExecutionSimulator.buy(Costs.book(sym, rs.close[q], rt.quoteVolume(), now),
+                            f.notional(), params.feeRate());
+                    if (f == null || !f.complete() || f.qty().signum() <= 0) continue;
+                }
+                Ticker24h ft = data.ticker(sym, q);
+                entryFeats.put(sym + "@" + q, feat(sym, q, random != null ? tape.at(sym, q) : signals.get(sym),
+                        ft == null ? Double.NaN : ft.quoteVolume(), risk));
+                positions.put(sym, new Position(Venue.BINANCE, sym, f.qty(), f.totalCost(), f.notional(), 1,
                         f.avgPrice(), now, gen, now, false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false));
-                entryQ.put(r.symbol(), q);
-                if (stopRule != null) stopDist.put(r.symbol(), stopRule.distance(atrDaily(data.get(r.symbol()), q)));
-                paths.put(r.symbol(), new Path(q, f.avgPrice().doubleValue()));
-                markNet.put(r.symbol(), -f.fee().doubleValue() * 2);
+                entryQ.put(sym, q);
+                if (stopRule != null) stopDist.put(sym, stopRule.distance(atrDaily(data.get(sym), q)));
+                paths.put(sym, new Path(q, f.avgPrice().doubleValue()));
+                markNet.put(sym, -f.fee().doubleValue() * 2);
             } else {
                 Position cur = positions.get(r.symbol());
                 positions.put(r.symbol(), new Position(cur.venue(), cur.symbol(), cur.qty().add(f.qty()),
@@ -339,6 +375,17 @@ public final class B0Sim extends Sim {
                         f.avgPrice(), now, gen, cur.openedAt(), false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false));
             }
         }
+    }
+
+    private String randomSymbol(List<String> universe, int q) {
+        List<String> pool = new ArrayList<>();
+        for (String sym : universe) {
+            if (sym.equals(MarketData.BTC) || positions.containsKey(sym)) continue;
+            Series x = data.get(sym);
+            if (x == null || !x.has(q) || data.ticker(sym, q) == null) continue;
+            pool.add(sym);
+        }
+        return pool.isEmpty() ? null : pool.get(random.nextInt(pool.size()));
     }
 
     /** 线上 Ledger.touchEarlySeen 的同一规则：7 天没出现或首次价早于最近一次卖出时重置首次价。 */
