@@ -64,6 +64,38 @@ class HealthJobTest {
         assertThat(healthTexts().getLast()).contains("恢复正常");
     }
 
+    private static com.trendpilot.portfolio.Position pos(String symbol) {
+        Instant t = Instant.parse("2026-10-24T00:00:00Z");
+        java.math.BigDecimal one = java.math.BigDecimal.ONE;
+        return new com.trendpilot.portfolio.Position(com.trendpilot.market.Venue.BINANCE, symbol, one, one, one, 1, one, t,
+                "D-1", t, false, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, 0, false);
+    }
+
+    @Test
+    void quietBookWithValidRestQuoteIsNotReported() {
+        var rest = java.util.Map.of("INTWBUSDT", new com.trendpilot.market.BookTicker("INTWBUSDT", 0.101, 0.102));
+        var issues = HealthJob.quoteIssues(List.of(pos("INTWBUSDT")), v -> rest,
+                (v, s) -> new com.trendpilot.market.SymbolInfo(s, "INTWB", "USDT", true, ""));
+        assertThat(issues).isEmpty();
+    }
+
+    @Test
+    void reportsWhenRestHasNoValidQuoteOrIsUnavailableOrNotTrading() {
+        var rest = java.util.Map.of(
+                "AAAUSDT", new com.trendpilot.market.BookTicker("AAAUSDT", 0, 0.5),       // 没有买价
+                "BBBUSDT", new com.trendpilot.market.BookTicker("BBBUSDT", 0.6, 0.5),     // 买价高于卖价
+                "CCCUSDT", new com.trendpilot.market.BookTicker("CCCUSDT", 1.0, 1.01));   // 有价但不在交易
+        var issues = HealthJob.quoteIssues(List.of(pos("AAAUSDT"), pos("BBBUSDT"), pos("CCCUSDT"), pos("DDDUSDT")), v -> rest,
+                (v, s) -> new com.trendpilot.market.SymbolInfo(s, s, "USDT", !s.equals("CCCUSDT"), ""));
+        assertThat(issues).containsOnlyKeys("AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT");
+        assertThat(issues.get("AAAUSDT")).contains("没有有效买卖价");
+        assertThat(issues.get("DDDUSDT")).contains("没有有效买卖价");
+        assertThat(issues.get("CCCUSDT")).contains("不在交易");
+        // 批量报价本身取不到（返回 null）；交易状态取不到时只按报价判断
+        var down = HealthJob.quoteIssues(List.of(pos("AAAUSDT")), v -> null, (v, s) -> null);
+        assertThat(down.get("AAAUSDT")).contains("批量报价也暂时取不到");
+    }
+
     @Autowired
     ApiStats api;
 

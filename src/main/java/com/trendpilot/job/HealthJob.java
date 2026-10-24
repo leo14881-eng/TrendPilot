@@ -46,6 +46,8 @@ public class HealthJob {
     private final TrackingReport tracking;
     private final com.trendpilot.portfolio.DepthVariantBook depthVariant;
     private final com.trendpilot.portfolio.StrongVariantBook strongVariant;
+    private final com.trendpilot.market.Markets markets;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(HealthJob.class);
     private final JdbcClient jdbc;
     private final ApiStats api;
     private final Path snapshots;
@@ -65,7 +67,9 @@ public class HealthJob {
                      com.trendpilot.portfolio.DepthVariantBook depthVariant,
                      com.trendpilot.market.stream.StreamHub hub, com.trendpilot.market.stream.StreamProperties streamProps,
                      com.trendpilot.btcdaily.BtcDailyProperties btcProps,
-                     com.trendpilot.portfolio.StrongVariantBook strongVariant) {
+                     com.trendpilot.portfolio.StrongVariantBook strongVariant,
+                     com.trendpilot.market.Markets markets) {
+        this.markets = markets;
         this.depthVariant = depthVariant;
         this.strongVariant = strongVariant;
         this.hub = hub;
@@ -130,14 +134,18 @@ public class HealthJob {
                 out.add(new Problem("kline:" + e.getKey(), e.getKey() + " K 线 " + minutes + " 分钟没有更新（实时行情可能断了）"));
             }
         }
-        // FastWatch 靠 WebSocket 最优价：持仓超过 3 分钟没有新报价，快速保护就失效了
+        // FastWatch 靠 WebSocket 最优价：持仓超过 3 分钟没有新推送时，先用批量 bookTicker（有缓存）核对。
+        // 冷门币最优价不变就没有推送，批量报价有效就不算异常；批量报价也拿不到或不在交易才提醒
         if (streamEnabled && startup != null && Duration.between(startup, now).toMinutes() >= 5) {
-            List<String> noQuote = book.positions().stream()
-                    .filter(p -> hub.quote(p.venue(), p.symbol(), 180) == null)
-                    .map(Position::symbol).sorted().toList();
-            if (!noQuote.isEmpty()) {
-                out.add(new Problem("quotes:" + String.join(",", noQuote),
-                        String.join("、", noQuote) + " 超过 3 分钟没有实时报价（FastWatch 快速保护暂时失效，5 分钟一次的持仓检查照常）"));
+            List<Position> quiet = book.positions().stream()
+                    .filter(p -> hub.quote(p.venue(), p.symbol(), 180) == null).toList();
+            if (!quiet.isEmpty()) {
+                Map<String, String> issues = quoteIssues(quiet, this::restQuotes, this::symbolInfo);
+                if (!issues.isEmpty()) {
+                    out.add(new Problem("quotes:" + String.join(",", issues.keySet()),
+                            Messages.lines(issues.entrySet().stream().map(e -> e.getKey() + " 超过 3 分钟没有实时推送，"
+                                    + e.getValue() + "（FastWatch 快速保护暂时失效，5 分钟一次的持仓检查照常）").toList())));
+                }
             }
         }
         api.since(Duration.ofHours(1), now).forEach((host, c) -> {
@@ -154,6 +162,57 @@ public class HealthJob {
             if (!Files.exists(file)) out.add(new Problem("snapshot", "昨天的统计快照没有写出：" + file.getFileName()));
         }
         return out;
+    }
+
+    /**
+     * 没有实时推送的持仓逐个核对：不在交易 → 提醒；批量报价取不到 → 提醒；批量报价里没有有效买卖价 → 提醒；
+     * 有有效买卖价（bid > 0、ask > 0、bid < ask）→ 只是盘口安静，不提醒。@return 代码（排序）→ 情况说明
+     */
+    static Map<String, String> quoteIssues(List<Position> positions,
+                                           java.util.function.Function<Venue, Map<String, com.trendpilot.market.BookTicker>> rest,
+                                           java.util.function.BiFunction<Venue, String, com.trendpilot.market.SymbolInfo> info) {
+        Map<String, String> out = new java.util.TreeMap<>();
+        Map<Venue, Map<String, com.trendpilot.market.BookTicker>> byVenue = new java.util.EnumMap<>(Venue.class);
+        for (Position p : positions) {
+            com.trendpilot.market.SymbolInfo si = info.apply(p.venue(), p.symbol());
+            if (si != null && !si.trading()) {
+                out.put(p.symbol(), "交易所显示该币当前不在交易");
+                continue;
+            }
+            Map<String, com.trendpilot.market.BookTicker> quotes = byVenue.computeIfAbsent(p.venue(), rest);
+            if (quotes == null) {
+                out.put(p.symbol(), p.venue() + " 批量报价也暂时取不到");
+                continue;
+            }
+            com.trendpilot.market.BookTicker t = quotes.get(p.symbol());
+            boolean valid = t != null && t.bid() > 0 && t.ask() > 0 && t.bid() < t.ask();
+            if (!valid) out.put(p.symbol(), "批量报价里也没有有效买卖价");
+        }
+        return out;
+    }
+
+    /** 某交易所的批量最优价（TickerCache，30 秒缓存，走统一限流）；取不到返回 null。 */
+    private Map<String, com.trendpilot.market.BookTicker> restQuotes(Venue venue) {
+        try {
+            var m = markets.get(venue);
+            if (m == null) return null;
+            Map<String, com.trendpilot.market.BookTicker> out = new java.util.HashMap<>();
+            for (var t : m.tickers().bookTickers()) out.put(t.symbol(), t);
+            return out;
+        } catch (RuntimeException e) {
+            log.debug("自检核对 {} 批量报价取不到：{}", venue, e.toString());
+            return null;
+        }
+    }
+
+    /** 交易状态（交易对信息有缓存）；取不到返回 null，只按报价判断。 */
+    private com.trendpilot.market.SymbolInfo symbolInfo(Venue venue, String symbol) {
+        try {
+            var m = markets.get(venue);
+            return m == null ? null : m.directory().get(symbol);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** 最近 24 小时内有 K 线的交易所，各自最新一根 K 线的收盘时间。 */
