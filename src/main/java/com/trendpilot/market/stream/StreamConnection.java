@@ -133,8 +133,12 @@ final class StreamConnection {
      * 间隔按整个连接统一排队：启动时"连上后重新订阅全部"和"订阅列表更新"可能同时发生，
      * 各排各的会叠加成两倍速率，被交易所以 1008 Too many requests 断开。
      */
-    synchronized void sendPaced(List<String> messages, long gapMs) {
-        long now = System.currentTimeMillis();
+    void sendPaced(List<String> messages, long gapMs) {
+        sendPaced(messages, gapMs, System.currentTimeMillis());
+    }
+
+    /** now 由调用方给出（测试用固定时刻，不受机器快慢影响）。 */
+    synchronized void sendPaced(List<String> messages, long gapMs, long now) {
         for (String m : messages) {
             long at = Math.max(now, nextPacedMs);
             nextPacedMs = at + gapMs;
