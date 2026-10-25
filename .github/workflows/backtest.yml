@@ -32,10 +32,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: backtest-data
-          key: backtest-data-v1-${{ inputs.main }}-${{ inputs.args }}-${{ github.run_id }}
+          # 缓存键不能含逗号：参数里有候选写法（key=v,key=v）时不放进键里
+          key: backtest-data-v1-${{ inputs.main }}-${{ github.run_id }}
           restore-keys: |
-            backtest-data-v1-${{ inputs.main }}-${{ inputs.args }}-
-            backtest-data-v1-${{ inputs.args }}-
+            backtest-data-v1-${{ inputs.main }}-
             backtest-data-v1-
       - name: 编译
         run: |
