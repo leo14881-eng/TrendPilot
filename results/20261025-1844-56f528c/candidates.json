@@ -1,0 +1,341 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-10-25T18:44:51.537819222Z",
+  "grid" : "momentum",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-10-01",
+  "dataTo" : "2026-10-24",
+  "validationFrom" : "2025-06-25",
+  "evidence" : "",
+  "baseline" : {
+    "full" : {
+      "trades" : 15583,
+      "equity" : 19343.01,
+      "maxDrawdown" : 14538.46
+    },
+    "validation" : {
+      "trades" : 4777,
+      "equity" : -5046.68,
+      "maxDrawdown" : 14309.81
+    }
+  },
+  "candidates" : [ {
+    "id" : "M_24h前3_V2退出",
+    "group" : "momentum",
+    "overrides" : { },
+    "config" : { },
+    "sim" : {
+      "momentum-top" : "3",
+      "momentum-hours" : "24"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 4101.24,
+      "perTrade" : 4.79,
+      "trades" : 15298,
+      "equity" : 73240.45
+    },
+    "validation" : {
+      "maxDrawdown" : 2508.2,
+      "perTrade" : 5.58,
+      "trades" : 5293,
+      "equity" : 29727.66
+    },
+    "evidence" : ""
+  }, {
+    "id" : "M_24h前5_V2退出",
+    "group" : "momentum",
+    "overrides" : { },
+    "config" : { },
+    "sim" : {
+      "momentum-top" : "5",
+      "momentum-hours" : "24"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 4706.25,
+      "perTrade" : 4.13,
+      "trades" : 16708,
+      "equity" : 69052.75
+    },
+    "validation" : {
+      "maxDrawdown" : 2263.49,
+      "perTrade" : 4.24,
+      "trades" : 5629,
+      "equity" : 23911.46
+    },
+    "evidence" : ""
+  }, {
+    "id" : "M_24h前10_V2退出",
+    "group" : "momentum",
+    "overrides" : { },
+    "config" : { },
+    "sim" : {
+      "momentum-top" : "10",
+      "momentum-hours" : "24"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 6303.96,
+      "perTrade" : 2.47,
+      "trades" : 18098,
+      "equity" : 44734.67
+    },
+    "validation" : {
+      "maxDrawdown" : 3659.68,
+      "perTrade" : 2.92,
+      "trades" : 5770,
+      "equity" : 16958.81
+    },
+    "evidence" : ""
+  }, {
+    "id" : "M_4h前3_V2退出",
+    "group" : "momentum",
+    "overrides" : { },
+    "config" : { },
+    "sim" : {
+      "momentum-top" : "3",
+      "momentum-hours" : "4"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 6549.08,
+      "perTrade" : 2.43,
+      "trades" : 14763,
+      "equity" : 35809.21
+    },
+    "validation" : {
+      "maxDrawdown" : 3870.27,
+      "perTrade" : 3.86,
+      "trades" : 4874,
+      "equity" : 18846.34
+    },
+    "evidence" : ""
+  }, {
+    "id" : "M_4h前5_V2退出",
+    "group" : "momentum",
+    "overrides" : { },
+    "config" : { },
+    "sim" : {
+      "momentum-top" : "5",
+      "momentum-hours" : "4"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 7870.9,
+      "perTrade" : 2.14,
+      "trades" : 15873,
+      "equity" : 33898.96
+    },
+    "validation" : {
+      "maxDrawdown" : 7870.9,
+      "perTrade" : 0.95,
+      "trades" : 4968,
+      "equity" : 4730.41
+    },
+    "evidence" : ""
+  }, {
+    "id" : "M_4h前10_V2退出",
+    "group" : "momentum",
+    "overrides" : { },
+    "config" : { },
+    "sim" : {
+      "momentum-top" : "10",
+      "momentum-hours" : "4"
+    },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 15788.53,
+      "perTrade" : 0.64,
+      "trades" : 16786,
+      "equity" : 10778.49
+    },
+    "validation" : {
+      "maxDrawdown" : 14234.46,
+      "perTrade" : -1.21,
+      "trades" : 5136,
+      "equity" : -6454.25
+    },
+    "evidence" : ""
+  }, {
+    "id" : "M_24h前5_C1_L15_T24",
+    "group" : "momentum",
+    "overrides" : {
+      "exit-rule" : "C1_L15_T24"
+    },
+    "config" : { },
+    "sim" : {
+      "momentum-top" : "5",
+      "momentum-hours" : "24"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 4929.52,
+      "perTrade" : 3.27,
+      "trades" : 16284,
+      "equity" : 53252.29
+    },
+    "validation" : {
+      "maxDrawdown" : 3186.73,
+      "perTrade" : 3.97,
+      "trades" : 5477,
+      "equity" : 21752.48
+    },
+    "evidence" : ""
+  }, {
+    "id" : "M_24h前5_浮盈5%后回吐3%",
+    "group" : "momentum",
+    "overrides" : {
+      "runner-arm-pct" : "5",
+      "runner-giveback-pct" : "3"
+    },
+    "config" : { },
+    "sim" : {
+      "momentum-top" : "5",
+      "momentum-hours" : "24"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : true,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 5592.03,
+      "perTrade" : 2.2,
+      "trades" : 16597,
+      "equity" : 36441.95
+    },
+    "validation" : {
+      "maxDrawdown" : 5592.03,
+      "perTrade" : 2.67,
+      "trades" : 5550,
+      "equity" : 14846.67
+    },
+    "evidence" : ""
+  }, {
+    "id" : "M_24h前5_止损5%+ATR×2跟踪",
+    "group" : "momentum",
+    "overrides" : { },
+    "config" : { },
+    "sim" : {
+      "momentum-top" : "5",
+      "momentum-hours" : "24",
+      "stop-fixed" : "5",
+      "trail-atr" : "2"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 3454.6,
+      "perTrade" : 2.37,
+      "trades" : 19116,
+      "equity" : 45379.73
+    },
+    "validation" : {
+      "maxDrawdown" : 1706.75,
+      "perTrade" : 3.25,
+      "trades" : 6207,
+      "equity" : 20180.85
+    },
+    "evidence" : ""
+  }, {
+    "id" : "M_24h前5_每15分钟",
+    "group" : "momentum",
+    "overrides" : { },
+    "config" : { },
+    "sim" : {
+      "momentum-top" : "5",
+      "momentum-hours" : "24",
+      "discover-every" : "1"
+    },
+    "liveCapable" : false,
+    "status" : "PASS",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : true,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 5049.01,
+      "perTrade" : 4.08,
+      "trades" : 17528,
+      "equity" : 71547.71
+    },
+    "validation" : {
+      "maxDrawdown" : 2538.87,
+      "perTrade" : 4.06,
+      "trades" : 5742,
+      "equity" : 23530.86
+    },
+    "evidence" : ""
+  } ]
+}
