@@ -203,12 +203,13 @@ public final class B0Sim extends Sim {
             if (overrides != null && overrides.hasEarlyExit() && pos.costBasis().signum() > 0 && q % 4 == 3) {
                 double avg = pos.costBasis().doubleValue() / pos.qty().doubleValue();
                 double ret = (s.close[q] / avg - 1) * 100;
-                if (overrides.earlyExit(java.time.Duration.between(pos.openedAt(), now(q)), pos.protectArmed(), path.maxNet,
-                        pos.costBasis().doubleValue(), ret)) {
-                    double imp = Costs.impact(vol, pos.costBasis().doubleValue());
-                    double net = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate()) - pos.costBasis().doubleValue();
+                double imp = Costs.impact(vol, pos.costBasis().doubleValue());
+                double net = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate()) - pos.costBasis().doubleValue();
+                String why = overrides.extraExit(java.time.Duration.between(pos.openedAt(), now(q)), pos.protectArmed(), path.maxNet,
+                        pos.costBasis().doubleValue(), net / pos.costBasis().doubleValue() * 100, ret);
+                if (why != null) {
                     path.net(net);
-                    close(pos, q, null, net, com.trendpilot.variant.VariantOverrides.EARLY_EXIT);
+                    close(pos, q, null, net, why);
                     continue;
                 }
             }

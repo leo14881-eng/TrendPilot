@@ -48,23 +48,25 @@ public final class VariantRules {
     }
 
     /**
-     * H2 提前离场判断：只在出现新收盘的 1h K 线时判断一次；现行规则已决定卖出、盘口异常或成交不完整时不判断。
+     * 附加卖出判断（H2 提前离场、exit-rule）：只在出现新收盘的 1h K 线时判断一次；返回卖出原因或 null；现行规则已决定卖出、盘口异常或成交不完整时不判断。
      *
      * @param maxNet 持仓期间最大可退出净利（U），没有记录为 NaN（按本轮净利）
      */
-    public boolean earlyExit(String book, VariantOverrides o, Position pos, ExitDecision d, double maxNet, Kline lastClosedHour,
+    public String earlyExit(String book, VariantOverrides o, Position pos, ExitDecision d, double maxNet, Kline lastClosedHour,
                              Instant now) {
         if (!o.hasEarlyExit() || d.sell() || !"HOLD".equals(d.reason()) || d.notes().contains("ABNORMAL_BOOK_HOLD")
                 || d.fill() == null || !d.fill().complete() || lastClosedHour == null || !(lastClosedHour.close() > 0)) {
-            return false;
+            return null;
         }
         String key = book + ":" + pos.venue() + ":" + pos.symbol() + ":" + pos.openedAt();
         Long prev = lastHour.get(key);
-        if (prev != null && lastClosedHour.openTime() <= prev) return false;
+        if (prev != null && lastClosedHour.openTime() <= prev) return null;
         lastHour.put(key, lastClosedHour.openTime());
         double mx = Double.isNaN(maxNet) ? d.netPnl().doubleValue() : Math.max(maxNet, d.netPnl().doubleValue());
         double ret = (lastClosedHour.close() / pos.avgEntryPrice().doubleValue() - 1) * 100;
-        return o.earlyExit(Duration.between(pos.openedAt(), now), d.updated().protectArmed(), mx, pos.costBasis().doubleValue(), ret);
+        double cost = pos.costBasis().doubleValue();
+        return o.extraExit(Duration.between(pos.openedAt(), now), d.updated().protectArmed(), mx, cost,
+                d.netPnl().doubleValue() / cost * 100, ret);
     }
 
     /** 卖出后清掉记录。 */

@@ -61,7 +61,16 @@ public final class CandidateStudy {
         return c;
     }
 
-    /** 每周自动回测的小格子（H1/H2/H4 的代表档 + rel1h 与每笔金额邻域），共 10 组。 */
+    /** 离线退出回放 / 影子并行里表现好的退出规则（2026-10-26 信号跟踪周报），复用 tracking.ExitRule 同一份实现，共 5 组。 */
+    static List<Candidate> exitRules() {
+        List<Candidate> c = new ArrayList<>();
+        for (String id : new String[]{"C1_L15_T24", "C1_L20_T24", "C1_L25_T24", "S1_L12", "S1_L15"}) {
+            c.add(cand("X_" + id, "exit-rule", "exit-rule=" + id));
+        }
+        return c;
+    }
+
+    /** 每周自动回测的小格子（H1/H2/H4 的代表档、两条退出规则 + rel1h 与每笔金额邻域），共 12 组。 */
     static List<Candidate> weeklyGrid() {
         List<Candidate> c = new ArrayList<>();
         c.add(cand("W_H1_BTC24h>1.5_半仓", "H1", "btc24h-above-pct=1.5,hot-entry=HALF"));
@@ -69,6 +78,8 @@ public final class CandidateStudy {
         c.add(cand("W_H2_24h_浮盈<1%_亏>4%", "H2", "early-exit-hours=24,early-exit-max-mfe-pct=1,early-exit-loss-pct=4"));
         c.add(cand("W_H2_12h_浮盈<1%_亏>4%", "H2", "early-exit-hours=12,early-exit-max-mfe-pct=1,early-exit-loss-pct=4"));
         c.add(cand("W_H4_放量≤4倍", "H4", "max-volume-accel=4"));
+        c.add(cand("W_C1_L15_T24", "exit-rule", "exit-rule=C1_L15_T24"));
+        c.add(cand("W_S1_L12", "exit-rule", "exit-rule=S1_L12"));
         c.add(cand("W_rel1h≥4.5", "rel1h", "min-buy-rel1h=4.5"));
         c.add(cand("W_rel1h≥5.855", "rel1h", "min-buy-rel1h=5.855"));
         c.add(cand("W_rel1h≥7.5", "rel1h", "min-buy-rel1h=7.5"));
@@ -93,12 +104,18 @@ public final class CandidateStudy {
         List<Candidate> cands = new ArrayList<>();
         String gridName = "weekly";
         for (int a = 8; a < args.length; a++) {
+            if (args[a].equals("exitrules")) {
+                cands.addAll(exitRules());
+                gridName = "exitrules";
+                continue;
+            }
             if (args[a].equals("h124")) {
                 cands.addAll(h124());
                 gridName = "h124";
                 continue;
             }
             int colon = args[a].indexOf(':');
+            if (colon <= 0) throw new IllegalArgumentException("候选要写成 名字:key=v,key=v，看不懂：" + args[a]);
             cands.add(new Candidate(args[a].substring(0, colon), "custom", VariantOverrides.parseInline(args[a].substring(colon + 1))));
             gridName = "custom";
         }

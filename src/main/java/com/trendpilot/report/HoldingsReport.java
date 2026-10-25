@@ -558,7 +558,7 @@ public class HoldingsReport {
             case "TIME_SETTLE" -> "到期结算（V1 观察满 72 小时）";
             case "TRAIL_STOP" -> "跟踪止损";
             case "LOW10_EXIT" -> "跌破 10 日低点";
-            default -> reason;
+            default -> reason.startsWith("RULE_") ? "附加卖出规则 " + reason.substring(5) + "（变体规则）" : reason;
         };
     }
 

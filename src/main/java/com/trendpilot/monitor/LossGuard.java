@@ -104,6 +104,24 @@ public class LossGuard {
         return null;
     }
 
+    /**
+     * 同一个币当天（UTC 日）的日线 ATR 只请求一次，V2 和各影子变体共用（日线一天只收盘一次）。
+     * 拿不到（NaN）的只记 10 分钟：同一轮 Monitor 里不重复请求，下一轮再试。
+     */
+    private final Map<String, double[]> atrToday = new ConcurrentHashMap<>();
+    static final long ATR_MISS_TTL_MS = 10 * 60_000L;
+
+    /** 带当天缓存的 {@link #dailyAtrPct}。 */
+    public double dailyAtrCached(com.trendpilot.market.VenueMarket m, String symbol, Instant now) {
+        String key = m.venue() + ":" + symbol + ":" + now.atZone(java.time.ZoneOffset.UTC).toLocalDate();
+        double[] hit = atrToday.get(key);
+        if (hit != null && (!Double.isNaN(hit[0]) || now.toEpochMilli() - hit[1] < ATR_MISS_TTL_MS)) return hit[0];
+        double v = dailyAtrPct(m, symbol, now);
+        if (atrToday.size() > 2000) atrToday.clear();
+        atrToday.put(key, new double[]{v, now.toEpochMilli()});
+        return v;
+    }
+
     /** 日线 ATR14%（新持仓的止损距离用），失败返回 NaN（按默认距离）。联网，锁外调用。 */
     public static double dailyAtrPct(com.trendpilot.market.VenueMarket m, String symbol, Instant now) {
         try {

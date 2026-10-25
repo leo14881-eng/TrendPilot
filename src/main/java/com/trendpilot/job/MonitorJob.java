@@ -308,7 +308,7 @@ public class MonitorJob {
         for (Position p : needAtr) {
             VenueMarket m = markets.get(p.venue());
             if (m == null) continue;
-            double atr = com.trendpilot.monitor.LossGuard.dailyAtrPct(m, p.symbol(), now);
+            double atr = guard.dailyAtrCached(m, p.symbol(), now);
             parallel.provideDailyAtr(p, atr);
             guard.provideDailyAtr(ShadowBook.BOOK, p, atr);
         }
@@ -355,10 +355,9 @@ public class MonitorJob {
                     // 山寨止损：现行规则不卖时再按止损 / 3 天不赚钱离场判断，同一份盘口成交
                     String g = guard.check(ShadowBook.BOOK, pos, d, lastHour.close(), lastHour.openTime(), now);
                     if (g != null) d = com.trendpilot.monitor.LossGuard.asExit(d, g);
-                    if (v2Overrides.hasEarlyExit() && v2Rules.earlyExit(ShadowBook.BOOK, v2Overrides, pos, d,
-                            book.maxNet(pos.symbol()), lastHour, now)) {
-                        d = com.trendpilot.monitor.LossGuard.asExit(d, com.trendpilot.variant.VariantOverrides.EARLY_EXIT);
-                    }
+                    String extra = v2Overrides.hasEarlyExit()
+                            ? v2Rules.earlyExit(ShadowBook.BOOK, v2Overrides, pos, d, book.maxNet(pos.symbol()), lastHour, now) : null;
+                    if (extra != null) d = com.trendpilot.monitor.LossGuard.asExit(d, extra);
                 }
                 apply(gen, now, pos, d, exits, sig == null ? Double.NaN : sig.atr1hPct(),
                         lastHour == null ? Double.NaN : lastHour.close(), lastHour == null ? -1 : lastHour.openTime());

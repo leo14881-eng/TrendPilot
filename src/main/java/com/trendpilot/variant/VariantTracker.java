@@ -154,7 +154,7 @@ public class VariantTracker {
                 continue;
             }
             for (Position pos : guard.needDailyAtr(v.name(), e.getValue())) {
-                guard.provideDailyAtr(v.name(), pos, LossGuard.dailyAtrPct(m, pos.symbol(), now));
+                guard.provideDailyAtr(v.name(), pos, guard.dailyAtrCached(m, pos.symbol(), now));
             }
             for (Position pos : e.getValue()) {
                 try {
@@ -187,9 +187,8 @@ public class VariantTracker {
                 if (lastHour != null && in.info() != null && in.info().trading()) {
                     String g = guard.check(v.name(), pos, d, lastHour.close(), lastHour.openTime(), now);
                     if (g != null) d = LossGuard.asExit(d, g);
-                    if (rules.earlyExit(v.name(), v.overrides(), pos, d, book.maxNet(pos.symbol()), lastHour, now)) {
-                        d = LossGuard.asExit(d, VariantOverrides.EARLY_EXIT);
-                    }
+                    String extra = rules.earlyExit(v.name(), v.overrides(), pos, d, book.maxNet(pos.symbol()), lastHour, now);
+                    if (extra != null) d = LossGuard.asExit(d, extra);
                 }
                 if (fresh && !d.sell()) book.markObserved(pos.symbol(), hour);
                 for (String note : d.notes()) {

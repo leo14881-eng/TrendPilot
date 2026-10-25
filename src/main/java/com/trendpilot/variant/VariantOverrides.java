@@ -22,10 +22,14 @@ import java.util.TreeMap;
 public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double tradeUsdt,
                                Double btc24hAbovePct, Double coin24hMinPct, Double coin24hMaxPct, HotEntry hotEntry,
                                Double maxVolumeAccel,
-                               Double earlyExitHours, Double earlyExitMaxMfePct, Double earlyExitLossPct) {
+                               Double earlyExitHours, Double earlyExitMaxMfePct, Double earlyExitLossPct,
+                               String exitRule) {
 
     public static final String EARLY_EXIT = "EARLY_EXIT";
-    public static final VariantOverrides NONE = new VariantOverrides(null, null, null, null, null, null, null, null, null, null, null);
+    public static final VariantOverrides NONE = new VariantOverrides(null, null, null, null, null, null, null, null, null, null, null, null);
+    /** 可以叠加的离线退出规则族（tracking.ExitRule，只用净收益和持有时间的几种）。 */
+    static final java.util.Set<String> EXIT_RULE_FAMILIES = java.util.Set.of("S1", "C1", "T1", "T2");
+    public static final String RULE_EXIT_PREFIX = "RULE_";
 
     /** 追高时的处理：不开仓，或按一半金额开仓。 */
     public enum HotEntry { SKIP, HALF }
@@ -47,6 +51,9 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         if (anyExit && !allExit) {
             throw new IllegalArgumentException("early-exit-hours、early-exit-max-mfe-pct、early-exit-loss-pct 要一起设置");
         }
+        if (exitRule != null && !EXIT_RULE_FAMILIES.contains(com.trendpilot.tracking.ExitRule.byId(exitRule).family())) {
+            throw new IllegalArgumentException("exit-rule 只支持 S1/C1/T1/T2 族：" + exitRule);
+        }
         if (tradeUsdt != null && tradeUsdt > 5000) throw new IllegalArgumentException("trade-usdt 影子变体每笔最多 5000");
     }
 
@@ -60,6 +67,7 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         if (raw == null || raw.isEmpty()) return NONE;
         Double rel = null, depth = null, trade = null, btc = null, cMin = null, cMax = null, vol = null, h = null, mfe = null, loss = null;
         HotEntry hot = null;
+        String rule = null;
         for (var e : raw.entrySet()) {
             String k = e.getKey().trim().toLowerCase(Locale.ROOT).replace('_', '-');
             String v = String.valueOf(e.getValue()).trim();
@@ -79,11 +87,12 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
                 case "early-exit-hours" -> h = num(k, v);
                 case "early-exit-max-mfe-pct" -> mfe = num(k, v);
                 case "early-exit-loss-pct" -> loss = num(k, v);
+                case "exit-rule" -> rule = v;
                 default -> throw new IllegalArgumentException("不认识的变体参数 " + e.getKey());
             }
         }
         if (hot != null && btc == null && cMin == null) throw new IllegalArgumentException("hot-entry 需要 btc24h-above-pct 或 coin24h-band-pct");
-        return new VariantOverrides(rel, depth, trade, btc, cMin, cMax, hot, vol, h, mfe, loss);
+        return new VariantOverrides(rel, depth, trade, btc, cMin, cMax, hot, vol, h, mfe, loss, rule);
     }
 
     /** 命令行写法 "key=v,key=v"（回测入口和 candidates.json 用）。 */
@@ -126,6 +135,7 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         put(m, "early-exit-hours", earlyExitHours);
         put(m, "early-exit-max-mfe-pct", earlyExitMaxMfePct);
         put(m, "early-exit-loss-pct", earlyExitLossPct);
+        if (exitRule != null) m.put("exit-rule", exitRule);
         return m;
     }
 
@@ -158,8 +168,27 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         return btc24hAbovePct != null || coin24hMinPct != null || maxVolumeAccel != null;
     }
 
+    /** 有没有每根 1h 收盘判断一次的附加卖出规则（H2 提前离场，或离线回放里的 exit-rule）。 */
     public boolean hasEarlyExit() {
-        return earlyExitHours != null;
+        return earlyExitHours != null || exitRule != null;
+    }
+
+    /**
+     * 附加卖出判断（每根新收盘的 1h K 线一次）：先看 H2，再看 exit-rule（复用 tracking.ExitRule 的同一份实现）。
+     *
+     * @param netPct     当前全数量卖出的净收益（%，扣手续费和滑点）
+     * @param rawPct     最近 1h 收盘相对均价（%）
+     * @param maxNetUsdt 持仓期间最大可退出净利（U）
+     * @return 卖出原因（EARLY_EXIT 或 RULE_&lt;规则编号&gt;），不卖为 null
+     */
+    public String extraExit(Duration held, boolean protectArmed, double maxNetUsdt, double cost, double netPct, double rawPct) {
+        if (earlyExitHours != null && earlyExit(held, protectArmed, maxNetUsdt, cost, rawPct)) return EARLY_EXIT;
+        if (exitRule == null || !(cost > 0) || Double.isNaN(netPct) || Double.isNaN(rawPct)) return null;
+        var rule = com.trendpilot.tracking.ExitRule.byId(exitRule);
+        double peak = Double.isNaN(maxNetUsdt) ? netPct : Math.max(netPct, maxNetUsdt / cost * 100);
+        String hit = rule.check(new com.trendpilot.tracking.ExitRule.State(netPct, rawPct, held.toMinutes() / 60.0, peak, Double.NaN,
+                Double.NaN));
+        return hit == null ? null : RULE_EXIT_PREFIX + hit;
     }
 
     public double minBuyRel1hOr(double dflt) {
@@ -205,9 +234,20 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
      * @param hourRetPct  最近一根已收盘 1h K 线收盘价相对均价的涨跌（%）
      */
     public boolean earlyExit(Duration held, boolean protectArmed, double maxNetUsdt, double cost, double hourRetPct) {
-        if (!hasEarlyExit() || protectArmed || !(cost > 0) || Double.isNaN(maxNetUsdt) || Double.isNaN(hourRetPct)) return false;
+        if (earlyExitHours == null || protectArmed || !(cost > 0) || Double.isNaN(maxNetUsdt) || Double.isNaN(hourRetPct)) return false;
         if (held.toMinutes() < Math.round(earlyExitHours * 60)) return false;
         return maxNetUsdt < cost * earlyExitMaxMfePct / 100 && hourRetPct < -earlyExitLossPct;
+    }
+
+    private static String ruleLabel(String id) {
+        var r = com.trendpilot.tracking.ExitRule.byId(id);
+        return switch (r.family()) {
+            case "S1" -> "（净亏 ≥ " + fmt(r.params().get("L")) + "% 卖）";
+            case "C1" -> "（净亏 ≥ " + fmt(r.params().get("L")) + "% 或持有 ≥ " + fmt(r.params().get("T")) + "h 仍亏就卖）";
+            case "T1" -> "（持有 ≥ " + fmt(r.params().get("T")) + "h 净收益 < " + fmt(r.params().get("g")) + "% 卖）";
+            case "T2" -> "（持有 ≥ " + fmt(r.params().get("T")) + "h 净亏 ≥ " + fmt(r.params().get("L2")) + "% 卖）";
+            default -> "";
+        };
     }
 
     /** 中文简述（日报、Telegram 用）。 */
@@ -224,6 +264,7 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         if (earlyExitHours != null) {
             p.add("持有 " + fmt(earlyExitHours) + "h 最大浮盈 < " + fmt(earlyExitMaxMfePct) + "% 且亏 > " + fmt(earlyExitLossPct) + "% 离场");
         }
+        if (exitRule != null) p.add("附加卖出 " + exitRule + ruleLabel(exitRule));
         return String.join("；", p);
     }
 }

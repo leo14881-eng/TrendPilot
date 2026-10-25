@@ -58,4 +58,18 @@ class VariantOverridesTest {
         assertThat(o.earlyExit(day, false, 5, 1000, Double.NaN)).isFalse();
         assertThat(VariantOverrides.NONE.earlyExit(day, false, -50, 1000, -50)).isFalse();
     }
+
+    @Test
+    void exitRuleReusesTrackingRuleDefinitions() {
+        VariantOverrides c1 = VariantOverrides.parseInline("exit-rule=C1_L15_T24");
+        assertThat(c1.hasEarlyExit()).isTrue();
+        assertThat(c1.extraExit(Duration.ofHours(2), false, 0, 1000, -16, -15.8)).isEqualTo("RULE_C1_L15_T24");
+        assertThat(c1.extraExit(Duration.ofHours(2), false, 0, 1000, -5, -4.8)).isNull();
+        assertThat(c1.extraExit(Duration.ofHours(24), false, 0, 1000, -0.5, -0.3)).isEqualTo("RULE_C1_L15_T24");
+        assertThat(c1.extraExit(Duration.ofHours(24), false, 0, 1000, Double.NaN, -0.3)).isNull();
+        VariantOverrides s1 = VariantOverrides.parseInline("exit-rule=S1_L12");
+        assertThat(s1.extraExit(Duration.ofHours(1), false, 0, 1000, -12.5, -12)).isEqualTo("RULE_S1_L12");
+        assertThatThrownBy(() -> VariantOverrides.parseInline("exit-rule=P1_a5_D10")).hasMessageContaining("S1/C1/T1/T2");
+        assertThatThrownBy(() -> VariantOverrides.parseInline("exit-rule=C9")).hasMessageContaining("未知");
+    }
 }

@@ -38,6 +38,11 @@ trendpilot:
     list:
       - { name: V5, base: V2, trade-usdt: "${trendpilot.variants.strong-trade-usdt}", overrides: { min-buy-rel1h: "${trendpilot.variants.strong-min-rel1h}" },
           backtest-passed: true, evidence: "docs/策略对比记录/2026-10-23-V2买入端.md" }
+      # 2026-10-26 H1/H2/H4 回测"有希望但没通过"的两组（docs/策略对比记录/2026-10-26-H1H2H4.md）：作为影子对照跑满 30 天，回测没通过所以不会自动转正
+      - { name: V6, base: V2, trade-usdt: 1000, overrides: { max-volume-accel: 4 }, backtest-passed: false,
+          evidence: "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1810-7e9d813/report.md" }
+      - { name: V7, base: V2, trade-usdt: 1000, overrides: { btc24h-above-pct: 1.5, coin24h-band-pct: "5-10", hot-entry: SKIP },
+          backtest-passed: false, evidence: "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1810-7e9d813/report.md" }
   # 自动优化：变体满 30 天按同期表现自动转正 / 停开新仓，每周读取回测候选（见 com.trendpilot.variant.AutoPromoter）
   optimize:
     auto-promote: true              # 已批准自动转正：只对影子账本 V2 生效（用户 2026-10-26 授权）
