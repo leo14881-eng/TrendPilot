@@ -57,6 +57,15 @@ for t in position v1_position v2d_position v3_position v5_position v3_state loss
          coin_category coin_identity coin_market unlock_schedule variant_trade missed_replay early_seen; do
     tbl "$t"
 done
+# 配置化影子变体：登记表、参数集切换、每日评估，以及每个变体自己的持仓表
+for t in variant_registry param_switch variant_eval; do
+    tbl "$t"
+done
+if has_table variant_registry; then
+    for t in $(sqlite3 -readonly "$DB" "SELECT position_table FROM variant_registry;" 2>/dev/null | grep -E '^[a-z][a-z0-9_]+$'); do
+        [ "$t" = v5_position ] || tbl "$t"
+    done
+fi
 tbl shadow_event "WHERE created_at >= '$SINCE'"
 tbl decision_log "WHERE created_at >= '$RECENT'"
 tbl signal_log "WHERE created_at >= '$RECENT'"

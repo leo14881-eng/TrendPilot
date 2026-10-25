@@ -93,6 +93,12 @@ public abstract class Ledger {
                 .query(String.class).optional().map(Double::parseDouble).orElse(0.0);
     }
 
+    /** 持仓期间最大可退出净利（U）；还没观察过时为 NaN。 */
+    public double maxNet(String symbol) {
+        Double v = excursion(symbol).maxNet();
+        return v == null ? Double.NaN : v;
+    }
+
     /** 本持仓上一次计入论点观察的小时 K 线 openTime；只有出现新的小时 K 线才算新的有效观察。 */
     public boolean isNewObservation(String symbol, long hourOpenTime) {
         Long last = jdbc.sql("SELECT last_obs_hour FROM " + table + " WHERE symbol = :s").param("s", symbol)

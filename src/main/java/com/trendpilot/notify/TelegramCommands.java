@@ -54,6 +54,7 @@ public class TelegramCommands {
             new Cmd("v2", "同 /holdings"),
             new Cmd("status", "运行状态：版本、运行机器、最近一次持仓检查、各账本持仓数"),
             new Cmd("trend", "BTC 均线趋势（4 条均线 × 4 份，单独账本）：各份状态、均线和买卖线、总价值"),
+            new Cmd("rollback", "V2 参数集回滚到上一个（撤销最近一次自动转正，也可以直接回复「回滚」）"),
             new Cmd("help", "指令列表"));
 
     static final String HELP = "可用指令：\n" + String.join("\n",
@@ -88,6 +89,24 @@ public class TelegramCommands {
         this.status = status;
         this.lease = lease;
         this.enabled = enabled && scheduling && props.configured();
+    }
+
+    /** 自动转正的参数集（回滚用）。 */
+    private ObjectProvider<com.trendpilot.variant.ParamSets> paramSets;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setParamSets(ObjectProvider<com.trendpilot.variant.ParamSets> paramSets) {
+        this.paramSets = paramSets;
+    }
+
+    /** /rollback 或文字"回滚"：撤销最近一次自动转正，恢复上一个参数集。 */
+    String rollbackText(Instant now) {
+        var ps = paramSets == null ? null : paramSets.getIfAvailable();
+        if (ps == null) return "参数集暂时取不到，请稍后再试。";
+        return ps.rollback(now).map(s -> "↩️ 已回滚：撤销 " + s.variant() + " 的自动转正，V2 恢复为"
+                        + (s.from().isBlank() ? "基准参数（application.yml）" : "上一个参数集（" + com.trendpilot.variant.VariantOverrides.parseInline(s.from()).describe() + "）")
+                        + "。下一次 Discovery 起生效，已有持仓照常管理。")
+                .orElse("现在没有自动转正过的参数集可以回滚（V2 用的是基准参数）。如果要回滚某次代码发布，请在对话里说明。");
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -244,6 +263,7 @@ public class TelegramCommands {
             case "/holdings", "/v2", "v2" -> notifier.send("cmd:" + id, report.telegramText(now));
             case "/status" -> notifier.send("cmd:" + id, status.text(now));
             case "/trend" -> notifier.send("cmd:" + id, trendText());
+            case "/rollback", "回滚" -> notifier.send("cmd:" + id, rollbackText(now));
             case "/help", "/start" -> notifier.send("cmd:" + id, HELP);
             default -> {
                 if (cmd.startsWith("/")) notifier.send("cmd:" + id, "不认识的指令。" + HELP);

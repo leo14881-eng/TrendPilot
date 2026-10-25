@@ -72,6 +72,13 @@ public class SnapshotJob {
         this.zone = ZoneId.of(zone);
     }
 
+    private org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.VariantRegistry> variants;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setVariants(org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.VariantRegistry> variants) {
+        this.variants = variants;
+    }
+
     /** 当前快照内容。 */
     public Map<String, Object> snapshot(Instant now) {
         String since = now.minus(Duration.ofDays(7)).toString();
@@ -79,9 +86,23 @@ public class SnapshotJob {
         s.put("at", now);
         s.put("paramsVersion", jdbc.sql("SELECT params_version FROM decision_log ORDER BY id DESC LIMIT 1")
                 .query(String.class).optional().orElse(null));
-        s.put("books", List.of(v2.stats(), v1.stats(), depthVariant.stats(), strongVariant.stats()));
-        s.put("openPositions", Map.of("V2", v2.positions().size(), "V1", v1.positions().size(),
+        List<Object> books = new java.util.ArrayList<>(List.of(v2.stats(), v1.stats(), depthVariant.stats(), strongVariant.stats()));
+        Map<String, Object> open = new LinkedHashMap<>(Map.of("V2", v2.positions().size(), "V1", v1.positions().size(),
                 "V2D15", depthVariant.positions().size(), "V5", strongVariant.positions().size()));
+        try {
+            var reg = variants == null ? null : variants.getIfAvailable();
+            if (reg != null) {
+                for (var v : reg.all()) {
+                    if (v.name().equals(com.trendpilot.portfolio.StrongVariantBook.BOOK)) continue;
+                    books.add(v.book().stats());
+                    open.put(v.name(), v.book().positions().size());
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("快照里的影子变体读不到：{}", e.getMessage());
+        }
+        s.put("books", books);
+        s.put("openPositions", open);
         s.put("tracking", tracking.summary(now));
         s.put("exitReplay", exitReplay.stats(exitReplay.latest()));
         s.put("parallelShadow", parallel.compare());

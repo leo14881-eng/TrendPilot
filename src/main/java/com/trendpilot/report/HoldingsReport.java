@@ -79,6 +79,19 @@ public class HoldingsReport {
         this.dir = Path.of(dataDir, "reports");
     }
 
+    private org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.VariantRegistry> variants;
+    private org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.ParamSets> paramSets;
+    private org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.AutoPromoter> promoter;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setOptimize(org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.VariantRegistry> variants,
+                     org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.ParamSets> paramSets,
+                     org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.AutoPromoter> promoter) {
+        this.variants = variants;
+        this.paramSets = paramSets;
+        this.promoter = promoter;
+    }
+
     @Scheduled(cron = "0 0 0 * * *", zone = "${trendpilot.zone}")
     public void scheduled() {
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
@@ -251,6 +264,13 @@ public class HoldingsReport {
             out.add("V5 暂时读不到：" + e.getMessage());
             out.add("");
         }
+        // ---------- 其他配置化影子变体 + 自动优化 ----------
+        try {
+            variantSection(out, dayStart, dayEnd, now, v1Detail, realized + net);
+        } catch (RuntimeException e) {
+            out.add("影子变体暂时读不到：" + e.getMessage());
+            out.add("");
+        }
         // ---------- BTC 每日短线 ----------
         out.add("## 六、BTC 每日短线（影子）");
         out.add("");
@@ -381,6 +401,48 @@ public class HoldingsReport {
         }
     }
 
+    /**
+     * 五（续）：V5 以外的配置化影子变体（每个一行合计和参数）、V2 当前参数集、最近一次自动转正评估。
+     * 正文（detail = false）只放这些行；变体的持仓明细只放 .md 版。
+     */
+    private void variantSection(List<String> out, Instant dayStart, Instant dayEnd, Instant now, boolean detail, double v2Total) {
+        var reg = variants == null ? null : variants.getIfAvailable();
+        if (reg == null) return;
+        List<com.trendpilot.variant.VariantRegistry.Variant> others = reg.all().stream()
+                .filter(v -> !v.name().equals(com.trendpilot.portfolio.StrongVariantBook.BOOK)).toList();
+        out.add("## 五（续）、其他影子变体与自动优化");
+        out.add("");
+        var ps = paramSets == null ? null : paramSets.getIfAvailable();
+        if (ps != null) out.add("- " + ps.line());
+        if (others.isEmpty()) out.add("- 没有其他影子变体");
+        for (var v : others) {
+            List<Row> rows = rows(v.book());
+            double net = rows.stream().mapToDouble(Row::net).sum();
+            double realized = v.book().realizedPnl();
+            out.add(String.format(Locale.ROOT, "- **%s**（%s，%s 起）合计 %s U%s；持仓 %d 个；当天买 %d 卖 %d。%s",
+                    v.name(), com.trendpilot.variant.VariantRegistry.statusLabel(v.status()),
+                    v.startedAt().atZone(zone).toLocalDate(), signed(realized + net), dayChange(v.name(), dayStart, realized + net),
+                    rows.size(), buys(v.name(), dayStart, dayEnd).size(), sells(v.name(), dayStart, dayEnd).size(),
+                    v.overrides().describe()));
+        }
+        var pr = promoter == null ? null : promoter.getIfAvailable();
+        if (pr != null) pr.latestLines().forEach(l -> out.add("- 评估：" + l));
+        out.add("");
+        if (!detail) return;
+        for (var v : others) {
+            List<Row> rows = rows(v.book());
+            if (rows.isEmpty()) continue;
+            out.add("### " + v.name() + " 持仓");
+            out.add("");
+            out.add("| 代码 | 交易所 | 成本 | 浮动盈亏 | 收益率 | 持有 |");
+            out.add("|---|---|---:|---:|---:|---:|");
+            rows.stream().sorted(Comparator.comparingDouble(Row::pct)).forEach(r -> out.add(String.format(Locale.ROOT,
+                    "| %s | %s | %s | %s | %s | %s |", r.p().symbol().replace("USDT", ""), r.p().venue(), money(r.cost()),
+                    signed(r.net()), pct(r.pct()), hours(r.p().openedAt(), now))));
+            out.add("");
+        }
+    }
+
     /** 累计最大单笔亏损（U）；没有亏损的平仓时显示"无"。 */
     private String worstLoss(String book) {
         return jdbc.sql("""
@@ -492,6 +554,7 @@ public class HoldingsReport {
             case "HARD_INVALID_LIQUIDITY" -> "流动性异常";
             case "STOP_LOSS" -> "止损（日线波动 ×1.5）";
             case "STALE_EXIT" -> "3 天没赚钱，反弹高点离场";
+            case "EARLY_EXIT" -> "一直没赚过，提前离场（变体规则）";
             case "TIME_SETTLE" -> "到期结算（V1 观察满 72 小时）";
             case "TRAIL_STOP" -> "跟踪止损";
             case "LOW10_EXIT" -> "跌破 10 日低点";

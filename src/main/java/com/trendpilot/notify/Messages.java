@@ -43,6 +43,7 @@ public final class Messages {
         return switch (reason) {
             case "STOP_LOSS" -> "STOP_LOSS 止损（跌破买入时日线波动 ×1.5 或 −30%）";
             case "STALE_EXIT" -> "STALE_EXIT 持有 3 天仍亏损，反弹高点离场";
+            case "EARLY_EXIT" -> "EARLY_EXIT 持有期间一直没赚过且亏损超过线，提前离场（已转正的参数）";
             default -> reason;
         };
     }

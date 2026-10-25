@@ -1,0 +1,80 @@
+# 每周自动回测（docs/规则说明.md "自动优化"）：每周六用最新数据对一组小型候选参数（H1/H2/H4、rel1h 与每笔金额邻域，
+# 见 CandidateStudy.weeklyGrid）跑 4 年回测和发布前检查。结果推到 backtest-results 分支：
+#   results/<时间>-<提交>/        完整报告和交易明细（证据）
+#   candidates/candidates.json   最新一次的候选结论（服务器每周日读取，status = PASS 的作为影子变体上线，先跑满 30 天）
+# 只用公开数据 data.binance.vision，不占交易所接口限流；不在服务器上跑（2 vCPU / 4GB 不够）。也可以手动触发。
+name: Backtest weekly
+
+on:
+  schedule:
+    - cron: '17 2 * * 6'   # 每周六 02:17 UTC = 越南 09:17
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backtest-weekly
+  cancel-in-progress: false
+
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: 时间段（最后一天 = 昨天；验证期 = 最后 16 个月）
+        id: span
+        run: |
+          last=$(date -u -d 'yesterday' +%F)
+          echo "last=$last" >> "$GITHUB_OUTPUT"
+          echo "to=$(date -u -d "$(date -u +%Y-%m-01) -1 day" +%Y-%m)" >> "$GITHUB_OUTPUT"
+          echo "split=$(date -u -d "$last +1 day -16 months" +%F)" >> "$GITHUB_OUTPUT"
+          echo "run=results/$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}-weekly" >> "$GITHUB_OUTPUT"
+      - name: K 线缓存
+        uses: actions/cache@v4
+        with:
+          path: backtest-data
+          key: backtest-data-v1-weekly-${{ github.run_id }}
+          restore-keys: |
+            backtest-data-v1-weekly-
+            backtest-data-v1-
+      - name: 编译
+        run: |
+          sh ./mvnw -B -q -DskipTests package
+          sh ./mvnw -B -q dependency:build-classpath -Dmdep.outputFile=cp.txt
+      - name: 回测与发布前检查
+        env:
+          EVIDENCE_URL: https://github.com/${{ github.repository }}/blob/backtest-results/${{ steps.span.outputs.run }}
+        run: |
+          java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.CandidateStudy backtest-data backtest-out \
+            2022-09 ${{ steps.span.outputs.to }} ${{ steps.span.outputs.last }} 2022-10-01 ${{ steps.span.outputs.split }} 4
+      - name: 结果推到 backtest-results 分支
+        run: |
+          RUN=${{ steps.span.outputs.run }}
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          if git fetch -q origin backtest-results; then
+            git worktree add -q /tmp/res FETCH_HEAD
+            cd /tmp/res && git checkout -q -B backtest-results
+          else
+            git worktree add -q --detach /tmp/res
+            cd /tmp/res && git checkout -q --orphan backtest-results && git rm -rqf .
+          fi
+          mkdir -p "$RUN" candidates/history && cp "$GITHUB_WORKSPACE"/backtest-out/* "$RUN"/
+          cp "$GITHUB_WORKSPACE"/backtest-out/candidates.json candidates/candidates.json
+          cp "$GITHUB_WORKSPACE"/backtest-out/candidates.json "candidates/history/$(date -u +%F).json"
+          git add -A && git commit -qm "每周回测候选 $RUN" && git push -q origin backtest-results
+          echo "结果目录：$RUN"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backtest-weekly-out
+          path: backtest-out/

@@ -88,6 +88,51 @@ public class HealthJob {
         this.zone = ZoneId.of(zone);
     }
 
+    private org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.VariantRegistry> variants;
+    private org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.ParamSets> paramSets;
+    private org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.AutoPromoter> promoter;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setOptimize(org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.VariantRegistry> variants,
+                     org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.ParamSets> paramSets,
+                     org.springframework.beans.factory.ObjectProvider<com.trendpilot.variant.AutoPromoter> promoter) {
+        this.variants = variants;
+        this.paramSets = paramSets;
+        this.promoter = promoter;
+    }
+
+    /** V5 以外的影子变体：(简版一行, 完整一行)；读不到时返回空。 */
+    private List<String[]> variantLines() {
+        List<String[]> out = new ArrayList<>();
+        try {
+            var reg = variants == null ? null : variants.getIfAvailable();
+            if (reg == null) return out;
+            for (var v : reg.all()) {
+                if (v.name().equals(com.trendpilot.portfolio.StrongVariantBook.BOOK)) continue;
+                var st = v.book().stats();
+                String tag = "（" + com.trendpilot.variant.VariantRegistry.statusLabel(v.status()) + "：" + v.overrides().describe() + "）";
+                out.add(new String[]{st.shortLine() + tag, st.line() + tag});
+            }
+        } catch (RuntimeException e) {
+            out.add(new String[]{"影子变体暂时读不到", "影子变体暂时读不到：" + e.getMessage()});
+        }
+        return out;
+    }
+
+    /** 自动优化：V2 参数集一行 + 最近一次评估（每个变体一行）。 */
+    private List<String> optimizeLines() {
+        List<String> out = new ArrayList<>();
+        try {
+            var ps = paramSets == null ? null : paramSets.getIfAvailable();
+            if (ps != null) out.add(ps.line());
+            var pr = promoter == null ? null : promoter.getIfAvailable();
+            if (pr != null) pr.latestLines().forEach(l -> out.add("评估 " + l));
+        } catch (RuntimeException e) {
+            out.add("自动优化状态暂时读不到");
+        }
+        return out;
+    }
+
     /** 自检中发现的一项异常；key 用于判断"是不是同一个异常"，text 用于展示。 */
     public record Problem(String key, String text) {
     }
@@ -341,6 +386,10 @@ public class HealthJob {
         b.add(v2Stats.shortLine());
         b.add(dStats.shortLine() + "（深度门槛放宽，对照用）");
         b.add(sStats.shortLine() + "（强信号买入，对照用）");
+        List<String[]> vLines = variantLines();
+        vLines.forEach(l -> b.add(l[0]));
+        List<String> opt = optimizeLines();
+        opt.forEach(b::add);
         b.add(v1Stats.shortLine() + "（观察账本，按参考价记账）");
         b.add("");
         b.add(tracking);
@@ -362,6 +411,10 @@ public class HealthJob {
         f.add("- " + v1Stats.line());
         f.add("- " + dStats.line() + "（深度门槛放宽到 15000 时多买的币，对照用）");
         f.add("- " + sStats.line() + "（只买 1h 相对 BTC 明显走强的币，与 V2 同期对比，对照用）");
+        vLines.forEach(l -> f.add("- " + l[1]));
+        f.add("");
+        f.add("## 自动优化");
+        opt.forEach(l -> f.add("- " + l));
         f.add("");
         f.add("注：V2 按全数量盘口模拟成交，V1 按参考价 + 手续费记账，V1 收益不能当作可执行收益；最大回撤含浮亏。");
         f.add("");

@@ -89,7 +89,8 @@ public class DiscoveryJob {
     private final SignalTracker tracker;
     private final com.trendpilot.market.KlineStore klineStore;
     private final com.trendpilot.observation.DepthVariantTracker depthVariant;
-    private final com.trendpilot.observation.StrongVariantTracker strongVariant;
+    private final com.trendpilot.variant.VariantTracker variants;
+    private final com.trendpilot.variant.ParamSets paramSets;
 
     private final org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease;
     /** 锁外抓的盘口进入审核时最多这么旧。 */
@@ -109,9 +110,11 @@ public class DiscoveryJob {
                         SignalTracker tracker, com.trendpilot.market.KlineStore klineStore,
                         org.springframework.beans.factory.ObjectProvider<com.trendpilot.lease.ActiveLease> lease,
                         com.trendpilot.observation.DepthVariantTracker depthVariant,
-                        com.trendpilot.observation.StrongVariantTracker strongVariant) {
+                        com.trendpilot.variant.VariantTracker variants,
+                        com.trendpilot.variant.ParamSets paramSets) {
         this.depthVariant = depthVariant;
-        this.strongVariant = strongVariant;
+        this.variants = variants;
+        this.paramSets = paramSets;
         this.lease = lease;
         this.tracker = tracker;
         this.klineStore = klineStore;
@@ -321,7 +324,9 @@ public class DiscoveryJob {
             if (books.isEmpty() && !fetchedBooks.isEmpty()) log.warn("Discovery 盘口已超过 {} 秒，本轮不买入", MAX_BOOK_AGE.toSeconds());
             List<ReviewResult> results = new ArrayList<>();
             List<ReviewResult> relaxed = new ArrayList<>();
-            List<ReviewResult> strong = new ArrayList<>();
+            // 配置化影子变体（V5、V6…）本轮的待买清单；V2 已转正的参数改动（没有转正过时为空，V2 按基准审核，和以前完全一样）
+            com.trendpilot.variant.VariantTracker.Round variantRound = variants.round();
+            com.trendpilot.variant.VariantOverrides v2Overrides = paramSets.current();
             Map<String, Venue> venueOf = new LinkedHashMap<>();
             for (Candidate c : candidates) {
                 EarlySignal s = c.signal();
@@ -338,7 +343,8 @@ public class DiscoveryJob {
                 ReviewInput in = new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
                         books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), pos,
                         lastExit, researched.get(s.symbol()), earlySinceExit, postExitHit);
-                ReviewResult v2 = reviewer.review(in);
+                ReviewResult v2 = v2Overrides.isEmpty() ? reviewer.review(in)
+                        : com.trendpilot.variant.VariantRules.review(reviewer, params, in, v2Overrides);
                 results.add(v2);
                 venueOf.put(s.symbol(), c.venue());
                 // 深度门槛放宽对照（V2D15）：V2 只因深度不足被拒的新开仓，用对照账本自己的卖出记录、放宽后的深度门槛重新审核
@@ -352,23 +358,17 @@ public class DiscoveryJob {
                             books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), null,
                             vExit, researched.get(s.symbol()), vEarly, vHit), depthVariant.minDepthUsdt()));
                 }
-                // 强信号对照（V5）：每个候选独立判断（不看 V2 结论），V5 没有这个币时，用 V5 自己的卖出记录、
-                // 正常深度门槛，另加新开仓 1h 相对 BTC 门槛重新审核；出错只记日志，不影响 V2
-                try {
-                    var sb = strongVariant.book();
-                    if (sb.position(s.symbol()).isEmpty() && strongVariant.tradeUsdt() > 0) {
-                        Instant sExit = sb.lastExit(s.symbol()).orElse(null);
-                        int sEarly = sExit == null ? 0 : book.earlyObservationsSince(s.symbol(), sExit);
-                        boolean sHit = sExit == null || !EarlySignalCalculator
-                                .hitsAfter(pool.bars().bars().get(s.symbol()), s, sExit).isEmpty();
-                        strong.add(reviewer.review(new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
-                                books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), null,
-                                sExit, researched.get(s.symbol()), sEarly, sHit),
-                                params.review().minDepthUsdt(), strongVariant.minRel1h(), strongVariant.tradeUsdt()));
-                    }
-                } catch (RuntimeException e) {
-                    log.warn("V5 {} 本轮审核出错，跳过：{}", s.symbol(), e.toString());
-                }
+                // 配置化影子变体（V5 强信号、V6…）：每个候选独立判断（不看 V2 结论），变体没有这个币时，用变体自己的卖出记录、
+                // V2 的审核规则加变体的参数改动重新审核；出错只记日志，不影响 V2
+                variantRound.review(s.symbol(), vb -> {
+                    Instant vExit = vb.lastExit(s.symbol()).orElse(null);
+                    int vEarly = vExit == null ? 0 : book.earlyObservationsSince(s.symbol(), vExit);
+                    boolean vHit = vExit == null || !EarlySignalCalculator
+                            .hitsAfter(pool.bars().bars().get(s.symbol()), s, vExit).isEmpty();
+                    return new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
+                            books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), null,
+                            vExit, researched.get(s.symbol()), vEarly, vHit);
+                });
             }
             // 不在候选中的 EARLY 只记录首次出现价格
             early.stream().filter(c -> !candidates.contains(c))
@@ -398,9 +398,9 @@ public class DiscoveryJob {
             v1Entries.addAll(v1.enter(gen, now, v1Candidates, v1Risk));
             depthVariant.enter(gen, now, venueOf, relaxed);
             try {
-                strongVariant.enter(gen, now, venueOf, strong);
+                variantRound.enter(gen, now, venueOf);
             } catch (RuntimeException e) {
-                log.warn("V5 强信号对照本轮买入出错，跳过：{}", e.toString());
+                log.warn("影子变体本轮买入出错，跳过：{}", e.toString());
             }
             for (ReviewResult r : results) {
                 logDecision(gen, venueOf.get(r.symbol()), r, alloc.funded().contains(r), alloc.unfunded().contains(r), now);

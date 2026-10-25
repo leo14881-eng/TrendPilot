@@ -32,7 +32,26 @@ trendpilot:
   variants:
     depth-min-usdt: 15000   # 深度门槛对照账本 V2D15 用的放宽深度（只做影子对比，不影响 V2）
     strong-trade-usdt: 2000 # V5 每笔金额（U），只作用于 V5；V2 / V2D15 / V1 仍用 capital.trade-size（用户 2026-10-23 要求）
-    strong-min-rel1h: 5.855 # 强信号对照账本 V5：新开仓要求 1h 相对 BTC 收益至少这么多（%），只做影子对比，不影响 V2（2026-10-23 起，约 11-07 评估）
+    strong-min-rel1h: 5.855 # 强信号对照账本 V5：新开仓要求 1h 相对 BTC 收益至少这么多（%），只做影子对比，不影响 V2（2026-10-23 起，11-07 中期查看，满 30 天约 11-22 评估）
+    # 配置化影子变体（docs/规则说明.md "自动优化"）：每个 = V2 基准 + 参数改动，独立记账、不占 V2 资金、不发开仓 Telegram。
+    # base 只能是 V2；最多 3 个同时开新仓；名字改了参数会让同期对比重新计时。V5 继续用原来的 v5_position，数据不动。
+    list:
+      - { name: V5, base: V2, trade-usdt: "${trendpilot.variants.strong-trade-usdt}", overrides: { min-buy-rel1h: "${trendpilot.variants.strong-min-rel1h}" },
+          backtest-passed: true, evidence: "docs/策略对比记录/2026-10-23-V2买入端.md" }
+  # 自动优化：变体满 30 天按同期表现自动转正 / 停开新仓，每周读取回测候选（见 com.trendpilot.variant.AutoPromoter）
+  optimize:
+    auto-promote: true              # 已批准自动转正：只对影子账本 V2 生效（用户 2026-10-26 授权）
+    real-money-auto-promote: false  # 以后有真钱账本时，自动改真钱规则必须用户明确同意后才能打开
+    min-days: 30                    # 一个变体完整测试一个月再评估转正 / 淘汰（用户 2026-10-26）
+    early-stop-days: 14             # 满 14 天回撤已超过 V2 × 1.5 的提前停开新仓
+    early-stop-dd-ratio: 1.5
+    min-closed: 20
+    promote-dd-ratio: 1.1
+    retire-dd-ratio: 1.3
+    max-active: 3
+    formal-change-days: 14          # 正式规则最多每 2 周换一次
+    last-formal-change: "2026-10-23"  # V2 上次正式改动（恢复基准）
+    candidates-url: https://raw.githubusercontent.com/leo14881-eng/TrendPilot/backtest-results/candidates/candidates.json
   zone: Asia/Ho_Chi_Minh
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}

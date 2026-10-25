@@ -51,6 +51,29 @@ class TelegramCommandsTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void rollbackByCommandOrPlainWordRestoresPreviousParameterSet() {
+        Notifier notifier = mock(Notifier.class);
+        TelegramCommands c = new TelegramCommands(new TelegramProperties("1:t", "42", null), new ObjectMapper(), notifier,
+                mock(AppState.class), mock(HoldingsReport.class), mock(StatusText.class), mock(ObjectProvider.class), true, true);
+        com.trendpilot.variant.ParamSets ps = mock(com.trendpilot.variant.ParamSets.class);
+        ObjectProvider<com.trendpilot.variant.ParamSets> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(ps);
+        c.setParamSets(provider);
+        Instant now = Instant.parse("2026-11-23T01:00:00Z");
+        when(ps.rollback(any(Instant.class)))
+                .thenReturn(java.util.Optional.of(new com.trendpilot.variant.ParamSets.Switch(1, "PROMOTE", "V6", "", "max-volume-accel=4", now, false)))
+                .thenReturn(java.util.Optional.empty());
+        c.handle("""
+                {"ok":true,"result":[
+                 {"update_id":20,"message":{"chat":{"id":42},"text":"回滚"}},
+                 {"update_id":21,"message":{"chat":{"id":42},"text":"/rollback"}}
+                ]}""", now);
+        verify(notifier).send(eq("cmd:20"), contains("已回滚：撤销 V6"));
+        verify(notifier).send(eq("cmd:21"), contains("没有自动转正过的参数集"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void failedCommandIsRetriedNotSkippedUpToFiveTimes() {
         Notifier notifier = mock(Notifier.class);
         AppState state = mock(AppState.class);
@@ -143,11 +166,11 @@ class TelegramCommandsTest {
             assertThat(c.description()).isNotBlank().hasSizeLessThanOrEqualTo(256);
         }
         assertThat(TelegramCommands.MENU).extracting(TelegramCommands.Cmd::name)
-                .containsExactly("holdings", "v2", "status", "trend", "help");
+                .containsExactly("holdings", "v2", "status", "trend", "rollback", "help");
         @SuppressWarnings("unchecked")
         java.util.List<java.util.Map<String, String>> cmds =
                 (java.util.List<java.util.Map<String, String>>) TelegramCommands.menuRequest().get("commands");
-        assertThat(cmds).hasSize(5);
+        assertThat(cmds).hasSize(6);
         assertThat(cmds.get(0)).containsEntry("command", "holdings").containsEntry("description", "当前持仓、当天盈亏和资金情况");
     }
 

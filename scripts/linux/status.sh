@@ -27,7 +27,10 @@ sqlite3 -readonly "$DB" "SELECT job, started_at, program_status, substr(data_sta
 q() { sqlite3 -readonly -separator ' ' "$DB" "$1" 2>/dev/null || echo "取不到"; }
 echo "--- 账本概况（今天按越南时间）"
 day_start=$(date -u -d "$(date +%F) 00:00" +%Y-%m-%dT%H:%M:%S 2>/dev/null)
-for pair in V2:position V2D15:v2d_position V5:v5_position V1:v1_position V3:v3_position; do
+# 配置化影子变体（V5、V6…）从登记表自动列出；旧数据库没有登记表时只列 V5
+variant_pairs=$(sqlite3 -readonly -separator ':' "$DB" "SELECT name, position_table FROM variant_registry WHERE status != 'ARCHIVED' ORDER BY LENGTH(name), name;" 2>/dev/null | grep -E '^V[0-9A-Z]+:[a-z0-9_]+$' | tr '\n' ' ')
+[ -n "$variant_pairs" ] || variant_pairs="V5:v5_position"
+for pair in V2:position V2D15:v2d_position $variant_pairs V1:v1_position V3:v3_position; do
     book=${pair%%:*}; table=${pair#*:}
     echo "$book 持仓 $(q "SELECT COUNT(*) FROM $table;")  今天开仓 $(q "SELECT COUNT(*) FROM shadow_event WHERE book='$book' AND type='BUY' AND created_at >= '$day_start';")  今天平仓 $(q "SELECT COUNT(*) FROM shadow_event WHERE book='$book' AND type='SELL' AND created_at >= '$day_start';")"
 done
@@ -62,6 +65,9 @@ echo "  $(q "SELECT (SELECT COUNT(*) FROM position), (SELECT ROUND(IFNULL(SUM(CA
             AND created_at >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));")"
 echo "  额度参考：硬顶 20000 × 行情比例（RISK_OFF 0.60 / NEUTRAL 0.75 / CONSTRUCTIVE 0.85 / STRONG 0.95）× 恢复系数（正常 1，减半 0.5）− 占用成本 + 亏损部分"
 echo "  V2 各持仓（symbol tranches 成本 浮动净值）：$(q "SELECT GROUP_CONCAT(symbol || ':' || tranches || ':' || ROUND(CAST(cost_basis AS REAL),0) || ':' || ROUND(CAST(mark_net AS REAL),1), '  ') FROM position;")"
+echo "--- 自动优化（V2 参数集、最近一次评估）"
+echo "  V2 参数集：$(q "SELECT IFNULL((SELECT value FROM app_state WHERE key = 'params:V2'), '基准');")"
+q "SELECT day, variant, decision, substr(reason, 1, 120) FROM variant_eval WHERE day = (SELECT MAX(day) FROM variant_eval) ORDER BY id;" | sed 's/^/  /'
 echo "--- 风控状态（app_state）"
 q "SELECT key, substr(value,1,80) FROM app_state WHERE key LIKE '%regime%' OR key LIKE '%recover%' OR key LIKE '%streak%'
    OR key LIKE '%freeze%' OR key LIKE '%shock%' OR key LIKE '%crash%' ORDER BY key LIMIT 15;" | sed 's/^/  /'

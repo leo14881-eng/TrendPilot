@@ -41,6 +41,13 @@ public class StatusText {
         this.btc = btc;
     }
 
+    private ObjectProvider<com.trendpilot.variant.VariantRegistry> variants;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setVariants(ObjectProvider<com.trendpilot.variant.VariantRegistry> variants) {
+        this.variants = variants;
+    }
+
     @org.springframework.beans.factory.annotation.Autowired
     public StatusText(JdbcClient jdbc, StrategyParams params, ObjectProvider<Ledger> books, ObjectProvider<ActiveLease> lease) {
         this(jdbc, params, books, lease, Path.of("app", "version.txt"));
@@ -81,6 +88,13 @@ public class StatusText {
         lines.add("持仓数：" + safe(() -> {
             List<String> parts = new ArrayList<>();
             books.orderedStream().forEach(b -> parts.add(b.book() + " " + b.positions().size()));
+            var reg = variants == null ? null : variants.getIfAvailable();
+            if (reg != null) {
+                for (var v : reg.all()) {
+                    if (v.name().equals(com.trendpilot.portfolio.StrongVariantBook.BOOK)) continue;
+                    parts.add(v.name() + " " + v.book().positions().size());
+                }
+            }
             Double qty = jdbc.sql("SELECT qty FROM btc_daily_state WHERE id = 1").query(Double.class).optional().orElse(0.0);
             parts.add("BTC短线 " + (qty != null && qty > 0 ? "持仓中" : "空仓"));
             return String.join("，", parts);

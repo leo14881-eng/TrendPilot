@@ -47,10 +47,16 @@ summary() {
     echo "|---|---:|---:|---:|---:|---:|---:|"
     book V2 position
     book V2D15 v2d_position
-    book V5 v5_position
+    # 配置化影子变体（V5、V6…）从登记表自动列出；旧数据库没有登记表时只列 V5
+    variants=$(sqlite3 -readonly -separator ' ' "$DB" "SELECT name, position_table FROM variant_registry WHERE status != 'ARCHIVED' ORDER BY LENGTH(name), name;" 2>/dev/null | grep -E '^V[0-9A-Z]+ [a-z0-9_]+$')
+    [ -n "$variants" ] || variants="V5 v5_position"
+    while read -r vname vtable; do
+        [ -n "$vname" ] && book "$vname" "$vtable"
+    done <<< "$variants"
     book V1 v1_position
     book V3 v3_position
     echo
+    echo "- V2 参数集（自动转正）：$(q "SELECT IFNULL((SELECT value FROM app_state WHERE key = 'params:V2'), '基准');" | tr -cd 'a-z0-9=.,_-' | head -c 200 | sed 's/^$/基准/')"
     echo "- BTC 短线计划（日期 开盘 不开新一轮 金额倍数）：$plan；第 1 档挂单价：$level0"
     echo "- BTC 短线持仓数量（BTC）：$(num "$(q "SELECT qty FROM btc_daily_state WHERE id = 1;")")，成本 U：$(num "$(q "SELECT ROUND(cost,2) FROM btc_daily_state WHERE id = 1;")")，未实现 U：$(num "$(q "SELECT ROUND(s.qty * (SELECT close FROM kline_15m WHERE venue='BINANCE' AND symbol='BTCUSDT' ORDER BY open_time DESC LIMIT 1) - s.cost, 2) FROM btc_daily_state s WHERE s.id = 1;")")，累计已实现 U：$(num "$(q "SELECT ROUND(realized,2) FROM btc_daily_state WHERE id = 1;")")，今天成交笔数：$(num "$(q "SELECT COUNT(*) FROM btc_daily_trade WHERE voided = 0 AND created_at >= '$day_start';")")"
     echo "- 今天（UTC 日）BTCUSDT 最低 / 最高：$(q "SELECT MIN(low), MAX(high) FROM kline_15m WHERE venue='BINANCE' AND symbol='BTCUSDT' AND open_time >= $utc_start_ms;")"

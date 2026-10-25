@@ -63,7 +63,9 @@ public class MonitorJob {
     private final AppState state;
     private final ParallelExits parallel;
     private final com.trendpilot.observation.DepthVariantTracker depthVariant;
-    private final com.trendpilot.observation.StrongVariantTracker strongVariant;
+    private final com.trendpilot.variant.VariantTracker variants;
+    private final com.trendpilot.variant.ParamSets paramSets;
+    private final com.trendpilot.variant.VariantRules v2Rules = new com.trendpilot.variant.VariantRules();
     private final StreamHub hub;
 
     public MonitorJob(Markets markets, V1Tracker v1, EarlySignalCalculator signals,
@@ -71,9 +73,11 @@ public class MonitorJob {
                       AppState state, ParallelExits parallel,
                       com.trendpilot.observation.DepthVariantTracker depthVariant, StreamHub hub,
                       com.trendpilot.monitor.LossGuard guard,
-                      com.trendpilot.observation.StrongVariantTracker strongVariant) {
+                      com.trendpilot.variant.VariantTracker variants,
+                      com.trendpilot.variant.ParamSets paramSets) {
         this.guard = guard;
-        this.strongVariant = strongVariant;
+        this.variants = variants;
+        this.paramSets = paramSets;
         this.depthVariant = depthVariant;
         this.hub = hub;
         this.parallel = parallel;
@@ -121,13 +125,11 @@ public class MonitorJob {
             } catch (RuntimeException e) {
                 log.warn("V2D15 对照本轮失败：{}", e.getMessage());
             }
-            // 强信号对照账本：同样锁外抓行情、锁内判断，出错只记日志，不影响 V2 / V1 / V2D15
+            // 配置化影子变体（V5、V6…）：每个变体锁外抓行情、锁内判断，出错只记日志，不影响 V2 / V1 / V2D15
             try {
-                var sIn = strongVariant.fetch(now);
-                lock.run(() -> strongVariant.manage(gen, now, sIn));
-                strongVariant.book().recordEquity(now);
+                variants.monitorAll(gen, now, lock);
             } catch (RuntimeException e) {
-                log.warn("V5 对照本轮未完成：{}", e.getMessage());
+                log.warn("影子变体本轮未完成：{}", e.getMessage());
             }
             book.recordEquity(now);
             runs.record(JOB, gen, now, Instant.now(), "SUCCESS", r.dataStatus(),
@@ -312,6 +314,8 @@ public class MonitorJob {
         }
 
         List<String> exits = new ArrayList<>();
+        // V2 已转正的参数改动（只用到其中的提前离场）；没有转正过时为空，卖出规则和以前完全一样
+        com.trendpilot.variant.VariantOverrides v2Overrides = paramSets.current();
         lock.run(() -> {
             for (Position current : book.positions()) {
                 if (only != null && !only.contains(current.symbol())) continue;
@@ -351,6 +355,10 @@ public class MonitorJob {
                     // 山寨止损：现行规则不卖时再按止损 / 3 天不赚钱离场判断，同一份盘口成交
                     String g = guard.check(ShadowBook.BOOK, pos, d, lastHour.close(), lastHour.openTime(), now);
                     if (g != null) d = com.trendpilot.monitor.LossGuard.asExit(d, g);
+                    if (v2Overrides.hasEarlyExit() && v2Rules.earlyExit(ShadowBook.BOOK, v2Overrides, pos, d,
+                            book.maxNet(pos.symbol()), lastHour, now)) {
+                        d = com.trendpilot.monitor.LossGuard.asExit(d, com.trendpilot.variant.VariantOverrides.EARLY_EXIT);
+                    }
                 }
                 apply(gen, now, pos, d, exits, sig == null ? Double.NaN : sig.atr1hPct(),
                         lastHour == null ? Double.NaN : lastHour.close(), lastHour == null ? -1 : lastHour.openTime());
