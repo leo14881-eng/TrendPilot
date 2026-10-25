@@ -1,0 +1,296 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-10-25T18:37:16.034640910Z",
+  "grid" : "flow",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-10-01",
+  "dataTo" : "2026-10-24",
+  "validationFrom" : "2025-06-25",
+  "evidence" : "",
+  "baseline" : {
+    "validation" : {
+      "maxDrawdown" : 14309.81,
+      "trades" : 4777,
+      "equity" : -5046.68
+    },
+    "full" : {
+      "maxDrawdown" : 14538.46,
+      "trades" : 15583,
+      "equity" : 19343.01
+    }
+  },
+  "candidates" : [ {
+    "id" : "F1_不冻结不减半",
+    "group" : "freeze",
+    "overrides" : { },
+    "config" : {
+      "trendpilot.strategy.risk.loss-exits-freeze" : "999",
+      "trendpilot.strategy.risk.loss-exits-half-budget" : "999"
+    },
+    "discoverEvery" : 4,
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 21203.82,
+      "perTrade" : 0.6,
+      "trades" : 32047,
+      "equity" : 19223.8
+    },
+    "validation" : {
+      "maxDrawdown" : 12677.1,
+      "perTrade" : 1.02,
+      "trades" : 10717,
+      "equity" : 10796.26
+    },
+    "evidence" : ""
+  }, {
+    "id" : "F2_只减半不冻结",
+    "group" : "freeze",
+    "overrides" : { },
+    "config" : {
+      "trendpilot.strategy.risk.loss-exits-freeze" : "999"
+    },
+    "discoverEvery" : 4,
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 14636.19,
+      "perTrade" : -0.02,
+      "trades" : 17095,
+      "equity" : -276.86
+    },
+    "validation" : {
+      "maxDrawdown" : 12240.46,
+      "perTrade" : -0.53,
+      "trades" : 5068,
+      "equity" : -2772.63
+    },
+    "evidence" : ""
+  }, {
+    "id" : "F3_冻结窗口12h",
+    "group" : "freeze",
+    "overrides" : { },
+    "config" : {
+      "trendpilot.strategy.risk.loss-window-hours" : "12"
+    },
+    "discoverEvery" : 4,
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : false
+    },
+    "full" : {
+      "maxDrawdown" : 25662.7,
+      "perTrade" : -0.65,
+      "trades" : 15894,
+      "equity" : -10352.35
+    },
+    "validation" : {
+      "maxDrawdown" : 13539.07,
+      "perTrade" : -2.25,
+      "trades" : 4062,
+      "equity" : -9158.19
+    },
+    "evidence" : ""
+  }, {
+    "id" : "F4_冻结门槛5笔",
+    "group" : "freeze",
+    "overrides" : { },
+    "config" : {
+      "trendpilot.strategy.risk.loss-exits-freeze" : "5"
+    },
+    "discoverEvery" : 4,
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 15584.45,
+      "perTrade" : 0.39,
+      "trades" : 16989,
+      "equity" : 6557.82
+    },
+    "validation" : {
+      "maxDrawdown" : 9813.84,
+      "perTrade" : 0.2,
+      "trades" : 5343,
+      "equity" : 948.37
+    },
+    "evidence" : ""
+  }, {
+    "id" : "R1_浮盈5%后回吐3%",
+    "group" : "runner",
+    "overrides" : {
+      "runner-arm-pct" : "5",
+      "runner-giveback-pct" : "3"
+    },
+    "config" : { },
+    "discoverEvery" : 4,
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 13483.65,
+      "perTrade" : 0.07,
+      "trades" : 15253,
+      "equity" : 1022.03
+    },
+    "validation" : {
+      "maxDrawdown" : 12188.76,
+      "perTrade" : -0.24,
+      "trades" : 4602,
+      "equity" : -1288.68
+    },
+    "evidence" : ""
+  }, {
+    "id" : "R2_浮盈5%后回吐5%",
+    "group" : "runner",
+    "overrides" : {
+      "runner-arm-pct" : "5",
+      "runner-giveback-pct" : "5"
+    },
+    "config" : { },
+    "discoverEvery" : 4,
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 19872.07,
+      "perTrade" : -1.1,
+      "trades" : 13210,
+      "equity" : -14489.61
+    },
+    "validation" : {
+      "maxDrawdown" : 12721.48,
+      "perTrade" : -3.87,
+      "trades" : 2788,
+      "equity" : -10777.35
+    },
+    "evidence" : ""
+  }, {
+    "id" : "R3_浮盈8%后回吐4%",
+    "group" : "runner",
+    "overrides" : {
+      "runner-arm-pct" : "8",
+      "runner-giveback-pct" : "4"
+    },
+    "config" : { },
+    "discoverEvery" : 4,
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 15886.13,
+      "perTrade" : 0.16,
+      "trades" : 15383,
+      "equity" : 2515.5
+    },
+    "validation" : {
+      "maxDrawdown" : 15886.13,
+      "perTrade" : -1.66,
+      "trades" : 4699,
+      "equity" : -7979.17
+    },
+    "evidence" : ""
+  }, {
+    "id" : "R4_浮盈8%后回吐6%",
+    "group" : "runner",
+    "overrides" : {
+      "runner-arm-pct" : "8",
+      "runner-giveback-pct" : "6"
+    },
+    "config" : { },
+    "discoverEvery" : 4,
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 16695.07,
+      "perTrade" : 0.14,
+      "trades" : 15388,
+      "equity" : 2182.79
+    },
+    "validation" : {
+      "maxDrawdown" : 16497.29,
+      "perTrade" : -1.75,
+      "trades" : 4652,
+      "equity" : -8332.91
+    },
+    "evidence" : ""
+  }, {
+    "id" : "D1_每15分钟审核",
+    "group" : "delay",
+    "overrides" : { },
+    "config" : { },
+    "discoverEvery" : 1,
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "maxDrawdown" : 13309.1,
+      "perTrade" : 1.94,
+      "trades" : 16728,
+      "equity" : 32487.48
+    },
+    "validation" : {
+      "maxDrawdown" : 6646.14,
+      "perTrade" : 4.19,
+      "trades" : 5234,
+      "equity" : 21825.07
+    },
+    "evidence" : ""
+  } ]
+}
