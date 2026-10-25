@@ -1,0 +1,158 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-10-25T18:24:00.099429225Z",
+  "grid" : "exitrules",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-10-01",
+  "dataTo" : "2026-10-24",
+  "validationFrom" : "2025-06-25",
+  "evidence" : "",
+  "baseline" : {
+    "full" : {
+      "trades" : 15583,
+      "equity" : 19343.01,
+      "maxDrawdown" : 14538.46
+    },
+    "validation" : {
+      "trades" : 4777,
+      "equity" : -5046.68,
+      "maxDrawdown" : 14309.81
+    }
+  },
+  "candidates" : [ {
+    "id" : "X_C1_L15_T24",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "C1_L15_T24"
+    },
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "perTrade" : -1.58,
+      "trades" : 9105,
+      "equity" : -14349.02,
+      "maxDrawdown" : 15379.39
+    },
+    "validation" : {
+      "perTrade" : -0.63,
+      "trades" : 1660,
+      "equity" : -988.13,
+      "maxDrawdown" : 1949.48
+    },
+    "evidence" : ""
+  }, {
+    "id" : "X_C1_L20_T24",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "C1_L20_T24"
+    },
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "perTrade" : -0.66,
+      "trades" : 14192,
+      "equity" : -9354.9,
+      "maxDrawdown" : 17510.56
+    },
+    "validation" : {
+      "perTrade" : -0.15,
+      "trades" : 3355,
+      "equity" : -464.94,
+      "maxDrawdown" : 6658.9
+    },
+    "evidence" : ""
+  }, {
+    "id" : "X_C1_L25_T24",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "C1_L25_T24"
+    },
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "perTrade" : -0.55,
+      "trades" : 14778,
+      "equity" : -8164.91,
+      "maxDrawdown" : 11780.14
+    },
+    "validation" : {
+      "perTrade" : -0.82,
+      "trades" : 4156,
+      "equity" : -3322.28,
+      "maxDrawdown" : 9743.87
+    },
+    "evidence" : ""
+  }, {
+    "id" : "X_S1_L12",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "S1_L12"
+    },
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "perTrade" : 0.42,
+      "trades" : 16055,
+      "equity" : 6716.19,
+      "maxDrawdown" : 10541.23
+    },
+    "validation" : {
+      "perTrade" : 1.75,
+      "trades" : 5080,
+      "equity" : 8728.92,
+      "maxDrawdown" : 6549.32
+    },
+    "evidence" : ""
+  }, {
+    "id" : "X_S1_L15",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "S1_L15"
+    },
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "perTrade" : 0.92,
+      "trades" : 15770,
+      "equity" : 14536.46,
+      "maxDrawdown" : 9272.84
+    },
+    "validation" : {
+      "perTrade" : 0.47,
+      "trades" : 4867,
+      "equity" : 2237.77,
+      "maxDrawdown" : 9272.84
+    },
+    "evidence" : ""
+  } ]
+}
