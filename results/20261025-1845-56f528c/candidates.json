@@ -1,0 +1,327 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-10-25T18:45:41.725550948Z",
+  "grid" : "relax",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-10-01",
+  "dataTo" : "2026-10-24",
+  "validationFrom" : "2025-06-25",
+  "evidence" : "",
+  "baseline" : {
+    "validation" : {
+      "maxDrawdown" : 14309.81,
+      "equity" : -5046.68,
+      "trades" : 4777
+    },
+    "full" : {
+      "maxDrawdown" : 14538.46,
+      "equity" : 19343.01,
+      "trades" : 15583
+    }
+  },
+  "candidates" : [ {
+    "id" : "L1_深度15000",
+    "group" : "relax",
+    "overrides" : {
+      "min-depth-usdt" : "15000"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 15498,
+      "perTrade" : 0.67,
+      "maxDrawdown" : 12935.01,
+      "equity" : 10397.4
+    },
+    "validation" : {
+      "trades" : 4742,
+      "perTrade" : -1.05,
+      "maxDrawdown" : 12664.52,
+      "equity" : -5114.18
+    },
+    "evidence" : ""
+  }, {
+    "id" : "L2_不减半额度",
+    "group" : "relax",
+    "overrides" : { },
+    "config" : {
+      "trendpilot.strategy.risk.loss-exits-half-budget" : "999"
+    },
+    "sim" : { },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 17255,
+      "perTrade" : 0.89,
+      "maxDrawdown" : 13309.96,
+      "equity" : 15434.97
+    },
+    "validation" : {
+      "trades" : 5267,
+      "perTrade" : 0.57,
+      "maxDrawdown" : 11839.13,
+      "equity" : 2954.63
+    },
+    "evidence" : ""
+  }, {
+    "id" : "L3_行情上限放宽",
+    "group" : "relax",
+    "overrides" : { },
+    "config" : {
+      "trendpilot.strategy.capital.regime-limits[0].regime" : "RISK_OFF",
+      "trendpilot.strategy.capital.regime-limits[0].pct" : "0.7",
+      "trendpilot.strategy.capital.regime-limits[1].regime" : "NEUTRAL",
+      "trendpilot.strategy.capital.regime-limits[1].pct" : "0.85",
+      "trendpilot.strategy.capital.regime-limits[2].regime" : "CONSTRUCTIVE",
+      "trendpilot.strategy.capital.regime-limits[2].pct" : "0.95",
+      "trendpilot.strategy.capital.regime-limits[3].regime" : "STRONG",
+      "trendpilot.strategy.capital.regime-limits[3].pct" : "1.0",
+      "trendpilot.strategy.capital.normal-pool" : "20000"
+    },
+    "sim" : { },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 16125,
+      "perTrade" : 0.19,
+      "maxDrawdown" : 22237.27,
+      "equity" : 3116.3
+    },
+    "validation" : {
+      "trades" : 4707,
+      "perTrade" : -1.48,
+      "maxDrawdown" : 17958.15,
+      "equity" : -7020.77
+    },
+    "evidence" : ""
+  }, {
+    "id" : "L4_评分门槛7",
+    "group" : "relax",
+    "overrides" : { },
+    "config" : {
+      "trendpilot.strategy.review.min-score" : "7"
+    },
+    "sim" : { },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 16241,
+      "perTrade" : -0.21,
+      "maxDrawdown" : 17289.29,
+      "equity" : -3456.36
+    },
+    "validation" : {
+      "trades" : 4892,
+      "perTrade" : -2.48,
+      "maxDrawdown" : 14836.67,
+      "equity" : -12105.59
+    },
+    "evidence" : ""
+  }, {
+    "id" : "L5_全部放宽",
+    "group" : "relax",
+    "overrides" : {
+      "min-depth-usdt" : "15000"
+    },
+    "config" : {
+      "trendpilot.strategy.risk.loss-exits-freeze" : "999",
+      "trendpilot.strategy.risk.loss-exits-half-budget" : "999",
+      "trendpilot.strategy.review.min-score" : "7",
+      "trendpilot.strategy.capital.regime-limits[0].regime" : "RISK_OFF",
+      "trendpilot.strategy.capital.regime-limits[0].pct" : "0.7",
+      "trendpilot.strategy.capital.regime-limits[1].regime" : "NEUTRAL",
+      "trendpilot.strategy.capital.regime-limits[1].pct" : "0.85",
+      "trendpilot.strategy.capital.regime-limits[2].regime" : "CONSTRUCTIVE",
+      "trendpilot.strategy.capital.regime-limits[2].pct" : "0.95",
+      "trendpilot.strategy.capital.regime-limits[3].regime" : "STRONG",
+      "trendpilot.strategy.capital.regime-limits[3].pct" : "1.0",
+      "trendpilot.strategy.capital.normal-pool" : "20000"
+    },
+    "sim" : { },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 36493,
+      "perTrade" : 0.27,
+      "maxDrawdown" : 30178.5,
+      "equity" : 9897.24
+    },
+    "validation" : {
+      "trades" : 11867,
+      "perTrade" : -0.02,
+      "maxDrawdown" : 17706.53,
+      "equity" : -576.07
+    },
+    "evidence" : ""
+  }, {
+    "id" : "L6_全部放宽+S1_L12",
+    "group" : "relax",
+    "overrides" : {
+      "exit-rule" : "S1_L12",
+      "min-depth-usdt" : "15000"
+    },
+    "config" : {
+      "trendpilot.strategy.risk.loss-exits-freeze" : "999",
+      "trendpilot.strategy.risk.loss-exits-half-budget" : "999",
+      "trendpilot.strategy.review.min-score" : "7",
+      "trendpilot.strategy.capital.regime-limits[0].regime" : "RISK_OFF",
+      "trendpilot.strategy.capital.regime-limits[0].pct" : "0.7",
+      "trendpilot.strategy.capital.regime-limits[1].regime" : "NEUTRAL",
+      "trendpilot.strategy.capital.regime-limits[1].pct" : "0.85",
+      "trendpilot.strategy.capital.regime-limits[2].regime" : "CONSTRUCTIVE",
+      "trendpilot.strategy.capital.regime-limits[2].pct" : "0.95",
+      "trendpilot.strategy.capital.regime-limits[3].regime" : "STRONG",
+      "trendpilot.strategy.capital.regime-limits[3].pct" : "1.0",
+      "trendpilot.strategy.capital.normal-pool" : "20000"
+    },
+    "sim" : { },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 42713,
+      "perTrade" : 0.09,
+      "maxDrawdown" : 25832.37,
+      "equity" : 3780.65
+    },
+    "validation" : {
+      "trades" : 14177,
+      "perTrade" : -0.1,
+      "maxDrawdown" : 18529.07,
+      "equity" : -1659.24
+    },
+    "evidence" : ""
+  }, {
+    "id" : "L7_全部放宽+C1_L15_T24",
+    "group" : "relax",
+    "overrides" : {
+      "exit-rule" : "C1_L15_T24",
+      "min-depth-usdt" : "15000"
+    },
+    "config" : {
+      "trendpilot.strategy.risk.loss-exits-freeze" : "999",
+      "trendpilot.strategy.risk.loss-exits-half-budget" : "999",
+      "trendpilot.strategy.review.min-score" : "7",
+      "trendpilot.strategy.capital.regime-limits[0].regime" : "RISK_OFF",
+      "trendpilot.strategy.capital.regime-limits[0].pct" : "0.7",
+      "trendpilot.strategy.capital.regime-limits[1].regime" : "NEUTRAL",
+      "trendpilot.strategy.capital.regime-limits[1].pct" : "0.85",
+      "trendpilot.strategy.capital.regime-limits[2].regime" : "CONSTRUCTIVE",
+      "trendpilot.strategy.capital.regime-limits[2].pct" : "0.95",
+      "trendpilot.strategy.capital.regime-limits[3].regime" : "STRONG",
+      "trendpilot.strategy.capital.regime-limits[3].pct" : "1.0",
+      "trendpilot.strategy.capital.normal-pool" : "20000"
+    },
+    "sim" : { },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 38887,
+      "perTrade" : -0.46,
+      "maxDrawdown" : 30397.43,
+      "equity" : -18038.52
+    },
+    "validation" : {
+      "trades" : 4911,
+      "perTrade" : -1.44,
+      "maxDrawdown" : 10196.75,
+      "equity" : -7010.27
+    },
+    "evidence" : ""
+  }, {
+    "id" : "L8_全部放宽+浮盈5%后回吐3%",
+    "group" : "relax",
+    "overrides" : {
+      "min-depth-usdt" : "15000",
+      "runner-arm-pct" : "5",
+      "runner-giveback-pct" : "3"
+    },
+    "config" : {
+      "trendpilot.strategy.risk.loss-exits-freeze" : "999",
+      "trendpilot.strategy.risk.loss-exits-half-budget" : "999",
+      "trendpilot.strategy.review.min-score" : "7",
+      "trendpilot.strategy.capital.regime-limits[0].regime" : "RISK_OFF",
+      "trendpilot.strategy.capital.regime-limits[0].pct" : "0.7",
+      "trendpilot.strategy.capital.regime-limits[1].regime" : "NEUTRAL",
+      "trendpilot.strategy.capital.regime-limits[1].pct" : "0.85",
+      "trendpilot.strategy.capital.regime-limits[2].regime" : "CONSTRUCTIVE",
+      "trendpilot.strategy.capital.regime-limits[2].pct" : "0.95",
+      "trendpilot.strategy.capital.regime-limits[3].regime" : "STRONG",
+      "trendpilot.strategy.capital.regime-limits[3].pct" : "1.0",
+      "trendpilot.strategy.capital.normal-pool" : "20000"
+    },
+    "sim" : { },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : false
+    },
+    "full" : {
+      "trades" : 14465,
+      "perTrade" : -1.23,
+      "maxDrawdown" : 22439.31,
+      "equity" : -17826.6
+    },
+    "validation" : {
+      "trades" : 583,
+      "perTrade" : -5.32,
+      "maxDrawdown" : 4282.84,
+      "equity" : -3143.65
+    },
+    "evidence" : ""
+  } ]
+}
