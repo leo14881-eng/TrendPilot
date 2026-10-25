@@ -230,15 +230,22 @@ function Invoke-ServerTool($exe, $argLine, $stdinText) {
     try { $proc = Start-Process @p } catch { Write-ServerLog "无法启动 ${exe}：$($_.Exception.Message)" }
     if ($null -eq $proc) { Remove-Item $tmpIn, $tmpOut, $tmpErr -ErrorAction SilentlyContinue; return -1 }
     $null = $proc.Handle   # Windows PowerShell 5.1：不先取 Handle，进程退出后 ExitCode 读出来是空的
-    if (-not $proc.WaitForExit(50 * 60 * 1000)) { try { $proc.Kill() } catch { }; Write-ServerLog '超过 50 分钟，已中止' }
+    $timedOut = $false
+    if (-not $proc.WaitForExit(50 * 60 * 1000)) {
+        $timedOut = $true
+        try { $proc.Kill(); $proc.WaitForExit(30 * 1000) | Out-Null } catch { }   # 等进程真正退出、放开输出文件
+        Write-ServerLog '超过 50 分钟，已中止'
+    }
     foreach ($f in $tmpOut, $tmpErr) {
         if (Test-Path $f) {
-            $text = [IO.File]::ReadAllText($f, [Text.Encoding]::UTF8).TrimEnd()
-            if ($text) { Add-Content -Path (Join-Path $AppDir 'logs\server.log') -Value $text -Encoding UTF8 }
+            try {
+                $text = [IO.File]::ReadAllText($f, [Text.Encoding]::UTF8).TrimEnd()
+                if ($text) { Add-Content -Path (Join-Path $AppDir 'logs\server.log') -Value $text -Encoding UTF8 }
+            } catch { Write-ServerLog "读取输出没有完成：$($_.Exception.Message)" }
         }
     }
     Remove-Item $tmpIn, $tmpOut, $tmpErr -ErrorAction SilentlyContinue
-    if ($null -eq $proc.ExitCode) { return -1 }
+    if ($timedOut -or $null -eq $proc.ExitCode) { return -1 }
     return $proc.ExitCode
 }
 
