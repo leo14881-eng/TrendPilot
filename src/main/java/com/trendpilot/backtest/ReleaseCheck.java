@@ -14,7 +14,10 @@ import java.util.Map;
  * <li>最大回撤（全期、验证期）都不超过基准 × 1.1；</li>
  * <li>六种行情没有一种明显变差：该行情期间权益比基准少 1,000 U 以上且少 25% 以上算明显变差；</li>
  * <li>比同规则的随机对照好：每笔差值的 95% 区间下沿 &gt; 0（全期）。</li>
+ * <li><b>绝对上限</b>（用户 2026-10-26"安全第一"，目标最大回撤 20%～30% 以内）：全期净值最大回撤（资金 = 硬顶 20,000 U，
+ *     含浮亏）&gt; 25% 的不进入候选，结论直接是 WORSE。</li>
  * </ol>
+ * 只做现货，不用杠杆和合约。候选排序先看风险调整收益（卡玛 = 全期收益 ÷ 最大回撤），再看绝对收益。
  * 结论：全部满足 = PASS；1 满足、或验证期不差且全期回撤更小 = PROMISING（有希望，作为影子变体跑 30 天）；其余 = WORSE（只存档）。
  * PASS 也不直接改 V2：一律先作为影子变体实盘跑满 30 天，再按自动转正条件决定（"回测好 + 实盘影子 30 天好"两道关）。
  */
@@ -23,13 +26,29 @@ public final class ReleaseCheck {
     public static final double DD_TOLERANCE = 1.10;
     public static final double REGIME_ABS = 1000;
     public static final double REGIME_REL = 0.25;
+    /** 净值最大回撤绝对上限（比例）。 */
+    public static final double MAX_NAV_DD = 0.25;
 
     public enum Verdict { PASS, PROMISING, WORSE }
 
     /** 一个时段的汇总：权益变化、最大回撤、每笔均值和方差、笔数。 */
-    public record Period(double equity, double maxDd, int trades, double meanPnl, double varPnl) {
+    public record Period(double equity, double maxDd, int trades, double meanPnl, double varPnl, double navDd) {
+
+        public Period(double equity, double maxDd, int trades, double meanPnl, double varPnl) {
+            this(equity, maxDd, trades, meanPnl, varPnl, Double.NaN);
+        }
+
+        /** 卡玛（期间收益 ÷ 最大回撤，U 口径）。 */
+        public double calmar() {
+            return maxDd > 0 ? equity / maxDd : equity > 0 ? Double.POSITIVE_INFINITY : 0;
+        }
 
         static Period of(Sim s, Regimes regimes, int from, int to) {
+            return of(s, regimes, from, to, Double.NaN);
+        }
+
+        /** capital：净值口径的资金（硬顶），算净值最大回撤 = (峰值净值 − 净值) ÷ 峰值净值。 */
+        static Period of(Sim s, Regimes regimes, int from, int to, double capital) {
             Metrics m = Metrics.of(s, regimes, from, to);
             double[] p = s.trades().stream().filter(t -> t.entryQ() >= from && t.entryQ() < to).mapToDouble(Trade::pnl).toArray();
             double mean = 0, var = 0;
@@ -37,7 +56,19 @@ public final class ReleaseCheck {
             mean = p.length == 0 ? 0 : mean / p.length;
             for (double x : p) var += (x - mean) * (x - mean);
             var = p.length < 2 ? 0 : var / (p.length - 1);
-            return new Period(m.equityChange(), m.maxDrawdown(), p.length, mean, var);
+            double navDd = Double.NaN;
+            if (capital > 0) {
+                double[] eq = s.equity();
+                int a = from / 4, b = Math.min(to / 4, eq.length - 1);
+                double peak = capital, dd = 0;
+                for (int i = a; i <= b; i++) {
+                    double nav = capital + eq[i] - eq[a];
+                    peak = Math.max(peak, nav);
+                    dd = Math.max(dd, (peak - nav) / peak);
+                }
+                navDd = dd;
+            }
+            return new Period(m.equityChange(), m.maxDrawdown(), p.length, mean, var, navDd);
         }
     }
 
@@ -75,10 +106,12 @@ public final class ReleaseCheck {
         c.put("六种行情没有明显变差", regimes);
         double[] rd = randomFull == null ? new double[]{Double.NaN, Double.NaN} : diff(candFull, randomFull);
         c.put("显著好于同规则随机对照", randomFull != null && rd[0] - rd[1] > 0);
+        boolean ddCap = Double.isNaN(candFull.navDd()) || candFull.navDd() <= MAX_NAV_DD;
+        c.put("净值最大回撤 ≤ 25%（绝对上限）", ddCap);
         boolean all = c.values().stream().allMatch(Boolean::booleanValue);
         // 有希望：两期合计都不差；或者验证期不差且全期回撤更小（收益/风险换了个比例，值得用实盘影子看看）
         boolean promising = better || (candVal.equity() >= baseVal.equity() && candFull.maxDd() < baseFull.maxDd());
-        Verdict v = all ? Verdict.PASS : promising ? Verdict.PROMISING : Verdict.WORSE;
+        Verdict v = !ddCap ? Verdict.WORSE : all ? Verdict.PASS : promising ? Verdict.PROMISING : Verdict.WORSE;
         return new Result(v, c, notes, d, rd);
     }
 }

@@ -188,6 +188,28 @@ class AutoPromoterTest {
         assertThat(registry.register(VariantOverrides.parseInline("max-volume-accel=4"), "CANDIDATES", true, "", null, NOW)).isEmpty();
     }
 
+    @Autowired VariantTracker tracker;
+
+    @Test
+    void shadowDrawdownBeyondTwentyFivePercentStopsNewBuysImmediately() {
+        Instant from = NOW.minus(Duration.ofDays(3));
+        start("V6", from);
+        history("V6", from, 10, -560, 0); // 合计 −5,600 U：净值 20,000 → 14,400，回撤 28%
+        tracker.checkDrawdown(registry.get("V6").orElseThrow(), NOW);
+        assertThat(status("V6")).isEqualTo(VariantRegistry.STOPPED);
+        assertThat(registry.get("V6").orElseThrow().status()).isEqualTo(VariantRegistry.STOPPED);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM notification_outbox WHERE event_key = 'optimize:stop:V6'").query(Integer.class)
+                .single()).isEqualTo(1);
+        // 回撤没超过上限的不动
+        history("V5", from, 10, -100, 0);
+        tracker.checkDrawdown(registry.get("V5").orElseThrow(), NOW);
+        assertThat(status("V5")).isEqualTo(VariantRegistry.ACTIVE);
+        // 每天的评估里也一样：超过 25% 的直接停，不会成为候选
+        jdbc.sql("UPDATE variant_registry SET status = 'ACTIVE' WHERE name = 'V6'").update();
+        assertThat(decision("V6")).isEqualTo("STOP");
+        assertThat(lastReason("V6")).contains("25%");
+    }
+
     @Test
     void realMoneySwitchIsOffByDefaultAndOnlyV2CanBeChanged() {
         assertThat(opt.realMoneyAutoPromote()).isFalse();

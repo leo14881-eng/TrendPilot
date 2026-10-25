@@ -97,10 +97,10 @@ final class BinanceStreamProtocol implements StreamProtocol {
         JsonNode d = root.path("data");
         if (stream.endsWith("@kline_15m")) {
             JsonNode k = d.path("k");
-            if (!k.path("x").asBoolean(false)) return null;
-            return new ClosedKline(d.path("s").asText(), new Kline(k.path("t").asLong(), k.path("o").asDouble(),
+            Kline kl = new Kline(k.path("t").asLong(), k.path("o").asDouble(),
                     k.path("h").asDouble(), k.path("l").asDouble(), k.path("c").asDouble(), k.path("q").asDouble(),
-                    k.path("T").asLong()));
+                    k.path("T").asLong());
+            return k.path("x").asBoolean(false) ? new ClosedKline(d.path("s").asText(), kl) : new LiveKline(d.path("s").asText(), kl);
         }
         if (stream.endsWith("@bookTicker")) {
             return new BestQuote(d.path("s").asText(), d.path("b").asDouble(), d.path("a").asDouble());

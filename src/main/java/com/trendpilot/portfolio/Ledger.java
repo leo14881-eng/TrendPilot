@@ -39,6 +39,11 @@ public abstract class Ledger {
         return book;
     }
 
+    /** 净值口径的账本资金（V2 硬顶，变体也按这个算回撤比例）。 */
+    public double capital() {
+        return params.capital().hardCap();
+    }
+
     public List<Position> positions() {
         return jdbc.sql("SELECT * FROM " + table + " ORDER BY opened_at").query(Ledger::mapPosition).list();
     }

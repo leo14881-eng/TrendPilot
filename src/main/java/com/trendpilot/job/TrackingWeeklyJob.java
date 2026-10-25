@@ -34,6 +34,13 @@ public class TrackingWeeklyJob {
         this.zone = ZoneId.of(zone);
     }
 
+    private com.trendpilot.launch.LaunchDetector launch;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setLaunch(com.trendpilot.launch.LaunchDetector launch) {
+        this.launch = launch;
+    }
+
     @Scheduled(cron = "0 5 21 * * SUN", zone = "${trendpilot.zone}")
     public void scheduled() {
         send(Instant.now());
@@ -50,6 +57,14 @@ public class TrackingWeeklyJob {
             lines.add("");
             lines.add("🔀 候选退出规则影子并行（与 V2 同一批买入）");
             cmp.forEach(c -> lines.add(c.line()));
+        }
+        if (launch != null) {
+            try {
+                lines.add("");
+                lines.addAll(launch.weeklyLines(now));
+            } catch (RuntimeException e) {
+                lines.add("秒级启动探测统计暂时取不到");
+            }
         }
         return Messages.lines(lines);
     }

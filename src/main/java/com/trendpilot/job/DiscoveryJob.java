@@ -291,6 +291,26 @@ public class DiscoveryJob {
                 .filter(c -> (c.signal().early() && c.signal().score() >= params.review().minScore()) || held.contains(c.signal().symbol()))
                 .toList();
         Map<String, OrderBook> fetchedBooks = fetchBooks(candidates);
+        // 配置化影子变体：涨幅榜动量变体要看的几个币（Binance 主池），候选里没有的补抓盘口；出错只影响变体
+        com.trendpilot.variant.VariantTracker.Round variantRound = variants.round();
+        try {
+            if (main.bars() != null) {
+                java.util.Set<String> wanted = new java.util.LinkedHashSet<>(variantRound.momentumSymbols(main.universe(), main.bars().bars()));
+                wanted.removeAll(fetchedBooks.keySet());
+                if (!wanted.isEmpty()) fetchedBooks = new LinkedHashMap<>(fetchedBooks);
+                for (String sym : wanted) {
+                    try {
+                        OrderBook ob = binance.depth().getCovering(sym, DEPTH_SPAN_PCT, 0);
+                        if (ob != null) fetchedBooks.put(sym, ob);
+                    } catch (RuntimeException e) {
+                        log.debug("涨幅榜动量 {} 盘口获取失败，本轮不买：{}", sym, e.getMessage());
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("涨幅榜动量本轮准备出错，变体不买：{}", e.toString());
+        }
+        final Map<String, OrderBook> booksForRound = fetchedBooks;
         long booksFetchedNanos = System.nanoTime();
 
         // 研究：轮转 + 前 N 个 EARLY + 前 N 个价格异动；所有 EARLY 和候选都要有身份结论（只读本地资料）
@@ -320,12 +340,11 @@ public class DiscoveryJob {
         lock.run(() -> {
             // 盘口是锁外抓的：研究资料或等锁耗时太久，盘口已经不代表现在能成交的价格，本轮不用它买入（记为缺盘口）
             Map<String, OrderBook> books = System.nanoTime() - booksFetchedNanos > MAX_BOOK_AGE.toNanos()
-                    ? Map.of() : fetchedBooks;
-            if (books.isEmpty() && !fetchedBooks.isEmpty()) log.warn("Discovery 盘口已超过 {} 秒，本轮不买入", MAX_BOOK_AGE.toSeconds());
+                    ? Map.of() : booksForRound;
+            if (books.isEmpty() && !booksForRound.isEmpty()) log.warn("Discovery 盘口已超过 {} 秒，本轮不买入", MAX_BOOK_AGE.toSeconds());
             List<ReviewResult> results = new ArrayList<>();
             List<ReviewResult> relaxed = new ArrayList<>();
-            // 配置化影子变体（V5、V6…）本轮的待买清单；V2 已转正的参数改动（没有转正过时为空，V2 按基准审核，和以前完全一样）
-            com.trendpilot.variant.VariantTracker.Round variantRound = variants.round();
+            // V2 已转正的参数改动（没有转正过时为空，V2 按基准审核，和以前完全一样）
             com.trendpilot.variant.VariantOverrides v2Overrides = paramSets.current();
             Map<String, Venue> venueOf = new LinkedHashMap<>();
             for (Candidate c : candidates) {
@@ -399,6 +418,7 @@ public class DiscoveryJob {
             depthVariant.enter(gen, now, venueOf, relaxed);
             try {
                 variantRound.enter(gen, now, venueOf);
+                variantRound.momentumEnter(gen, now, risk, main.complete(), books, Venue.BINANCE);
             } catch (RuntimeException e) {
                 log.warn("影子变体本轮买入出错，跳过：{}", e.toString());
             }

@@ -48,6 +48,8 @@ import com.trendpilot.universe.UniverseFilter;
 public class VariantTracker {
 
     private static final Logger log = LoggerFactory.getLogger(VariantTracker.class);
+    /** 涨幅榜动量排名的币池大小（回测是每天成交额前 150）。 */
+    static final int MOMENTUM_POOL = 150;
 
     private final VariantRegistry registry;
     private final CapitalReviewer reviewer;
@@ -58,8 +60,12 @@ public class VariantTracker {
     private final LossGuard guard;
     private final VariantRules rules = new VariantRules();
 
+    private final org.springframework.jdbc.core.simple.JdbcClient jdbc;
+
     public VariantTracker(VariantRegistry registry, CapitalReviewer reviewer, StrategyParams params, Markets markets,
-                          EarlySignalCalculator signals, ExitPolicy exitPolicy, LossGuard guard) {
+                          EarlySignalCalculator signals, ExitPolicy exitPolicy, LossGuard guard,
+                          org.springframework.jdbc.core.simple.JdbcClient jdbc) {
+        this.jdbc = jdbc;
         this.registry = registry;
         this.reviewer = reviewer;
         this.params = params;
@@ -85,6 +91,54 @@ public class VariantTracker {
         return runnerPolicies.computeIfAbsent(v.overrides().inline(), k -> new ExitPolicy(VariantRules.runnerParams(params, v.overrides())));
     }
 
+    /** 每个变体上线以来的权益峰值（已实现 + 未实现，U）；第一次用时从 equity_curve 读一次。 */
+    private final Map<String, double[]> peaks = new java.util.concurrent.ConcurrentHashMap<>();
+    private org.springframework.beans.factory.ObjectProvider<com.trendpilot.notify.Notifier> notifier;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setNotifier(org.springframework.beans.factory.ObjectProvider<com.trendpilot.notify.Notifier> notifier) {
+        this.notifier = notifier;
+    }
+
+    /**
+     * 安全上限（用户 2026-10-26"安全第一"）：变体上线以来净值回撤（资金 = 硬顶 20,000 U，含浮亏）超过 25% 立即停开新仓，
+     * 持仓照原规则卖完后归档。只影响这个变体。
+     */
+    void checkDrawdown(VariantRegistry.Variant v, Instant now) {
+        if (!v.opensNew()) return;
+        double cur = v.book().realizedPnl() + v.book().unrealizedPnl();
+        double[] st = peaks.computeIfAbsent(v.name() + "@" + v.startedAt(), k -> new double[]{baseline(v), Double.NaN});
+        double base = st[0];
+        if (Double.isNaN(st[1])) st[1] = Math.max(base, maxSince(v));
+        st[1] = Math.max(st[1], cur);
+        double cap = v.book().capital();
+        double dd = ((cap + st[1] - base) - (cap + cur - base)) / (cap + st[1] - base);
+        if (dd > AutoPromoter.MAX_NAV_DD) {
+            String why = String.format(java.util.Locale.ROOT, "影子期间净值回撤 %.1f%% 超过 25%% 上限", dd * 100);
+            registry.setStatus(v.name(), VariantRegistry.STOPPED, why, now);
+            log.warn("{} {}，停开新仓", v.name(), why);
+            var n = notifier == null ? null : notifier.getIfAvailable();
+            if (n != null) n.send("optimize:stop:" + v.name(), "🧪 影子变体 " + v.name() + " 停开新仓：" + why + "。现有持仓按原规则卖完后归档。");
+        }
+    }
+
+    private double baseline(VariantRegistry.Variant v) {
+        return jdbcValue("SELECT realized + unrealized FROM equity_curve WHERE book = :b AND at <= :t ORDER BY at DESC, id DESC LIMIT 1", v);
+    }
+
+    private double maxSince(VariantRegistry.Variant v) {
+        return jdbcValue("SELECT MAX(realized + unrealized) FROM equity_curve WHERE book = :b AND at > :t", v);
+    }
+
+    private double jdbcValue(String sql, VariantRegistry.Variant v) {
+        try {
+            Double x = jdbc.sql(sql).param("b", v.name()).param("t", v.startedAt().toString()).query(Double.class).optional().orElse(null);
+            return x == null ? 0 : x;
+        } catch (RuntimeException e) {
+            return 0;
+        }
+    }
+
     /** 一轮 Discovery 里各变体的待买清单。 */
     public final class Round {
         private final List<VariantRegistry.Variant> active;
@@ -99,6 +153,7 @@ public class VariantTracker {
          */
         public void review(String symbol, Function<Ledger, ReviewInput> inputFor) {
             for (VariantRegistry.Variant v : active) {
+                if (v.overrides().isMomentum()) continue; // 涨幅榜动量不走 EARLY 审核，见 momentumEnter
                 try {
                     if (v.book().position(symbol).isPresent()) continue;
                     if (v.overrides().tradeUsdtOr(params.capital().tradeSize()) <= 0) continue;
@@ -108,6 +163,99 @@ public class VariantTracker {
                     log.warn("{} {} 本轮审核出错，跳过：{}", v.name(), symbol, e.toString());
                 }
             }
+        }
+
+        /**
+         * 涨幅榜动量变体本轮想看的币（Binance 主池，按滚动 24h 涨幅或最近 4 根 1h 的涨幅取前 N 名）。锁外调用，
+         * 调用方据此补抓这几个币的盘口（每个变体每小时最多 N 次请求）。
+         */
+        public java.util.Set<String> momentumSymbols(List<com.trendpilot.market.Ticker24h> universe,
+                                                     Map<String, SymbolBars> bars) {
+            java.util.Set<String> out = new java.util.LinkedHashSet<>();
+            momentumTop.clear();
+            for (VariantRegistry.Variant v : active) {
+                if (!v.overrides().isMomentum()) continue;
+                try {
+                    List<String> top = rank(universe, bars, v.overrides().momentumHoursOr24()).stream()
+                            .limit(v.overrides().momentumTop()).toList();
+                    momentumTop.put(v.name(), top);
+                    out.addAll(top);
+                } catch (RuntimeException e) {
+                    log.warn("{} 涨幅榜排名出错，本轮不买：{}", v.name(), e.toString());
+                }
+            }
+            return out;
+        }
+
+        private final Map<String, List<String>> momentumTop = new LinkedHashMap<>();
+
+        /**
+         * 涨幅榜动量买入（组合锁内）：前 N 名里没持有的、卖出满 60 分钟的，盘口新鲜、深度和滑点过 V2 审核门槛、扫描完整、
+         * 系统风险允许新增（V2 同一轮的风险结论）、没超过 max-open，就按变体每笔金额在这份盘口上模拟买入。缺盘口就不买。
+         */
+        public Map<String, List<String>> momentumEnter(String gen, Instant now, com.trendpilot.risk.RiskState risk, boolean scanComplete,
+                                                       Map<String, OrderBook> books, Venue venue) {
+            Map<String, List<String>> out = new LinkedHashMap<>();
+            if (!scanComplete || risk == null || !risk.newRiskAllowed()) return out;
+            StrategyParams.Review rv = params.review();
+            for (VariantRegistry.Variant v : active) {
+                List<String> top = momentumTop.get(v.name());
+                if (top == null) continue;
+                try {
+                    List<String> entered = new ArrayList<>();
+                    int open = v.book().positions().size();
+                    for (String sym : top) {
+                        if (v.overrides().maxOpen() != null && open >= v.overrides().maxOpen()) break;
+                        if (v.book().position(sym).isPresent()) continue;
+                        Instant last = v.book().lastExit(sym).orElse(null);
+                        if (last != null && java.time.Duration.between(last, now).toMinutes() < rv.reentryCooldownMinutes()) continue;
+                        OrderBook ob = books.get(sym);
+                        if (ob == null || !ob.usable() || java.time.Duration.between(ob.fetchedAt(), now).toSeconds() > rv.maxSignalAgeMinutes() * 60) {
+                            continue;
+                        }
+                        double depth = Math.min(ob.bidDepthWithin(rv.depthBandPct()), ob.askDepthWithin(rv.depthBandPct()));
+                        var fill = com.trendpilot.market.ExecutionSimulator.buy(ob,
+                                java.math.BigDecimal.valueOf(v.overrides().tradeUsdtOr(params.capital().tradeSize())), params.feeRate());
+                        if (depth < v.overrides().minDepthUsdtOr(rv.minDepthUsdt()) || ob.spreadBps() > rv.maxSpreadBps()
+                                || !fill.complete() || fill.slippageBps() > rv.maxSlippageBps()) {
+                            continue;
+                        }
+                        v.book().open(venue, sym, fill, gen, now);
+                        entered.add(sym);
+                        open++;
+                    }
+                    if (!entered.isEmpty()) {
+                        log.info("{} 涨幅榜动量买入 {} 个 {}：{}", v.name(), entered.size(), gen, entered);
+                        out.put(v.name(), entered);
+                    }
+                } catch (RuntimeException e) {
+                    log.warn("{} 涨幅榜动量本轮买入出错，跳过：{}", v.name(), e.toString());
+                }
+            }
+            return out;
+        }
+
+        /** 按买入审核同一套"已收盘"数据排名：24h 用 24h 行情涨跌，4h 用最近 4 根已收盘 1h K 线。数据缺的币不参加排名。 */
+        List<String> rank(List<com.trendpilot.market.Ticker24h> universe, Map<String, SymbolBars> bars, int hours) {
+            Map<String, Double> score = new LinkedHashMap<>();
+            // 和 4 年回测同口径：只在 24h 成交额前 150 的币里排名
+            List<com.trendpilot.market.Ticker24h> pool = universe.stream()
+                    .sorted((a, b) -> Double.compare(b.quoteVolume(), a.quoteVolume())).limit(MOMENTUM_POOL).toList();
+            for (var t : pool) {
+                if (t.symbol().equals(UniverseFilter.BTC)) continue;
+                double x;
+                if (hours == 24) {
+                    x = t.priceChangePct();
+                } else {
+                    SymbolBars b = bars.get(t.symbol());
+                    if (b == null || b.hourly().size() < hours + 1) continue;
+                    var h = b.hourly();
+                    double from = h.get(h.size() - 1 - hours).close();
+                    x = from > 0 ? (h.getLast().close() / from - 1) * 100 : Double.NaN;
+                }
+                if (Double.isFinite(x)) score.put(t.symbol(), x);
+            }
+            return score.entrySet().stream().sorted((a, b) -> Double.compare(b.getValue(), a.getValue())).map(Map.Entry::getKey).toList();
         }
 
         /** 按审核结果买入（在组合锁内，V2 分配完之后调用）。@return 变体名 → 本轮买入的标的 */
@@ -242,6 +390,7 @@ public class VariantTracker {
                 lock.run(() -> exits.addAll(manage(v, gen, now, in)));
                 v.book().recordEquity(now);
                 if (!exits.isEmpty()) out.put(v.name(), exits);
+                checkDrawdown(v, now);
                 if (!v.opensNew() && v.book().positions().isEmpty()) {
                     registry.setStatus(v.name(), VariantRegistry.ARCHIVED,
                             VariantRegistry.statusLabel(v.status()) + "后持仓已卖完，归档", now);

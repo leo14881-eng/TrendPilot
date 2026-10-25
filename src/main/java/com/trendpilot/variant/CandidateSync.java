@@ -100,7 +100,10 @@ public class CandidateSync {
             boolean liveCapable = c.path("liveCapable").asBoolean(true) && c.path("config").isEmpty();
             if ("PASS".equals(c.path("status").asText()) && liveCapable) pass.add(c);
         }
-        pass.sort(Comparator.comparingDouble((JsonNode c) -> -c.path("validation").path("equity").asDouble(0)));
+        // 风险调整收益优先：全期卡玛高的先上，其次验证期收益；净值回撤超过 25% 的不上（工作流的检查已经排除，这里再挡一次）
+        pass.removeIf(c -> c.path("full").path("navDrawdownPct").asDouble(0) > 25);
+        pass.sort(Comparator.comparingDouble((JsonNode c) -> -c.path("full").path("calmar").asDouble(0))
+                .thenComparingDouble(c -> -c.path("validation").path("equity").asDouble(0)));
         List<String> added = new ArrayList<>();
         for (JsonNode c : pass) {
             try {

@@ -81,14 +81,16 @@ final class BybitStreamProtocol implements StreamProtocol {
         }
         String topic = root.path("topic").asText("");
         if (topic.startsWith("kline.15.")) {
+            Event live = null;
             for (JsonNode k : root.path("data")) {
-                if (!k.path("confirm").asBoolean(false)) continue;
                 long open = k.path("start").asLong();
-                return new ClosedKline(topic.substring("kline.15.".length()), new Kline(open, k.path("open").asDouble(),
-                        k.path("high").asDouble(), k.path("low").asDouble(), k.path("close").asDouble(),
-                        k.path("turnover").asDouble(), open + QUARTER_MS - 1));
+                Kline kl = new Kline(open, k.path("open").asDouble(), k.path("high").asDouble(), k.path("low").asDouble(),
+                        k.path("close").asDouble(), k.path("turnover").asDouble(), open + QUARTER_MS - 1);
+                String sym = topic.substring("kline.15.".length());
+                if (k.path("confirm").asBoolean(false)) return new ClosedKline(sym, kl);
+                if (live == null) live = new LiveKline(sym, kl);
             }
-            return null;
+            return live;
         }
         if (topic.startsWith("orderbook.1.")) {
             JsonNode d = root.path("data");

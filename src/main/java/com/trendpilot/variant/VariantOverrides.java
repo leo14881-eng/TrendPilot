@@ -23,10 +23,11 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
                                Double btc24hAbovePct, Double coin24hMinPct, Double coin24hMaxPct, HotEntry hotEntry,
                                Double maxVolumeAccel,
                                Double earlyExitHours, Double earlyExitMaxMfePct, Double earlyExitLossPct,
-                               String exitRule, Double runnerArmPct, Double runnerGivebackPct, Double runnerLockRatio) {
+                               String exitRule, Double runnerArmPct, Double runnerGivebackPct, Double runnerLockRatio,
+                               Integer momentumTop, Integer momentumHours, Integer maxOpen) {
 
     public static final String EARLY_EXIT = "EARLY_EXIT";
-    public static final VariantOverrides NONE = new VariantOverrides(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+    public static final VariantOverrides NONE = new VariantOverrides(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     /** 可以叠加的离线退出规则族（tracking.ExitRule，只用净收益和持有时间的几种）。 */
     static final java.util.Set<String> EXIT_RULE_FAMILIES = java.util.Set.of("S1", "C1", "T1", "T2");
     public static final String RULE_EXIT_PREFIX = "RULE_";
@@ -61,6 +62,10 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         positive("runner-giveback-pct", runnerGivebackPct, false);
         if (runnerLockRatio != null && !(runnerLockRatio >= 0 && runnerLockRatio < 1)) throw new IllegalArgumentException("runner-lock-ratio 要在 0～1 之间");
         if (runnerLockRatio != null && runnerArmPct == null) throw new IllegalArgumentException("runner-lock-ratio 需要 runner-arm-pct");
+        if (momentumTop != null && !(momentumTop >= 1 && momentumTop <= 20)) throw new IllegalArgumentException("momentum-top 要在 1～20");
+        if (momentumHours != null && momentumHours != 24 && momentumHours != 4) throw new IllegalArgumentException("momentum-hours 只支持 24 或 4");
+        if (momentumHours != null && momentumTop == null) throw new IllegalArgumentException("momentum-hours 需要 momentum-top");
+        if (maxOpen != null && !(maxOpen >= 1 && maxOpen <= 50)) throw new IllegalArgumentException("max-open 要在 1～50");
         if (tradeUsdt != null && tradeUsdt > 5000) throw new IllegalArgumentException("trade-usdt 影子变体每笔最多 5000");
     }
 
@@ -76,6 +81,7 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         HotEntry hot = null;
         String rule = null;
         Double rArm = null, rGive = null, rLock = null;
+        Integer mTop = null, mHours = null, mOpen = null;
         for (var e : raw.entrySet()) {
             String k = e.getKey().trim().toLowerCase(Locale.ROOT).replace('_', '-');
             String v = String.valueOf(e.getValue()).trim();
@@ -99,11 +105,14 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
                 case "runner-arm-pct" -> rArm = num(k, v);
                 case "runner-giveback-pct" -> rGive = num(k, v);
                 case "runner-lock-ratio" -> rLock = num(k, v);
+                case "momentum-top" -> mTop = (int) Math.round(num(k, v));
+                case "momentum-hours" -> mHours = (int) Math.round(num(k, v));
+                case "max-open" -> mOpen = (int) Math.round(num(k, v));
                 default -> throw new IllegalArgumentException("不认识的变体参数 " + e.getKey());
             }
         }
         if (hot != null && btc == null && cMin == null) throw new IllegalArgumentException("hot-entry 需要 btc24h-above-pct 或 coin24h-band-pct");
-        return new VariantOverrides(rel, depth, trade, btc, cMin, cMax, hot, vol, h, mfe, loss, rule, rArm, rGive, rLock);
+        return new VariantOverrides(rel, depth, trade, btc, cMin, cMax, hot, vol, h, mfe, loss, rule, rArm, rGive, rLock, mTop, mHours, mOpen);
     }
 
     /** 命令行写法 "key=v,key=v"（回测入口和 candidates.json 用）。 */
@@ -150,6 +159,9 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         put(m, "runner-arm-pct", runnerArmPct);
         put(m, "runner-giveback-pct", runnerGivebackPct);
         put(m, "runner-lock-ratio", runnerLockRatio);
+        if (momentumTop != null) m.put("momentum-top", String.valueOf(momentumTop));
+        if (momentumHours != null) m.put("momentum-hours", String.valueOf(momentumHours));
+        if (maxOpen != null) m.put("max-open", String.valueOf(maxOpen));
         return m;
     }
 
@@ -180,6 +192,15 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
     /** 是否改了买入端（审核或开仓过滤）。 */
     public boolean hasEntryRules() {
         return btc24hAbovePct != null || coin24hMinPct != null || maxVolumeAccel != null;
+    }
+
+    /** 涨幅榜动量入场（不走 EARLY 审核，每轮按滚动涨幅取前 N 名）。 */
+    public boolean isMomentum() {
+        return momentumTop != null;
+    }
+
+    public int momentumHoursOr24() {
+        return momentumHours == null ? 24 : momentumHours;
     }
 
     /** 让赢家跑：最高可退出净利达到本金 runner-arm-pct% 以后，利润保护改用更宽的回吐（见 VariantRules.runnerParams）。 */
@@ -289,6 +310,8 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
             p.add("持有 " + fmt(earlyExitHours) + "h 最大浮盈 < " + fmt(earlyExitMaxMfePct) + "% 且亏 > " + fmt(earlyExitLossPct) + "% 离场");
         }
         if (exitRule != null) p.add("附加卖出 " + exitRule + ruleLabel(exitRule));
+        if (momentumTop != null) p.add("涨幅榜动量：滚动 " + momentumHoursOr24() + "h 涨幅前 " + momentumTop + " 名（不看 EARLY 信号）");
+        if (maxOpen != null) p.add("最多同时持有 " + maxOpen + " 个");
         if (runnerArmPct != null) {
             p.add("浮盈到 " + fmt(runnerArmPct) + "% 后保护改为回吐 " + fmt(runnerGivebackPct) + "%"
                     + (runnerLockRatio == null || runnerLockRatio == 0 ? "" : "、锁 " + fmt(runnerLockRatio * 100) + "%"));

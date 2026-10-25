@@ -91,6 +91,7 @@ public final class B0Sim extends Sim {
 
     B0Sim overrides(com.trendpilot.variant.VariantOverrides o) {
         this.overrides = o == null || o.isEmpty() ? null : o;
+        if (overrides != null && overrides.isMomentum()) momentum(overrides.momentumTop(), overrides.momentumHoursOr24() * 4);
         this.runnerPolicy = overrides != null && overrides.hasRunner()
                 ? new ExitPolicy(com.trendpilot.variant.VariantRules.runnerParams(params, overrides)) : null;
         return this;

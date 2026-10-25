@@ -172,7 +172,7 @@ public final class CandidateStudy {
         return c;
     }
 
-    /** 每周自动回测的小格子（H1/H2/H4 的代表档、两条退出规则 + rel1h 与每笔金额邻域），共 12 组。 */
+    /** 每周自动回测的小格子（H1/H2/H4 的代表档、两条退出规则 + rel1h 与每笔金额邻域），共 13 组。 */
     static List<Candidate> weeklyGrid() {
         List<Candidate> c = new ArrayList<>();
         c.add(cand("W_H1_BTC24h>1.5_半仓", "H1", "btc24h-above-pct=1.5,hot-entry=HALF"));
@@ -182,6 +182,7 @@ public final class CandidateStudy {
         c.add(cand("W_H4_放量≤4倍", "H4", "max-volume-accel=4"));
         c.add(cand("W_C1_L15_T24", "exit-rule", "exit-rule=C1_L15_T24"));
         c.add(cand("W_S1_L12", "exit-rule", "exit-rule=S1_L12"));
+        c.add(cand("W_M_24h前3", "momentum", "momentum-top=3,momentum-hours=24,max-open=17"));
         c.add(cand("W_rel1h≥4.5", "rel1h", "min-buy-rel1h=4.5"));
         c.add(cand("W_rel1h≥5.855", "rel1h", "min-buy-rel1h=5.855"));
         c.add(cand("W_rel1h≥7.5", "rel1h", "min-buy-rel1h=7.5"));
@@ -297,7 +298,7 @@ public final class CandidateStudy {
         }
         List<Sim> sims = new ArrayList<>(byName.values());
         Sim base = byName.get("现行");
-        ReleaseCheck.Period bF = ReleaseCheck.Period.of(base, regimes, fromQ, size);
+        ReleaseCheck.Period bF = ReleaseCheck.Period.of(base, regimes, fromQ, size, params.capital().hardCap());
         ReleaseCheck.Period bV = ReleaseCheck.Period.of(base, regimes, splitQ, size);
         double[] bReg = Metrics.of(base, regimes, fromQ, size).regimeEquity();
 
@@ -310,21 +311,21 @@ public final class CandidateStudy {
                 .append("（最后 16 个月，不参与调参）。候选 ").append(cands.size()).append(" 组（").append(gridName)
                 .append("），每组配一个同规则随机对照。\n\n");
         md.append("## 发布前检查\n\n");
-        md.append("| 候选 | 改动 | 结论 | 验证期 权益/回撤 | 全期 权益/回撤 | 笔数 | 每笔差 ±95%（对现行） | 每笔差 ±95%（对随机） | 不满足的检查 |\n");
-        md.append("|---|---|---|---:|---:|---:|---:|---:|---|\n");
-        md.append(String.format(Locale.ROOT, "| 现行 | — | 基准 | %,.0f / %,.0f | %,.0f / %,.0f | %d | — | — | — |%n",
-                bV.equity(), bV.maxDd(), bF.equity(), bF.maxDd(), bF.trades()));
+        md.append("| 候选 | 改动 | 结论 | 验证期 权益/回撤 | 全期 权益/回撤 | 净值回撤 | 卡玛 | 笔数 | 每笔差 ±95%（对现行） | 每笔差 ±95%（对随机） | 不满足的检查 |\n");
+        md.append("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|\n");
+        md.append(String.format(Locale.ROOT, "| 现行 | — | 基准 | %,.0f / %,.0f | %,.0f / %,.0f | %.1f%% | %.1f | %d | — | — | — |%n",
+                bV.equity(), bV.maxDd(), bF.equity(), bF.maxDd(), bF.navDd() * 100, bF.calmar(), bF.trades()));
         for (Candidate c : cands) {
             Sim s = byName.get(c.id());
-            ReleaseCheck.Period f = ReleaseCheck.Period.of(s, regimes, fromQ, size);
+            ReleaseCheck.Period f = ReleaseCheck.Period.of(s, regimes, fromQ, size, params.capital().hardCap());
             ReleaseCheck.Period v = ReleaseCheck.Period.of(s, regimes, splitQ, size);
             ReleaseCheck.Period rnd = ReleaseCheck.Period.of(byName.get(c.id() + " 随机"), regimes, fromQ, size);
             ReleaseCheck.Result r = ReleaseCheck.evaluate(f, v, bF, bV, Metrics.of(s, regimes, fromQ, size).regimeEquity(), bReg, rnd);
             List<String> failed = r.checks().entrySet().stream().filter(e -> !e.getValue()).map(Map.Entry::getKey).toList();
             List<String> why = new ArrayList<>(failed);
             why.addAll(r.notes());
-            md.append(String.format(Locale.ROOT, "| %s | %s | %s | %,.0f / %,.0f | %,.0f / %,.0f | %d | %+.2f ±%.2f | %+.2f ±%.2f | %s |%n",
-                    c.id(), describe(c), label(r.verdict()), v.equity(), v.maxDd(), f.equity(), f.maxDd(), f.trades(),
+            md.append(String.format(Locale.ROOT, "| %s | %s | %s | %,.0f / %,.0f | %,.0f / %,.0f | %.1f%% | %.1f | %d | %+.2f ±%.2f | %+.2f ±%.2f | %s |%n",
+                    c.id(), describe(c), label(r.verdict()), v.equity(), v.maxDd(), f.equity(), f.maxDd(), f.navDd() * 100, f.calmar(), f.trades(),
                     r.perTradeDiff()[0], r.perTradeDiff()[1], r.randomDiff()[0], r.randomDiff()[1],
                     why.isEmpty() ? "—" : String.join("；", why)));
             Map<String, Object> j = new LinkedHashMap<>();
@@ -336,7 +337,8 @@ public final class CandidateStudy {
             j.put("liveCapable", c.liveCapable());
             j.put("status", r.verdict().name());
             j.put("checks", r.checks());
-            j.put("full", Map.of("equity", round(f.equity()), "maxDrawdown", round(f.maxDd()), "trades", f.trades(), "perTrade", round(f.meanPnl())));
+            j.put("full", Map.of("equity", round(f.equity()), "maxDrawdown", round(f.maxDd()), "trades", f.trades(), "perTrade", round(f.meanPnl()),
+                    "navDrawdownPct", round(f.navDd() * 100), "calmar", round(f.calmar())));
             j.put("validation", Map.of("equity", round(v.equity()), "maxDrawdown", round(v.maxDd()), "trades", v.trades(), "perTrade", round(v.meanPnl())));
             j.put("evidence", evidence.isBlank() ? "" : evidence + "/report.md");
             out.add(j);

@@ -24,7 +24,8 @@ import com.trendpilot.portfolio.ShadowBook;
  * 自动转正与淘汰（每天越南 20:40 算一次，结果写 variant_eval，日报和每日汇总显示）。
  * <p>
  * <b>转正</b>（"回测好 + 实盘影子 30 天好"两道关，用户 2026-10-26）：变体上线满 {@code minDays}（默认 30）天，同期（变体上线以来）
- * 合计（已实现 + 未实现）高于 V2、最大回撤 ≤ V2 × 1.1、每笔期望高于 V2、平仓 ≥ 20 笔，并且回测发布前检查通过，才是转正候选。
+ * 合计（已实现 + 未实现）高于 V2、最大回撤 ≤ V2 × 1.1、每笔期望高于 V2、平仓 ≥ 20 笔、净值回撤 ≤ 25%，并且回测发布前检查通过，才是转正候选。
+ * 几个候选同时满足时，卡玛（风险调整收益）高的优先。影子期间净值回撤一旦超过 25% 就停开新仓（VariantTracker 每 5 分钟检查）。
  * 候选只发一条 Telegram 并写进日报；开关 {@code autoPromote} 打开（默认）且距上次正式改动满 14 天时，自动把 V2 的参数集换成这个变体的
  * （{@link ParamSets}），用户回复"回滚"恢复上一个。每天最多转正一个。
  * <p>
@@ -75,8 +76,20 @@ public class AutoPromoter {
     }
 
     /** 同期表现：start 起的合计变化、最大回撤（含浮亏的权益曲线）、平仓笔数、每笔平均。 */
-    public record Perf(double total, double maxDd, int closed, double perTrade) {
+    public record Perf(double total, double maxDd, int closed, double perTrade, double navDd) {
+
+        public Perf(double total, double maxDd, int closed, double perTrade) {
+            this(total, maxDd, closed, perTrade, Double.NaN);
+        }
+
+        /** 卡玛（同期收益 ÷ 同期最大回撤），排序时优先看。 */
+        public double calmar() {
+            return total / Math.max(maxDd, 1);
+        }
     }
+
+    /** 影子期间净值最大回撤的绝对上限（用户 2026-10-26"安全第一"）：超过就停开新仓，也不能转正。 */
+    public static final double MAX_NAV_DD = 0.25;
 
     Perf perf(Ledger book, Instant start, Instant now) {
         double base = jdbc.sql("SELECT realized + unrealized FROM equity_curve WHERE book = :b AND at <= :t ORDER BY at DESC, id DESC LIMIT 1")
@@ -84,17 +97,20 @@ public class AutoPromoter {
         List<Double> pts = new ArrayList<>(jdbc.sql("SELECT realized + unrealized FROM equity_curve WHERE book = :b AND at > :t AND at <= :n ORDER BY at, id")
                 .param("b", book.book()).param("t", start.toString()).param("n", now.toString()).query(Double.class).list());
         pts.add(book.realizedPnl() + book.unrealizedPnl());
-        double peak = base, dd = 0;
+        double peak = base, dd = 0, cap = v2.capital(), navPeak = cap, navDd = 0;
         for (double v : pts) {
             peak = Math.max(peak, v);
             dd = Math.max(dd, peak - v);
+            double nav = cap + v - base;
+            navPeak = Math.max(navPeak, nav);
+            navDd = Math.max(navDd, (navPeak - nav) / navPeak);
         }
         List<Double> sells = jdbc.sql("""
                 SELECT CAST(pnl_usdt AS REAL) FROM shadow_event WHERE book = :b AND type = 'SELL' AND pnl_usdt IS NOT NULL
                     AND created_at >= :t AND created_at <= :n
                 """).param("b", book.book()).param("t", start.toString()).param("n", now.toString()).query(Double.class).list();
         double avg = sells.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
-        return new Perf(pts.getLast() - base, dd, sells.size(), avg);
+        return new Perf(pts.getLast() - base, dd, sells.size(), avg, navDd);
     }
 
     /** 一个变体的评估结论。 */
@@ -127,7 +143,8 @@ public class AutoPromoter {
             }
         }
         // 候选里同期合计最高的一个才可能转正（每天最多一个）
-        candidates.sort((a, b) -> Double.compare(b.mine().total(), a.mine().total()));
+        // 风险调整收益优先（卡玛），其次同期合计
+        candidates.sort(java.util.Comparator.comparingDouble((Eval a) -> -a.mine().calmar()).thenComparingDouble(a -> -a.mine().total()));
         List<Eval> finalOut = new ArrayList<>();
         for (Eval e : out) {
             Eval f = e;
@@ -172,6 +189,10 @@ public class AutoPromoter {
         Perf mine = perf(v.book(), v.startedAt(), now);
         Perf base = perf(v2, v.startedAt(), now);
         double v2dd = Math.max(base.maxDd(), 1);
+        if (mine.navDd() > MAX_NAV_DD) {
+            return new Eval(v.name(), days, mine, base, "STOP", String.format(Locale.ROOT,
+                    "影子期间净值回撤 %.1f%% 超过 25%% 上限", mine.navDd() * 100));
+        }
         if (days >= opt.earlyStopDays() && days < opt.minDays() && mine.maxDd() > v2dd * opt.earlyStopDdRatio()) {
             return new Eval(v.name(), days, mine, base, "STOP", String.format(Locale.ROOT,
                     "上线 %.0f 天，同期回撤 %.0f U 已超过 V2 的 %.1f 倍（V2 %.0f U）", days, mine.maxDd(), opt.earlyStopDdRatio(), base.maxDd()));
@@ -190,6 +211,7 @@ public class AutoPromoter {
         if (!(mine.perTrade() > (Double.isNaN(base.perTrade()) ? Double.NEGATIVE_INFINITY : base.perTrade()))) miss.add("每笔期望没有高于 V2");
         if (mine.closed() < opt.minClosed()) miss.add("平仓 " + mine.closed() + " 笔，不到 " + opt.minClosed() + " 笔");
         if (!v.backtestPassed()) miss.add("回测发布前检查没有通过");
+        if (mine.navDd() > MAX_NAV_DD) miss.add("净值回撤超过 25%");
         String stats = String.format(Locale.ROOT, "满 %.0f 天同期合计 %+.0f / %+.0f U，回撤 %.0f / %.0f U，每笔 %+.2f / %+.2f U，平仓 %d 笔（变体 / V2）",
                 days, mine.total(), base.total(), mine.maxDd(), base.maxDd(), mine.perTrade(), base.perTrade(), mine.closed());
         if (miss.isEmpty()) return new Eval(v.name(), days, mine, base, "CANDIDATE", stats);

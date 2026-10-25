@@ -27,7 +27,11 @@ interface StreamProtocol {
     /** 解析一条推送；不关心的消息返回 null。 */
     Event parse(String message);
 
-    sealed interface Event permits ClosedKline, BestQuote {
+    sealed interface Event permits ClosedKline, LiveKline, BestQuote {
+    }
+
+    /** 还没收盘的 15m K 线（交易所每 1～2 秒推一次当前价和本根累计成交额）；只给启动探测观察用，不写缓存。 */
+    record LiveKline(String symbol, Kline kline) implements Event {
     }
 
     /** 已收盘的 15m K 线。 */

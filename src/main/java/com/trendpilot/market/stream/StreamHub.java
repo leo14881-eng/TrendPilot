@@ -59,6 +59,14 @@ public class StreamHub {
         if (raw.enabled()) log.info("WebSocket 原始消息日志已开启：logs/ws-raw.log");
     }
 
+    /** 秒级启动探测（只观察记录）；没有时不调用。 */
+    private com.trendpilot.launch.LaunchDetector launch;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setLaunch(com.trendpilot.launch.LaunchDetector launch) {
+        this.launch = launch;
+    }
+
     /** 设定某交易所需要采集 K 线的标的（Discovery 每轮按扫描范围调用）。 */
     public synchronized void watchKlines(Venue venue, Set<String> symbols) {
         VenueStream s = stream(venue);
@@ -163,6 +171,9 @@ public class StreamHub {
             raw.record(venue.name(), message, e instanceof StreamProtocol.BestQuote);
             if (e instanceof StreamProtocol.ClosedKline k) {
                 store.upsert(venue, k.symbol(), List.of(k.kline()));
+                if (launch != null) launch.onLive(venue, k.symbol(), k.kline(), Instant.now());
+            } else if (e instanceof StreamProtocol.LiveKline k) {
+                if (launch != null) launch.onLive(venue, k.symbol(), k.kline(), Instant.now());
             } else if (e instanceof StreamProtocol.BestQuote q) {
                 quotes.put(venue + ":" + q.symbol(), new Quote(q.bid(), q.ask(), Instant.now()));
             }

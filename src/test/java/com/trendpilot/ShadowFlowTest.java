@@ -52,6 +52,11 @@ class ShadowFlowTest {
         r.add("trendpilot.telegram.bot-token", () -> "");
         r.add("trendpilot.telegram.chat-id", () -> "");
         r.add("trendpilot.tracking.parallel-rules", () -> "S1_L8,T1_T12_g0");
+        // 本测试数 V2 的接口请求次数：只留 V5（和原来一样），其他影子变体会给它们自己的持仓多取 K 线
+        r.add("trendpilot.variants.list[0].name", () -> "V5");
+        r.add("trendpilot.variants.list[0].trade-usdt", () -> "2000");
+        r.add("trendpilot.variants.list[0].overrides.min-buy-rel1h", () -> "5.855");
+        r.add("trendpilot.variants.list[0].backtest-passed", () -> "true");
     }
 
     @TestConfiguration

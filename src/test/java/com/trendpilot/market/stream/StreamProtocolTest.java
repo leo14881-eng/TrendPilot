@@ -19,7 +19,7 @@ class StreamProtocolTest {
     void binanceOnlyClosedKlinesAndBookTicker() {
         String open = """
                 {"stream":"abcusdt@kline_15m","data":{"e":"kline","s":"ABCUSDT","k":{"t":1000,"T":900999,"o":"1","h":"2","l":"0.5","c":"1.5","q":"123","x":false}}}""";
-        assertThat(binance.parse(open)).isNull();
+        assertThat(binance.parse(open)).isInstanceOf(StreamProtocol.LiveKline.class); // 未收盘：只给启动探测，不写缓存
         var closed = (StreamProtocol.ClosedKline) binance.parse(open.replace("\"x\":false", "\"x\":true"));
         assertThat(closed.symbol()).isEqualTo("ABCUSDT");
         assertThat(closed.kline().quoteVolume()).isEqualTo(123);
@@ -56,7 +56,7 @@ class StreamProtocolTest {
     void bybitConfirmedKlinesAndTopOfBook() {
         String k = """
                 {"topic":"kline.15.ABCUSDT","data":[{"start":900000,"end":1799999,"interval":"15","open":"1","close":"1.5","high":"2","low":"0.5","volume":"10","turnover":"15","confirm":false}],"ts":1,"type":"snapshot"}""";
-        assertThat(bybit.parse(k)).isNull();
+        assertThat(bybit.parse(k)).isInstanceOf(StreamProtocol.LiveKline.class);
         var closed = (StreamProtocol.ClosedKline) bybit.parse(k.replace("\"confirm\":false", "\"confirm\":true"));
         assertThat(closed.symbol()).isEqualTo("ABCUSDT");
         assertThat(closed.kline().openTime()).isEqualTo(900000);
