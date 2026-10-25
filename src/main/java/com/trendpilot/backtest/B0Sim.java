@@ -86,6 +86,14 @@ public final class B0Sim extends Sim {
         return this;
     }
 
+    /** 配置化变体的参数改动（审核门槛、H1 追高过滤、H4 放量上限、H2 提前离场）；null = 与现行相同。和线上变体账本是同一份判断代码。 */
+    private com.trendpilot.variant.VariantOverrides overrides;
+
+    B0Sim overrides(com.trendpilot.variant.VariantOverrides o) {
+        this.overrides = o == null || o.isEmpty() ? null : o;
+        return this;
+    }
+
     B0Sim randomEntry(long seed) {
         this.random = new java.util.Random(seed);
         return this;
@@ -189,6 +197,18 @@ public final class B0Sim extends Sim {
                     double proceeds = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate());
                     path.net(proceeds - pos.costBasis().doubleValue());
                     close(pos, q, null, proceeds - pos.costBasis().doubleValue(), why);
+                    continue;
+                }
+            }
+            if (overrides != null && overrides.hasEarlyExit() && pos.costBasis().signum() > 0 && q % 4 == 3) {
+                double avg = pos.costBasis().doubleValue() / pos.qty().doubleValue();
+                double ret = (s.close[q] / avg - 1) * 100;
+                if (overrides.earlyExit(java.time.Duration.between(pos.openedAt(), now(q)), pos.protectArmed(), path.maxNet,
+                        pos.costBasis().doubleValue(), ret)) {
+                    double imp = Costs.impact(vol, pos.costBasis().doubleValue());
+                    double net = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate()) - pos.costBasis().doubleValue();
+                    path.net(net);
+                    close(pos, q, null, net, com.trendpilot.variant.VariantOverrides.EARLY_EXIT);
                     continue;
                 }
             }
@@ -338,7 +358,20 @@ public final class B0Sim extends Sim {
             OrderBook book = Costs.book(sym, data.get(sym).close[q], t.quoteVolume(), now);
             ReviewInput in = new ReviewInput(gen, Instant.ofEpochMilli(data.time(q)), now, true, s, t, book, risk,
                     seen == null ? null : BigDecimal.valueOf(seen[0]), pos, lastExit, verified(sym), earlySince, postExitHit);
-            ReviewResult r = reviewer.review(in);
+            ReviewResult r = overrides == null ? reviewer.review(in)
+                    : reviewer.review(in, overrides.minDepthUsdtOr(params.review().minDepthUsdt()),
+                            overrides.minBuyRel1hOr(params.review().minBuyRel1h()),
+                            overrides.tradeUsdtOr(params.capital().tradeSize()));
+            if (overrides != null && r.approved() && r.action() == Action.BUY) {
+                double m = overrides.entryMultiplier(risk.btc24hPct(), t.priceChangePct(), s.volumeAccel());
+                if (m <= 0) continue;
+                if (m < 1) {
+                    r = reviewer.review(in, overrides.minDepthUsdtOr(params.review().minDepthUsdt()),
+                            overrides.minBuyRel1hOr(params.review().minBuyRel1h()),
+                            overrides.tradeUsdtOr(params.capital().tradeSize()) * m);
+                    if (!r.approved()) continue;
+                }
+            }
             if (r.approved() && entryFilter != null && r.action() == Action.BUY
                     && !entryFilter.test(feat(sym, q, s, t.quoteVolume(), risk))) continue;
             if (r.approved() && (buyRegimes == null || r.action() != Action.BUY || buyRegimes.contains(risk.regime()))) approved.add(r);
