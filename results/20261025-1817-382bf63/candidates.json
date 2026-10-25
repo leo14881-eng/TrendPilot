@@ -1,0 +1,138 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-10-25T18:17:38.611714217Z",
+  "grid" : "custom",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-10-01",
+  "dataTo" : "2026-10-24",
+  "validationFrom" : "2025-06-25",
+  "evidence" : "",
+  "baseline" : {
+    "full" : {
+      "trades" : 15583,
+      "equity" : 19343.01,
+      "maxDrawdown" : 14538.46
+    },
+    "validation" : {
+      "trades" : 4777,
+      "equity" : -5046.68,
+      "maxDrawdown" : 14309.81
+    }
+  },
+  "candidates" : [ {
+    "id" : "V5基准",
+    "group" : "custom",
+    "overrides" : {
+      "min-buy-rel1h" : "5.855"
+    },
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 10964,
+      "equity" : 53826.21,
+      "maxDrawdown" : 5036.1,
+      "perTrade" : 4.91
+    },
+    "validation" : {
+      "trades" : 3711,
+      "equity" : 25643.17,
+      "maxDrawdown" : 2300.77,
+      "perTrade" : 6.91
+    },
+    "evidence" : ""
+  }, {
+    "id" : "V5+H4放量4倍上限",
+    "group" : "custom",
+    "overrides" : {
+      "max-volume-accel" : "4",
+      "min-buy-rel1h" : "5.855"
+    },
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 9433,
+      "equity" : 36908.48,
+      "maxDrawdown" : 4725.63,
+      "perTrade" : 3.91
+    },
+    "validation" : {
+      "trades" : 3256,
+      "equity" : 14034.63,
+      "maxDrawdown" : 3219.64,
+      "perTrade" : 4.31
+    },
+    "evidence" : ""
+  }, {
+    "id" : "V5+H1c不开",
+    "group" : "custom",
+    "overrides" : {
+      "btc24h-above-pct" : "1.5",
+      "coin24h-band-pct" : "5-10",
+      "hot-entry" : "SKIP",
+      "min-buy-rel1h" : "5.855"
+    },
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 8385,
+      "equity" : 41404.43,
+      "maxDrawdown" : 4417.32,
+      "perTrade" : 4.94
+    },
+    "validation" : {
+      "trades" : 3096,
+      "equity" : 21577.76,
+      "maxDrawdown" : 2673.61,
+      "perTrade" : 6.97
+    },
+    "evidence" : ""
+  }, {
+    "id" : "V5+H2_12h亏4",
+    "group" : "custom",
+    "overrides" : {
+      "early-exit-hours" : "12",
+      "early-exit-loss-pct" : "4",
+      "early-exit-max-mfe-pct" : "1",
+      "min-buy-rel1h" : "5.855"
+    },
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true
+    },
+    "full" : {
+      "trades" : 11213,
+      "equity" : 48871.13,
+      "maxDrawdown" : 2951.49,
+      "perTrade" : 4.36
+    },
+    "validation" : {
+      "trades" : 3795,
+      "equity" : 20113.07,
+      "maxDrawdown" : 1966.8,
+      "perTrade" : 5.3
+    },
+    "evidence" : ""
+  } ]
+}
