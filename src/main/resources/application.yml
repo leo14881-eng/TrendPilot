@@ -38,13 +38,16 @@ trendpilot:
     list:
       - { name: V5, base: V2, trade-usdt: "${trendpilot.variants.strong-trade-usdt}", overrides: { min-buy-rel1h: "${trendpilot.variants.strong-min-rel1h}" },
           backtest-passed: true, evidence: "docs/策略对比记录/2026-10-23-V2买入端.md" }
-      # 2026-10-26 回测"有希望但没通过"的两组（docs/策略对比记录/2026-10-26-H1H2H4.md）：作为影子对照跑满 30 天；回测没全部通过，所以不会自动转正
-      # V6 = 净亏 12% 止损（tracking.ExitRule S1_L12）：验证期回测和 V2 影子并行（59 笔配对）都比现行好
-      - { name: V6, base: V2, trade-usdt: 1000, overrides: { exit-rule: S1_L12 }, backtest-passed: false,
-          evidence: "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1824-bc9c512/report.md" }
-      # V7 = 放量超过 4 倍不买（H4）：验证期和回撤比现行好，但 6 倍上限明显更差，结果不稳
-      - { name: V7, base: V2, trade-usdt: 1000, overrides: { max-volume-accel: 4 }, backtest-passed: false,
-          evidence: "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1810-7e9d813/report.md" }
+      # 2026-10-26 回测里风险调整收益最好、净值回撤 ≤ 25% 的两组（docs/策略对比记录/2026-10-26-H1H2H4.md）：作为影子对照跑满 30 天；
+      # 回测检查差"暴跌行情"一项没全部通过，所以 backtest-passed: false，不会自动转正（用户可以改成 true）
+      # V6 = 涨幅榜动量：每小时取成交额前 150 里 24h 涨幅前 3 名，盘口深度和滑点过审核门槛就买；退出同 V2。
+      #      4 年回测 +73,240 U / 回撤 4,101 U（现行 +19,343 / 14,538），验证期 +29,728 U，每笔 +3.55 ±1.41 U；只差"暴跌"行情一项
+      - { name: V6, base: V2, trade-usdt: 1000, overrides: { momentum-top: 3, momentum-hours: 24, max-open: 17 }, backtest-passed: false,
+          evidence: "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1844-56f528c/report.md" }
+      # V7 = V5 的强信号买入（rel1h ≥ 5.855）+ H2 提前离场（持有 12h 最大浮盈 < 1% 且亏 > 4% 卖），每笔 1,000U：
+      #      4 年回测 +48,871 U / 回撤 2,951 U，净值回撤 7.5%，卡玛 4.7（本次所有候选里最高）；比 V5 收益少 9%、回撤少 41%
+      - { name: V7, base: V2, trade-usdt: 1000, overrides: { min-buy-rel1h: 5.855, early-exit-hours: 12, early-exit-max-mfe-pct: 1, early-exit-loss-pct: 4 },
+          backtest-passed: false, evidence: "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1817-382bf63/report.md" }
   # 自动优化：变体满 30 天按同期表现自动转正 / 停开新仓，每周读取回测候选（见 com.trendpilot.variant.AutoPromoter）
   optimize:
     auto-promote: true              # 已批准自动转正：只对影子账本 V2 生效（用户 2026-10-26 授权）
@@ -300,4 +303,8 @@ trendpilot.v3:
 
 # BTC 均线趋势（4 条均线 × 4 份，单独 20,000 U 账本，用户 2026-10-23 交接）：目前只做影子模式，不下单。见 docs/BTC均线趋势.md
 trendpilot.btc-trend:
+  enabled: true
+
+# 秒级启动探测（docs/规则说明.md 16.5）：用已订阅的 15m K 线实时推送记录"5 分钟急涨 + 放量"，只写 launch_event，不买卖、不进任何账本
+trendpilot.launch:
   enabled: true
