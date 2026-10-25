@@ -1,0 +1,461 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-10-25T19:19:19.085618544Z",
+  "grid" : "weekly",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-10-01",
+  "dataTo" : "2026-10-24",
+  "validationFrom" : "2025-06-25",
+  "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly",
+  "baseline" : {
+    "full" : {
+      "equity" : 19343.01,
+      "trades" : 15583,
+      "maxDrawdown" : 14538.46
+    },
+    "validation" : {
+      "equity" : -5046.68,
+      "trades" : 4777,
+      "maxDrawdown" : 14309.81
+    }
+  },
+  "candidates" : [ {
+    "id" : "W_H1_BTC24h>1.5_半仓",
+    "group" : "H1",
+    "overrides" : {
+      "btc24h-above-pct" : "1.5",
+      "hot-entry" : "HALF"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "calmar" : 0.6,
+      "equity" : 8919.44,
+      "maxDrawdown" : 14910.64,
+      "trades" : 17469,
+      "perTrade" : 0.51,
+      "navDrawdownPct" : 39.9
+    },
+    "validation" : {
+      "equity" : -4195.04,
+      "trades" : 4964,
+      "perTrade" : -0.77,
+      "maxDrawdown" : 11864.34
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_H1_币24h5-10_半仓",
+    "group" : "H1",
+    "overrides" : {
+      "coin24h-band-pct" : "5-10",
+      "hot-entry" : "HALF"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "calmar" : 0.47,
+      "equity" : 8701.83,
+      "maxDrawdown" : 18358.38,
+      "trades" : 16487,
+      "perTrade" : 0.53,
+      "navDrawdownPct" : 45.47
+    },
+    "validation" : {
+      "equity" : -4886.21,
+      "trades" : 4861,
+      "perTrade" : -0.96,
+      "maxDrawdown" : 12694.53
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_H2_24h_浮盈<1%_亏>4%",
+    "group" : "H2",
+    "overrides" : {
+      "early-exit-hours" : "24",
+      "early-exit-loss-pct" : "4",
+      "early-exit-max-mfe-pct" : "1"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "calmar" : -0.61,
+      "equity" : -11441.7,
+      "maxDrawdown" : 18649.07,
+      "trades" : 13493,
+      "perTrade" : -0.85,
+      "navDrawdownPct" : 74.11
+    },
+    "validation" : {
+      "equity" : -4074.39,
+      "trades" : 3348,
+      "perTrade" : -1.22,
+      "maxDrawdown" : 9553.05
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_H2_12h_浮盈<1%_亏>4%",
+    "group" : "H2",
+    "overrides" : {
+      "early-exit-hours" : "12",
+      "early-exit-loss-pct" : "4",
+      "early-exit-max-mfe-pct" : "1"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "calmar" : -0.66,
+      "equity" : -9595.42,
+      "maxDrawdown" : 14525.47,
+      "trades" : 15204,
+      "perTrade" : -0.63,
+      "navDrawdownPct" : 64.11
+    },
+    "validation" : {
+      "equity" : -2680.03,
+      "trades" : 4136,
+      "perTrade" : -0.65,
+      "maxDrawdown" : 9381.53
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_H4_放量≤4倍",
+    "group" : "H4",
+    "overrides" : {
+      "max-volume-accel" : "4"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "calmar" : 0.9,
+      "equity" : 11007.81,
+      "maxDrawdown" : 12190.46,
+      "trades" : 15344,
+      "perTrade" : 0.72,
+      "navDrawdownPct" : 33.49
+    },
+    "validation" : {
+      "equity" : 1160.33,
+      "trades" : 4631,
+      "perTrade" : 0.28,
+      "maxDrawdown" : 11494.25
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_C1_L15_T24",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "C1_L15_T24"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "calmar" : -0.93,
+      "equity" : -14349.02,
+      "maxDrawdown" : 15379.39,
+      "trades" : 9105,
+      "perTrade" : -1.58,
+      "navDrawdownPct" : 75.85
+    },
+    "validation" : {
+      "equity" : -988.13,
+      "trades" : 1660,
+      "perTrade" : -0.63,
+      "maxDrawdown" : 1949.48
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_S1_L12",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "S1_L12"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "calmar" : 0.64,
+      "equity" : 6716.19,
+      "maxDrawdown" : 10541.23,
+      "trades" : 16055,
+      "perTrade" : 0.42,
+      "navDrawdownPct" : 38.86
+    },
+    "validation" : {
+      "equity" : 8728.92,
+      "trades" : 5080,
+      "perTrade" : 1.75,
+      "maxDrawdown" : 6549.32
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_M_24h前3",
+    "group" : "momentum",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "calmar" : 17.86,
+      "equity" : 73240.45,
+      "maxDrawdown" : 4101.24,
+      "trades" : 15298,
+      "perTrade" : 4.79,
+      "navDrawdownPct" : 10.46
+    },
+    "validation" : {
+      "equity" : 29727.66,
+      "trades" : 5293,
+      "perTrade" : 5.58,
+      "maxDrawdown" : 2508.2
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥4.5",
+    "group" : "rel1h",
+    "overrides" : {
+      "min-buy-rel1h" : "4.5"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "calmar" : 3.7,
+      "equity" : 35171.94,
+      "maxDrawdown" : 9504.84,
+      "trades" : 12277,
+      "perTrade" : 2.86,
+      "navDrawdownPct" : 23.57
+    },
+    "validation" : {
+      "equity" : 17615.96,
+      "trades" : 4076,
+      "perTrade" : 4.36,
+      "maxDrawdown" : 2758.85
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥5.855",
+    "group" : "rel1h",
+    "overrides" : {
+      "min-buy-rel1h" : "5.855"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "calmar" : 10.69,
+      "equity" : 53826.21,
+      "maxDrawdown" : 5036.1,
+      "trades" : 10964,
+      "perTrade" : 4.91,
+      "navDrawdownPct" : 11.16
+    },
+    "validation" : {
+      "equity" : 25643.17,
+      "trades" : 3711,
+      "perTrade" : 6.91,
+      "maxDrawdown" : 2300.77
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥7.5",
+    "group" : "rel1h",
+    "overrides" : {
+      "min-buy-rel1h" : "7.5"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "calmar" : 12.24,
+      "equity" : 49199.04,
+      "maxDrawdown" : 4021.14,
+      "trades" : 8906,
+      "perTrade" : 5.52,
+      "navDrawdownPct" : 10.76
+    },
+    "validation" : {
+      "equity" : 25510.18,
+      "trades" : 3240,
+      "perTrade" : 7.9,
+      "maxDrawdown" : 1841.22
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥5.855_每笔1500",
+    "group" : "size",
+    "overrides" : {
+      "min-buy-rel1h" : "5.855",
+      "trade-usdt" : "1500"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PASS",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : true,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "calmar" : 9.74,
+      "equity" : 68664.04,
+      "maxDrawdown" : 7049.79,
+      "trades" : 10145,
+      "perTrade" : 6.77,
+      "navDrawdownPct" : 13.37
+    },
+    "validation" : {
+      "equity" : 27280.91,
+      "trades" : 3452,
+      "perTrade" : 7.9,
+      "maxDrawdown" : 6942.06
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  }, {
+    "id" : "W_每笔1250",
+    "group" : "size",
+    "overrides" : {
+      "trade-usdt" : "1250"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "calmar" : 0.76,
+      "equity" : 11535.12,
+      "maxDrawdown" : 15110.59,
+      "trades" : 14045,
+      "perTrade" : 0.82,
+      "navDrawdownPct" : 35.72
+    },
+    "validation" : {
+      "equity" : -5705.07,
+      "trades" : 4275,
+      "perTrade" : -1.29,
+      "maxDrawdown" : 11331.85
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1901-edbafbe-weekly/report.md"
+  } ]
+}
