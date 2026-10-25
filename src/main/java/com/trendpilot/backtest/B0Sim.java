@@ -96,6 +96,27 @@ public final class B0Sim extends Sim {
         return this;
     }
 
+    /**
+     * 实时涨幅榜动量（用户 2026-10-26："为什么不能买入涨幅榜前几名"）：每次审核按当时已知的滚动涨幅（24h 或 4h）取池内前 N 名，
+     * 没持有、盘口深度和滑点过审核门槛就按 V2 的每笔金额买入；资金分配、亏损冻结、行情上限照 V2。不看 EARLY 信号。0 = 不用。
+     */
+    private int momentumTopN;
+    private int momentumLookback = MarketData.DAY;
+
+    B0Sim momentum(int topN, int lookbackQuarters) {
+        this.momentumTopN = topN;
+        this.momentumLookback = lookbackQuarters;
+        return this;
+    }
+
+    /** 跟踪止损：1h 收盘低于持仓以来最高价 ×(1 − k × 买入时日线 ATR%) 就卖；0 = 不用。 */
+    private double trailAtrK;
+
+    B0Sim trailAtr(double k) {
+        this.trailAtrK = k;
+        return this;
+    }
+
     /** "让赢家跑"阶段用的宽回吐 ExitPolicy；null = 不用。 */
     private ExitPolicy runnerPolicy;
 
@@ -208,6 +229,17 @@ public final class B0Sim extends Sim {
                     double proceeds = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate());
                     path.net(proceeds - pos.costBasis().doubleValue());
                     close(pos, q, null, proceeds - pos.costBasis().doubleValue(), why);
+                    continue;
+                }
+            }
+            if (trailAtrK > 0 && pos.costBasis().signum() > 0 && q % 4 == 3) {
+                double atr = atrDaily(s, entryQ.get(pos.symbol()));
+                double dist = Double.isNaN(atr) ? 0.10 : trailAtrK * atr / 100;
+                if (s.close[q] <= path.peakHigh * (1 - dist)) {
+                    double imp = Costs.impact(vol, pos.costBasis().doubleValue());
+                    double net = pos.qty().doubleValue() * s.close[q] * (1 - imp) * (1 - params.feeRate()) - pos.costBasis().doubleValue();
+                    path.net(net);
+                    close(pos, q, null, net, "TRAIL_ATR");
                     continue;
                 }
             }
@@ -356,6 +388,10 @@ public final class B0Sim extends Sim {
         RiskState risk = recovery.apply(raw, gen);
 
         List<ReviewResult> approved = new ArrayList<>();
+        if (momentumTopN > 0) {
+            approved.addAll(momentumPicks(universe, q, now, risk));
+            signals.clear(); // 不走 EARLY 审核
+        }
         for (EarlySignal s : signals.values()) {
             String sym = s.symbol();
             Position pos = positions.get(sym);
@@ -423,6 +459,31 @@ public final class B0Sim extends Sim {
                         f.avgPrice(), now, gen, cur.openedAt(), false, BigDecimal.ZERO, BigDecimal.ZERO, 0, false));
             }
         }
+    }
+
+    /** 涨幅榜前 N 名（按 q 收盘时已知的滚动涨幅），过盘口深度、滑点和系统风险就作为 BUY。 */
+    private List<ReviewResult> momentumPicks(List<String> universe, int q, Instant now, RiskState risk) {
+        List<ReviewResult> out = new ArrayList<>();
+        if (!risk.newRiskAllowed()) return out;
+        List<String> ranked = universe.stream().filter(sym -> !sym.equals(MarketData.BTC))
+                .filter(sym -> data.get(sym) != null && data.get(sym).has(q) && q - momentumLookback >= 0 && data.get(sym).has(q - momentumLookback))
+                .sorted(java.util.Comparator.comparingDouble(sym -> -(data.get(sym).close[q] / data.get(sym).close[q - momentumLookback])))
+                .limit(momentumTopN).toList();
+        StrategyParams.Review rv = params.review();
+        for (String sym : ranked) {
+            if (positions.containsKey(sym)) continue;
+            Integer exitQ = lastExitQ.get(sym);
+            if (exitQ != null && q - exitQ < 4) continue; // 卖出后 1 小时内不买回
+            Ticker24h t = data.ticker(sym, q);
+            if (t == null) continue;
+            OrderBook book = Costs.book(sym, data.get(sym).close[q], t.quoteVolume(), now);
+            double depth = Math.min(book.bidDepthWithin(rv.depthBandPct()), book.askDepthWithin(rv.depthBandPct()));
+            Fill f = com.trendpilot.market.ExecutionSimulator.buy(book, BigDecimal.valueOf(params.capital().tradeSize()), params.feeRate());
+            if (depth < rv.minDepthUsdt() || f == null || !f.complete() || f.slippageBps() > rv.maxSlippageBps()) continue;
+            out.add(new ReviewResult(sym, Action.BUY, com.trendpilot.capital.Decision.BUY, List.of(), List.of(), t.priceChangePct(),
+                    Double.NaN, book.spreadBps(), f.slippageBps(), depth, depth, f));
+        }
+        return out;
     }
 
     private String randomSymbol(List<String> universe, int q) {

@@ -70,6 +70,16 @@ class ReleaseCheckTest {
             assertThat(s.equity()[data.size / 4]).isCloseTo(s.trades().stream().mapToDouble(Trade::pnl).sum(),
                     org.assertj.core.data.Offset.offset(1e-6));
         }
+        B0Sim m = CandidateStudy.parse("M", "momentum", "sim.momentum-top=5,sim.momentum-hours=24,sim.stop-fixed=5,sim.trail-atr=2")
+                .apply(EntryStudy.live("动量", data, regimes, tape, params, fromQ, data.size));
+        m.run();
+        assertThat(m.trades()).isNotEmpty().anyMatch(t -> t.reason().equals("TRAIL_ATR") || t.reason().startsWith("L1_"));
+        CandidateStudy.Candidate all = CandidateStudy.relax().get(4);
+        StrategyParams relaxed = BacktestMain.loadParams(all.config());
+        assertThat(relaxed.capital().deployPct("CONSTRUCTIVE")).isEqualTo(0.95);
+        assertThat(relaxed.review().minScore()).isEqualTo(7);
+        assertThat(relaxed.risk().lossExitsFreeze()).isEqualTo(999);
+        assertThat(all.overrides().minDepthUsdt()).isEqualTo(15000.0);
         assertThat(CandidateStudy.parse("F", "g", "cfg.risk.loss-exits-freeze=999,sim.discover-every=1,max-volume-accel=4"))
                 .satisfies(k -> {
                     assertThat(k.config()).containsEntry("trendpilot.strategy.risk.loss-exits-freeze", "999");

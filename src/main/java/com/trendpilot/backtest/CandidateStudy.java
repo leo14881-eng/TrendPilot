@@ -41,33 +41,88 @@ public final class CandidateStudy {
      * 候选：名字 + 参数改动 + 属于哪个假设。config = 直接覆盖的线上策略参数（键相对 trendpilot.strategy，例如 risk.loss-exits-freeze），
      * discoverEvery = 买入审核间隔（15m 根数，4 = 每小时）。这两项只在回测里用，服务器不会把带它们的候选自动上线。
      */
-    public record Candidate(String id, String group, VariantOverrides overrides, Map<String, Object> config, int discoverEvery) {
+    public record Candidate(String id, String group, VariantOverrides overrides, Map<String, Object> config, Map<String, String> sim) {
 
         Candidate(String id, String group, VariantOverrides overrides) {
-            this(id, group, overrides, Map.of(), 4);
+            this(id, group, overrides, Map.of(), Map.of());
+        }
+
+        int discoverEvery() {
+            return Integer.parseInt(sim.getOrDefault("discover-every", "4"));
         }
 
         boolean liveCapable() {
-            return config.isEmpty() && discoverEvery == 4;
+            return config.isEmpty() && sim.isEmpty();
+        }
+
+        /** 按候选的回测专用设置调整一个模拟（审核频率、涨幅榜动量、固定止损、ATR 跟踪止损）。 */
+        B0Sim apply(B0Sim b) {
+            b.overrides(overrides).discoverEvery(discoverEvery());
+            if (sim.containsKey("momentum-top")) {
+                b.momentum(Integer.parseInt(sim.get("momentum-top")), Integer.parseInt(sim.getOrDefault("momentum-hours", "24")) * 4);
+            }
+            if (sim.containsKey("stop-fixed")) b.stop(StopRule.fixed("固定" + sim.get("stop-fixed") + "%", Double.parseDouble(sim.get("stop-fixed")), "HOUR"));
+            if (sim.containsKey("trail-atr")) b.trailAtr(Double.parseDouble(sim.get("trail-atr")));
+            return b;
         }
     }
 
-    /** 解析 "key=v,key=v"：cfg.* 进 config，sim.discover-every 进审核间隔，其余是变体参数。 */
+    /** 解析 "key=v,key=v"：cfg.* 进 config（线上策略参数），sim.* 进回测专用设置，其余是变体参数。 */
     static Candidate parse(String id, String group, String inline) {
         Map<String, Object> cfg = new LinkedHashMap<>();
+        Map<String, String> sim = new LinkedHashMap<>();
         List<String> rest = new ArrayList<>();
-        int every = 4;
         for (String kv : inline.split(",")) {
+            int eq = kv.indexOf('=');
             if (kv.startsWith("cfg.")) {
-                int eq = kv.indexOf('=');
                 cfg.put("trendpilot.strategy." + kv.substring(4, eq), kv.substring(eq + 1));
-            } else if (kv.startsWith("sim.discover-every=")) {
-                every = Integer.parseInt(kv.substring(kv.indexOf('=') + 1));
+            } else if (kv.startsWith("sim.")) {
+                sim.put(kv.substring(4, eq), kv.substring(eq + 1));
             } else if (!kv.isBlank()) {
                 rest.add(kv);
             }
         }
-        return new Candidate(id, group, VariantOverrides.parseInline(String.join(",", rest)), cfg, every);
+        return new Candidate(id, group, VariantOverrides.parseInline(String.join(",", rest)), cfg, sim);
+    }
+
+    /**
+     * 放宽限制（用户 2026-10-26："V2 太严格的话可以去掉部分限制"）：逐项单独放宽，再测"全部放宽 + 更好的退出"组合，共 8 组。
+     * 冻结放宽（不冻结 / 只减半）在 flow 里。
+     */
+    static List<Candidate> relax() {
+        String regime = "cfg.capital.regime-limits[0].regime=RISK_OFF,cfg.capital.regime-limits[0].pct=0.7,"
+                + "cfg.capital.regime-limits[1].regime=NEUTRAL,cfg.capital.regime-limits[1].pct=0.85,"
+                + "cfg.capital.regime-limits[2].regime=CONSTRUCTIVE,cfg.capital.regime-limits[2].pct=0.95,"
+                + "cfg.capital.regime-limits[3].regime=STRONG,cfg.capital.regime-limits[3].pct=1.0,cfg.capital.normal-pool=20000";
+        String all = "cfg.risk.loss-exits-freeze=999,cfg.risk.loss-exits-half-budget=999,cfg.review.min-score=7,min-depth-usdt=15000," + regime;
+        List<Candidate> c = new ArrayList<>();
+        c.add(parse("L1_深度15000", "relax", "min-depth-usdt=15000"));
+        c.add(parse("L2_不减半额度", "relax", "cfg.risk.loss-exits-half-budget=999"));
+        c.add(parse("L3_行情上限放宽", "relax", regime));
+        c.add(parse("L4_评分门槛7", "relax", "cfg.review.min-score=7"));
+        c.add(parse("L5_全部放宽", "relax", all));
+        c.add(parse("L6_全部放宽+S1_L12", "relax", all + ",exit-rule=S1_L12"));
+        c.add(parse("L7_全部放宽+C1_L15_T24", "relax", all + ",exit-rule=C1_L15_T24"));
+        c.add(parse("L8_全部放宽+浮盈5%后回吐3%", "relax", all + ",runner-arm-pct=5,runner-giveback-pct=3"));
+        return c;
+    }
+
+    /**
+     * 实时涨幅榜动量（用户 2026-10-26）：按滚动 24h / 4h 涨幅取前 N 名，满足深度和滑点就买（每笔 1,000U），共 10 组。
+     * 退出：现行 V2 退出、C1_L15_T24、浮盈 5% 后宽跟踪、固定止损 5% + ATR×2 跟踪。
+     */
+    static List<Candidate> momentum() {
+        List<Candidate> c = new ArrayList<>();
+        for (int h : new int[]{24, 4}) {
+            for (int n : new int[]{3, 5, 10}) {
+                c.add(parse("M_" + h + "h前" + n + "_V2退出", "momentum", "sim.momentum-top=" + n + ",sim.momentum-hours=" + h));
+            }
+        }
+        c.add(parse("M_24h前5_C1_L15_T24", "momentum", "sim.momentum-top=5,sim.momentum-hours=24,exit-rule=C1_L15_T24"));
+        c.add(parse("M_24h前5_浮盈5%后回吐3%", "momentum", "sim.momentum-top=5,sim.momentum-hours=24,runner-arm-pct=5,runner-giveback-pct=3"));
+        c.add(parse("M_24h前5_止损5%+ATR×2跟踪", "momentum", "sim.momentum-top=5,sim.momentum-hours=24,sim.stop-fixed=5,sim.trail-atr=2"));
+        c.add(parse("M_24h前5_每15分钟", "momentum", "sim.momentum-top=5,sim.momentum-hours=24,sim.discover-every=1"));
+        return c;
     }
 
     /**
@@ -151,6 +206,11 @@ public final class CandidateStudy {
         List<Candidate> cands = new ArrayList<>();
         String gridName = "weekly";
         for (int a = 8; a < args.length; a++) {
+            if (args[a].equals("relax") || args[a].equals("momentum")) {
+                cands.addAll(args[a].equals("relax") ? relax() : momentum());
+                gridName = args[a];
+                continue;
+            }
             if (args[a].equals("flow")) {
                 cands.addAll(flow());
                 gridName = "flow";
@@ -217,9 +277,8 @@ public final class CandidateStudy {
         int seed = 5000;
         for (Candidate c : cands) {
             StrategyParams pp = c.config().isEmpty() ? params : BacktestMain.loadParams(c.config());
-            todo.add(EntryStudy.live(c.id(), data, regimes, tape, pp, fromQ, size).overrides(c.overrides()).discoverEvery(c.discoverEvery()));
-            todo.add(EntryStudy.live(c.id() + " 随机", data, regimes, tape, pp, fromQ, size).overrides(c.overrides())
-                    .discoverEvery(c.discoverEvery()).randomEntry(seed++));
+            todo.add(c.apply(EntryStudy.live(c.id(), data, regimes, tape, pp, fromQ, size)));
+            todo.add(c.apply(EntryStudy.live(c.id() + " 随机", data, regimes, tape, pp, fromQ, size)).randomEntry(seed++));
         }
         Map<String, Sim> byName = new LinkedHashMap<>();
         try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {
@@ -273,7 +332,7 @@ public final class CandidateStudy {
             j.put("group", c.group());
             j.put("overrides", c.overrides().toMap());
             j.put("config", c.config());
-            j.put("discoverEvery", c.discoverEvery());
+            j.put("sim", c.sim());
             j.put("liveCapable", c.liveCapable());
             j.put("status", r.verdict().name());
             j.put("checks", r.checks());
@@ -316,6 +375,9 @@ public final class CandidateStudy {
         if (!c.overrides().isEmpty()) p.add(c.overrides().describe());
         c.config().forEach((k, v) -> p.add(k.replace("trendpilot.strategy.", "") + " = " + v));
         if (c.discoverEvery() != 4) p.add("每 " + c.discoverEvery() * 15 + " 分钟审核一次");
+        if (c.sim().containsKey("momentum-top")) p.add("涨幅榜动量：滚动 " + c.sim().getOrDefault("momentum-hours", "24") + "h 涨幅前 " + c.sim().get("momentum-top") + " 名");
+        if (c.sim().containsKey("stop-fixed")) p.add("固定止损 " + c.sim().get("stop-fixed") + "%");
+        if (c.sim().containsKey("trail-atr")) p.add("跟踪止损 ATR×" + c.sim().get("trail-atr"));
         return String.join("；", p);
     }
 
