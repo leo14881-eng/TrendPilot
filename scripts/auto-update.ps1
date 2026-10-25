@@ -200,6 +200,7 @@ function Invoke-Git([string[]]$GitArgs) {
 #   migrate    迁移到服务器：平滑停掉本机服务并停用，上传本机配置和数据库，启动服务器上的服务
 #   migrate-fresh  同上，但只上传配置，服务器用全新的空数据库从头开始（本机数据库原样保留）
 #   fallback   切回本机：停用服务器上的服务，启用并启动本机服务
+#   export     只读导出（周复盘用）：服务器上运行 export.sh 把业务表导成 CSV 打包，下载到 app\export\（不含配置、密钥和日志）
 $Disabled = Join-Path $Bin 'disabled.flag'
 $BootClone = 'command -v git >/dev/null || { apt-get update -qq && apt-get install -y -qq git >/dev/null; }; rm -rf /tmp/tp-boot && git clone -q --depth 1 https://github.com/leo14881-eng/TrendPilot.git /tmp/tp-boot'
 $ServerScripts = @{
@@ -209,6 +210,7 @@ $ServerScripts = @{
     migrate  = 'bash /opt/trendpilot/scripts/linux/migrate-in.sh'
     'migrate-fresh' = 'touch /opt/trendpilot/data/trendpilot.db && bash /opt/trendpilot/scripts/linux/migrate-in.sh'
     fallback = 'mkdir -p /opt/trendpilot/app && touch /opt/trendpilot/app/disabled.flag && systemctl stop trendpilot.service && echo "服务器上的服务已停止并停用"'
+    export   = "$BootClone && bash /tmp/tp-boot/scripts/linux/export.sh"
 }
 
 function Write-ServerLog($msg) {
@@ -296,6 +298,21 @@ function Invoke-ServerRequest {
         Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts.fallback | Out-Null
         Remove-Item $Disabled -ErrorAction SilentlyContinue
         if (Start-TrendPilot) { Write-ServerLog '本机服务已启动'; Send-Telegram '✅ 已切回电脑运行' }
+    } elseif ($action -eq 'export') {
+        $code = Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts.export
+        Write-ServerLog "导出退出码 $code"
+        if ($code -eq 0) {
+            $exportDir = Join-Path $Bin 'export'
+            New-Item -ItemType Directory -Force -Path $exportDir | Out-Null
+            $dest = Join-Path $exportDir ('trendpilot-export-{0}.tar.gz' -f (Get-Date -Format 'yyyyMMdd-HHmm'))
+            $code = Invoke-ServerTool $scp "$opts -q root@${ip}:/opt/trendpilot/export/trendpilot-export.tar.gz `"$dest`"" $null
+            if ($code -eq 0 -and (Test-Path $dest)) {
+                Write-ServerLog "已下载导出：${dest}（$([math]::Round((Get-Item $dest).Length / 1MB, 1)) MB）"
+            } else {
+                Remove-Item $dest -ErrorAction SilentlyContinue
+                Write-ServerLog "下载导出没有完成：退出码 $code"
+            }
+        }
     } else {
         $code = Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts[$action]
         Write-ServerLog "退出码 $code"

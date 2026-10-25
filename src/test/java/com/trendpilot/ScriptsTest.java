@@ -20,4 +20,18 @@ class ScriptsTest {
         assertThat(s.lines().filter(l -> l.contains("& git.exe") && !l.trim().startsWith("#")))
                 .allMatch(l -> l.contains("clone") && l.contains("Out-Null"));
     }
+
+    @Test
+    void exportActionIsReadOnlyAndSkipsSecrets() throws Exception {
+        String ps = Files.readString(Path.of("scripts/auto-update.ps1"), StandardCharsets.UTF_8);
+        assertThat(ps).contains("export   = \"$BootClone && bash /tmp/tp-boot/scripts/linux/export.sh\"")
+                .contains("/opt/trendpilot/export/trendpilot-export.tar.gz");
+        String sh = Files.readString(Path.of("scripts/linux/export.sh"), StandardCharsets.UTF_8);
+        assertThat(sh).doesNotContain("\r").contains("sqlite3 -readonly");
+        // 只读：不写数据库；不导配置、日志、Telegram 消息
+        assertThat(sh.lines().filter(l -> !l.trim().startsWith("#")))
+                .noneMatch(l -> l.matches("(?i).*\\b(INSERT|UPDATE|DELETE|DROP|ALTER|VACUUM)\\b.*"))
+                .noneMatch(l -> l.contains("$CONFIG") || l.contains("config/") || l.contains("logs/")
+                        || l.contains("notification_outbox"));
+    }
 }

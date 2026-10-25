@@ -1,3 +1,5 @@
 # 回测参考数据和对账基准：固定 LF，Windows 检出也不变
 *.csv text eol=lf
 *.py text eol=lf
+# 服务器脚本：固定 LF（Windows 检出也不变，服务器和测试按 LF 读取）
+*.sh text eol=lf
