@@ -55,9 +55,27 @@ class ReleaseCheckTest {
         B0Sim b = EntryStudy.live("空改动", data, regimes, tape, params, fromQ, data.size).overrides(VariantOverrides.NONE);
         B0Sim c = EntryStudy.live("H2", data, regimes, tape, params, fromQ, data.size)
                 .overrides(VariantOverrides.parseInline("early-exit-hours=4,early-exit-max-mfe-pct=1,early-exit-loss-pct=0.5"));
-        for (B0Sim s : List.of(a, b, c)) s.run();
+        B0Sim r = EntryStudy.live("让赢家跑", data, regimes, tape, params, fromQ, data.size)
+                .overrides(VariantOverrides.parseInline("runner-arm-pct=2.5,runner-giveback-pct=3"));
+        B0Sim x = EntryStudy.live("S1", data, regimes, tape, params, fromQ, data.size)
+                .overrides(VariantOverrides.parseInline("exit-rule=S1_L8"));
+        B0Sim f = EntryStudy.live("15分钟", data, regimes, tape, params, fromQ, data.size).discoverEvery(1);
+        for (B0Sim s : List.of(a, b, c, r, x, f)) s.run();
         assertThat(a.trades()).isNotEmpty();
         assertThat(b.trades()).isEqualTo(a.trades());
         assertThat(c.trades()).anyMatch(t -> t.reason().equals(VariantOverrides.EARLY_EXIT));
+        assertThat(r.trades()).isNotEqualTo(a.trades());
+        assertThat(f.trades()).isNotEmpty();
+        for (B0Sim s : List.of(r, x, f)) {
+            assertThat(s.equity()[data.size / 4]).isCloseTo(s.trades().stream().mapToDouble(Trade::pnl).sum(),
+                    org.assertj.core.data.Offset.offset(1e-6));
+        }
+        assertThat(CandidateStudy.parse("F", "g", "cfg.risk.loss-exits-freeze=999,sim.discover-every=1,max-volume-accel=4"))
+                .satisfies(k -> {
+                    assertThat(k.config()).containsEntry("trendpilot.strategy.risk.loss-exits-freeze", "999");
+                    assertThat(k.discoverEvery()).isEqualTo(1);
+                    assertThat(k.overrides().maxVolumeAccel()).isEqualTo(4.0);
+                    assertThat(k.liveCapable()).isFalse();
+                });
     }
 }

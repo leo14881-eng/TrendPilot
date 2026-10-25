@@ -69,6 +69,23 @@ public final class VariantRules {
                 d.netPnl().doubleValue() / cost * 100, ret);
     }
 
+    /**
+     * "让赢家跑"阶段用的参数：利润保护底线 = max(本金最低比例, 最高净利 − 本金 × runner-giveback-pct%, 最高净利 × runner-lock-ratio)，
+     * 其余退出参数不变。进入这个阶段时底线按新公式重新算（会比原来的底线低，这是规则本意）。
+     */
+    public static StrategyParams runnerParams(StrategyParams p, VariantOverrides o) {
+        StrategyParams.Exit e = p.exit();
+        StrategyParams.Exit x = new StrategyParams.Exit(e.protectArmPct(), e.protectMinFloorPct(), o.runnerGivebackPct(),
+                o.runnerLockRatio() == null ? 0 : o.runnerLockRatio(), e.reviewTargetPct(), e.decayMinWeak(), e.decayConsecutive(),
+                e.hardMaxSpreadBps(), e.hardMaxSlippageBps(), e.hardMinBidDepthUsdt());
+        return new StrategyParams(p.version(), p.universe(), p.early(), p.review(), p.capital(), p.add(), x, p.risk(), p.feeRate());
+    }
+
+    /** 进入"让赢家跑"阶段的持仓：底线清零后交给宽回吐的 ExitPolicy 重新算（底线之后照常只上调）。 */
+    public static Position runnerView(Position p) {
+        return p.withProtection(true, java.math.BigDecimal.ZERO, p.peakNet());
+    }
+
     /** 卖出后清掉记录。 */
     public void forget(String book, Position pos) {
         lastHour.remove(book + ":" + pos.venue() + ":" + pos.symbol() + ":" + pos.openedAt());

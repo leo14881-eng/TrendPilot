@@ -29,6 +29,8 @@ public abstract class Sim {
     protected final int toQ;
 
     protected double realized;
+    /** 每隔多少根 15m 做一次买入审核（默认 4 = 每小时，对应线上 :17 的 Discovery）。 */
+    protected int discoverEvery = 4;
     protected final List<Trade> trades = new ArrayList<>();
     /** 每个整点的权益（已实现 + 浮动），下标为小时。 */
     protected final double[] equity;
@@ -68,7 +70,7 @@ public abstract class Sim {
     public void run() {
         for (int q = fromQ; q < toQ; q++) {
             manage(q);
-            if (q % 4 == 0) discover(q);
+            if (q % discoverEvery == 0) discover(q);
             if (q % 4 == 3) {
                 equity[q / 4 + 1] = realized + unrealized(q);
                 deployed[q / 4 + 1] = deployedCost();

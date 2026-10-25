@@ -96,7 +96,9 @@ public class CandidateSync {
         if (!generated.isBlank() && generated.equals(state.get(SEEN_KEY).orElse(null))) return List.of();
         List<JsonNode> pass = new ArrayList<>();
         for (JsonNode c : root.path("candidates")) {
-            if ("PASS".equals(c.path("status").asText())) pass.add(c);
+            // 带回测专用设置（直接改策略参数、改审核频率）的候选不能作为影子变体运行，只看结论
+            boolean liveCapable = c.path("liveCapable").asBoolean(true) && c.path("config").isEmpty();
+            if ("PASS".equals(c.path("status").asText()) && liveCapable) pass.add(c);
         }
         pass.sort(Comparator.comparingDouble((JsonNode c) -> -c.path("validation").path("equity").asDouble(0)));
         List<String> added = new ArrayList<>();

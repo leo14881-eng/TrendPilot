@@ -74,7 +74,8 @@ public class MonitorJob {
                       com.trendpilot.observation.DepthVariantTracker depthVariant, StreamHub hub,
                       com.trendpilot.monitor.LossGuard guard,
                       com.trendpilot.variant.VariantTracker variants,
-                      com.trendpilot.variant.ParamSets paramSets) {
+                      com.trendpilot.variant.ParamSets paramSets, com.trendpilot.config.StrategyParams params) {
+        this.params = params;
         this.guard = guard;
         this.variants = variants;
         this.paramSets = paramSets;
@@ -170,6 +171,13 @@ public class MonitorJob {
             runs.record(FAST_JOB, gen, now, Instant.now(), "FAILED", "N/A", String.valueOf(e.getMessage()));
             return new Report(gen, 0, List.of(), "N/A");
         }
+    }
+
+    private final java.util.Map<String, ExitPolicy> runnerPolicies = new java.util.concurrent.ConcurrentHashMap<>();
+    private final com.trendpilot.config.StrategyParams params;
+
+    private ExitPolicy runnerPolicy(com.trendpilot.variant.VariantOverrides o) {
+        return runnerPolicies.computeIfAbsent(o.inline(), k -> new ExitPolicy(com.trendpilot.variant.VariantRules.runnerParams(params, o)));
     }
 
     private final SkipAlerts skipAlerts = new SkipAlerts();
@@ -349,7 +357,11 @@ public class MonitorJob {
                 EarlySignal sig = (b == null || btc == null) ? null : signals.compute(b, btc);
                 long hour = sig == null ? -1 : b.hourly().getLast().openTime();
                 boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
-                ExitDecision d = exitPolicy.evaluate(pos, o.info(), o.book(), sig, fresh);
+                // 已转正的"让赢家跑"参数：最高净利达到门槛后利润保护改用更宽的回吐；没有转正过时和以前完全一样
+                boolean runner = v2Overrides.runnerActive(pos.protectArmed(), pos.peakNet().doubleValue(), pos.costBasis().doubleValue());
+                ExitDecision d = runner
+                        ? runnerPolicy(v2Overrides).evaluate(com.trendpilot.variant.VariantRules.runnerView(pos), o.info(), o.book(), sig, fresh)
+                        : exitPolicy.evaluate(pos, o.info(), o.book(), sig, fresh);
                 Kline lastHour = b == null || b.hourly().isEmpty() ? null : b.hourly().getLast();
                 if (lastHour != null && o.info() != null && o.info().trading()) {
                     // 山寨止损：现行规则不卖时再按止损 / 3 天不赚钱离场判断，同一份盘口成交

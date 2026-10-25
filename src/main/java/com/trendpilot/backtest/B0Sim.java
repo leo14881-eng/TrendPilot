@@ -91,6 +91,17 @@ public final class B0Sim extends Sim {
 
     B0Sim overrides(com.trendpilot.variant.VariantOverrides o) {
         this.overrides = o == null || o.isEmpty() ? null : o;
+        this.runnerPolicy = overrides != null && overrides.hasRunner()
+                ? new ExitPolicy(com.trendpilot.variant.VariantRules.runnerParams(params, overrides)) : null;
+        return this;
+    }
+
+    /** "让赢家跑"阶段用的宽回吐 ExitPolicy；null = 不用。 */
+    private ExitPolicy runnerPolicy;
+
+    /** 买入审核的频率（15m 根数）：默认 4 = 每小时一次（线上 :17）；1 = 每 15 分钟（买入延迟研究，只在回测里）。 */
+    B0Sim discoverEvery(int quarters) {
+        this.discoverEvery = quarters;
         return this;
     }
 
@@ -232,8 +243,11 @@ public final class B0Sim extends Sim {
                     double c = crossing(cur, vol, cur.protectFloor());
                     if (c < prev && c > x) x = c * (1 - 1e-9);
                 }
-                ExitDecision d = exitPolicy.evaluate(cur, info(cur.symbol()), Costs.book(cur.symbol(), x, vol, now(q)),
-                        sig, fresh && k == 0);
+                boolean runner = runnerPolicy != null
+                        && overrides.runnerActive(cur.protectArmed(), cur.peakNet().doubleValue(), cur.costBasis().doubleValue());
+                ExitDecision d = (runner ? runnerPolicy : exitPolicy).evaluate(
+                        runner ? com.trendpilot.variant.VariantRules.runnerView(cur) : cur, info(cur.symbol()),
+                        Costs.book(cur.symbol(), x, vol, now(q)), sig, fresh && k == 0);
                 path.net(d.netPnl().doubleValue());
                 if (d.sell()) {
                     close(cur, q, d.fill(), d.netPnl().doubleValue(), d.reason());

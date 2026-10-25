@@ -73,6 +73,18 @@ public class VariantTracker {
         return registry;
     }
 
+    /** "让赢家跑"阶段的宽回吐 ExitPolicy（每组参数一个）。 */
+    private final Map<String, ExitPolicy> runnerPolicies = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private boolean runnerOn(VariantRegistry.Variant v, Position pos) {
+        return v.overrides().runnerActive(pos.protectArmed(), pos.peakNet().doubleValue(), pos.costBasis().doubleValue());
+    }
+
+    private ExitPolicy exitPolicyFor(VariantRegistry.Variant v, Position pos) {
+        if (!runnerOn(v, pos)) return exitPolicy;
+        return runnerPolicies.computeIfAbsent(v.overrides().inline(), k -> new ExitPolicy(VariantRules.runnerParams(params, v.overrides())));
+    }
+
     /** 一轮 Discovery 里各变体的待买清单。 */
     public final class Round {
         private final List<VariantRegistry.Variant> active;
@@ -182,7 +194,8 @@ public class VariantTracker {
                 EarlySignal sig = (in.bars() == null || in.btc() == null) ? null : signals.compute(in.bars(), in.btc());
                 long hour = sig == null ? -1 : in.bars().hourly().getLast().openTime();
                 boolean fresh = sig != null && book.isNewObservation(pos.symbol(), hour);
-                ExitDecision d = exitPolicy.evaluate(pos, in.info(), in.book(), sig, fresh);
+                ExitDecision d = exitPolicyFor(v, pos).evaluate(runnerOn(v, pos) ? VariantRules.runnerView(pos) : pos, in.info(),
+                        in.book(), sig, fresh);
                 Kline lastHour = in.bars() == null || in.bars().hourly().isEmpty() ? null : in.bars().hourly().getLast();
                 if (lastHour != null && in.info() != null && in.info().trading()) {
                     String g = guard.check(v.name(), pos, d, lastHour.close(), lastHour.openTime(), now);

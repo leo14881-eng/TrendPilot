@@ -37,8 +37,55 @@ import com.trendpilot.variant.VariantOverrides;
  */
 public final class CandidateStudy {
 
-    /** 候选：名字 + 参数改动 + 属于哪个假设。 */
-    public record Candidate(String id, String group, VariantOverrides overrides) {
+    /**
+     * 候选：名字 + 参数改动 + 属于哪个假设。config = 直接覆盖的线上策略参数（键相对 trendpilot.strategy，例如 risk.loss-exits-freeze），
+     * discoverEvery = 买入审核间隔（15m 根数，4 = 每小时）。这两项只在回测里用，服务器不会把带它们的候选自动上线。
+     */
+    public record Candidate(String id, String group, VariantOverrides overrides, Map<String, Object> config, int discoverEvery) {
+
+        Candidate(String id, String group, VariantOverrides overrides) {
+            this(id, group, overrides, Map.of(), 4);
+        }
+
+        boolean liveCapable() {
+            return config.isEmpty() && discoverEvery == 4;
+        }
+    }
+
+    /** 解析 "key=v,key=v"：cfg.* 进 config，sim.discover-every 进审核间隔，其余是变体参数。 */
+    static Candidate parse(String id, String group, String inline) {
+        Map<String, Object> cfg = new LinkedHashMap<>();
+        List<String> rest = new ArrayList<>();
+        int every = 4;
+        for (String kv : inline.split(",")) {
+            if (kv.startsWith("cfg.")) {
+                int eq = kv.indexOf('=');
+                cfg.put("trendpilot.strategy." + kv.substring(4, eq), kv.substring(eq + 1));
+            } else if (kv.startsWith("sim.discover-every=")) {
+                every = Integer.parseInt(kv.substring(kv.indexOf('=') + 1));
+            } else if (!kv.isBlank()) {
+                rest.add(kv);
+            }
+        }
+        return new Candidate(id, group, VariantOverrides.parseInline(String.join(",", rest)), cfg, every);
+    }
+
+    /**
+     * 涨幅榜覆盖研究（2026-10-26，周复盘第 3 节：为什么涨幅榜的币没进 V2、进了也没吃到）：
+     * 冻结放宽 4 组、让赢家跑 4 组、每 15 分钟审核 1 组，共 9 组。
+     */
+    static List<Candidate> flow() {
+        List<Candidate> c = new ArrayList<>();
+        c.add(parse("F1_不冻结不减半", "freeze", "cfg.risk.loss-exits-freeze=999,cfg.risk.loss-exits-half-budget=999"));
+        c.add(parse("F2_只减半不冻结", "freeze", "cfg.risk.loss-exits-freeze=999"));
+        c.add(parse("F3_冻结窗口12h", "freeze", "cfg.risk.loss-window-hours=12"));
+        c.add(parse("F4_冻结门槛5笔", "freeze", "cfg.risk.loss-exits-freeze=5"));
+        c.add(parse("R1_浮盈5%后回吐3%", "runner", "runner-arm-pct=5,runner-giveback-pct=3"));
+        c.add(parse("R2_浮盈5%后回吐5%", "runner", "runner-arm-pct=5,runner-giveback-pct=5"));
+        c.add(parse("R3_浮盈8%后回吐4%", "runner", "runner-arm-pct=8,runner-giveback-pct=4"));
+        c.add(parse("R4_浮盈8%后回吐6%", "runner", "runner-arm-pct=8,runner-giveback-pct=6"));
+        c.add(parse("D1_每15分钟审核", "delay", "sim.discover-every=1"));
+        return c;
     }
 
     /** H1/H2/H4 研究（2026-10-26）登记的方案，看结果之前定好，共 14 组。 */
@@ -104,6 +151,11 @@ public final class CandidateStudy {
         List<Candidate> cands = new ArrayList<>();
         String gridName = "weekly";
         for (int a = 8; a < args.length; a++) {
+            if (args[a].equals("flow")) {
+                cands.addAll(flow());
+                gridName = "flow";
+                continue;
+            }
             if (args[a].equals("exitrules")) {
                 cands.addAll(exitRules());
                 gridName = "exitrules";
@@ -116,7 +168,7 @@ public final class CandidateStudy {
             }
             int colon = args[a].indexOf(':');
             if (colon <= 0) throw new IllegalArgumentException("候选要写成 名字:key=v,key=v，看不懂：" + args[a]);
-            cands.add(new Candidate(args[a].substring(0, colon), "custom", VariantOverrides.parseInline(args[a].substring(colon + 1))));
+            cands.add(parse(args[a].substring(0, colon), "custom", args[a].substring(colon + 1)));
             gridName = "custom";
         }
         if (cands.isEmpty()) cands = weeklyGrid();
@@ -164,8 +216,10 @@ public final class CandidateStudy {
         todo.add(EntryStudy.live("随机2", data, regimes, tape, params, fromQ, size).randomEntry(1002));
         int seed = 5000;
         for (Candidate c : cands) {
-            todo.add(EntryStudy.live(c.id(), data, regimes, tape, params, fromQ, size).overrides(c.overrides()));
-            todo.add(EntryStudy.live(c.id() + " 随机", data, regimes, tape, params, fromQ, size).overrides(c.overrides()).randomEntry(seed++));
+            StrategyParams pp = c.config().isEmpty() ? params : BacktestMain.loadParams(c.config());
+            todo.add(EntryStudy.live(c.id(), data, regimes, tape, pp, fromQ, size).overrides(c.overrides()).discoverEvery(c.discoverEvery()));
+            todo.add(EntryStudy.live(c.id() + " 随机", data, regimes, tape, pp, fromQ, size).overrides(c.overrides())
+                    .discoverEvery(c.discoverEvery()).randomEntry(seed++));
         }
         Map<String, Sim> byName = new LinkedHashMap<>();
         try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {
@@ -211,13 +265,16 @@ public final class CandidateStudy {
             List<String> why = new ArrayList<>(failed);
             why.addAll(r.notes());
             md.append(String.format(Locale.ROOT, "| %s | %s | %s | %,.0f / %,.0f | %,.0f / %,.0f | %d | %+.2f ±%.2f | %+.2f ±%.2f | %s |%n",
-                    c.id(), c.overrides().describe(), label(r.verdict()), v.equity(), v.maxDd(), f.equity(), f.maxDd(), f.trades(),
+                    c.id(), describe(c), label(r.verdict()), v.equity(), v.maxDd(), f.equity(), f.maxDd(), f.trades(),
                     r.perTradeDiff()[0], r.perTradeDiff()[1], r.randomDiff()[0], r.randomDiff()[1],
                     why.isEmpty() ? "—" : String.join("；", why)));
             Map<String, Object> j = new LinkedHashMap<>();
             j.put("id", c.id());
             j.put("group", c.group());
             j.put("overrides", c.overrides().toMap());
+            j.put("config", c.config());
+            j.put("discoverEvery", c.discoverEvery());
+            j.put("liveCapable", c.liveCapable());
             j.put("status", r.verdict().name());
             j.put("checks", r.checks());
             j.put("full", Map.of("equity", round(f.equity()), "maxDrawdown", round(f.maxDd()), "trades", f.trades(), "perTrade", round(f.meanPnl())));
@@ -252,6 +309,14 @@ public final class CandidateStudy {
             Files.writeString(outDir.resolve("trades-" + s.name().replaceAll("[^\\p{L}\\p{N}]+", "_") + ".csv"), BacktestMain.tradesCsv(s, data));
         }
         System.out.println(md);
+    }
+
+    private static String describe(Candidate c) {
+        List<String> p = new ArrayList<>();
+        if (!c.overrides().isEmpty()) p.add(c.overrides().describe());
+        c.config().forEach((k, v) -> p.add(k.replace("trendpilot.strategy.", "") + " = " + v));
+        if (c.discoverEvery() != 4) p.add("每 " + c.discoverEvery() * 15 + " 分钟审核一次");
+        return String.join("；", p);
     }
 
     private static String label(ReleaseCheck.Verdict v) {
