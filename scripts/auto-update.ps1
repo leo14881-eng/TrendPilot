@@ -200,6 +200,7 @@ function Invoke-Git([string[]]$GitArgs) {
 #   migrate    迁移到服务器：平滑停掉本机服务并停用，上传本机配置和数据库，启动服务器上的服务
 #   migrate-fresh  同上，但只上传配置，服务器用全新的空数据库从头开始（本机数据库原样保留）
 #   fallback   切回本机：停用服务器上的服务，启用并启动本机服务
+#   tweet-status  TweetPilot（推特监听）运行状态和最近日志，不含凭证
 #   export     只读导出（周复盘用）：服务器上运行 export.sh 把业务表导成 CSV 打包，下载到 app\export\（不含配置、密钥和日志）
 $Disabled = Join-Path $Bin 'disabled.flag'
 $BootClone = 'command -v git >/dev/null || { apt-get update -qq && apt-get install -y -qq git >/dev/null; }; rm -rf /tmp/tp-boot && git clone -q --depth 1 https://github.com/leo14881-eng/TrendPilot.git /tmp/tp-boot'
@@ -212,6 +213,7 @@ $ServerScripts = @{
     fallback = 'mkdir -p /opt/trendpilot/app && touch /opt/trendpilot/app/disabled.flag && systemctl stop trendpilot.service && echo "服务器上的服务已停止并停用"'
     export   = "$BootClone && bash /tmp/tp-boot/scripts/linux/export.sh"
     disk     = 'bash /opt/trendpilot/scripts/linux/disk-report.sh'   # 不克隆：硬盘满时也能运行
+    'tweet-status' = 'bash /opt/tweetpilot/scripts/install.sh --status'   # TweetPilot 运行状态（不含凭证）
 }
 
 function Write-ServerLog($msg) {
@@ -324,6 +326,62 @@ function Invoke-ServerRequest {
     } else {
         $code = Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts[$action]
         Write-ServerLog "退出码 $code"
+    }
+}
+
+# ---------- TweetPilot 配置同步（用户 2026-10-26 同意）----------
+# 用户只改电脑上的 ..\TweetPilot\config\ 里的配置文件，这里发现内容变了就上传到服务器并重装 TweetPilot。
+# 只做两件固定的事：scp 这两个文件到 /opt/tweetpilot/secret/，然后运行 TweetPilot 仓库的 install.sh。不读取、不输出文件内容。
+#   tweetpilot.env    设置和 Telegram 机器人（必需）
+#   x-auth-token.txt  X 小号凭证（可选，也可以写在 tweetpilot.env 里）
+# 上传失败 30 分钟后再试；成功后记下内容指纹，不重复上传。
+$TweetDir = Join-Path (Split-Path -Parent $AppDir) 'TweetPilot\config'
+$TweetFiles = @('tweetpilot.env', 'x-auth-token.txt')
+$TweetSynced = Join-Path $Bin 'tweetpilot-synced.sha256'
+$TweetFailed = Join-Path $Bin 'tweetpilot-sync-failed.txt'
+$TweetInstall = 'mkdir -p /opt/tweetpilot/secret && chmod 700 /opt/tweetpilot/secret && curl -fsSL https://raw.githubusercontent.com/leo14881-eng/TweetPilot/main/scripts/install.sh | bash'
+
+function Get-TweetConfigHash {
+    $parts = foreach ($n in $TweetFiles) {
+        $f = Join-Path $TweetDir $n
+        if (Test-Path $f) { "$n=" + (Get-FileHash $f -Algorithm SHA256).Hash }
+    }
+    if (-not (Test-Path (Join-Path $TweetDir 'tweetpilot.env'))) { return $null }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($parts -join ';'))
+    return [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)).Replace('-', '')
+}
+
+function Sync-TweetPilot {
+    $ErrorActionPreference = 'Continue'
+    $hash = Get-TweetConfigHash
+    if (-not $hash -or $hash -eq (Read-Text $TweetSynced)) { return }
+    if ((Test-Path $TweetFailed) -and (Read-Text $TweetFailed) -eq $hash -and (Get-Item $TweetFailed).LastWriteTime -gt (Get-Date).AddMinutes(-30)) { return }
+    $ip = Read-Text (Join-Path $Bin 'server-ip.txt')
+    if ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { Write-ServerLog "TweetPilot：服务器 IP 无效：$ip"; return }
+    $sshDir = Join-Path $AppDir 'ssh'
+    $key = Join-Path $sshDir 'id_ed25519'
+    $ssh = Join-Path $env:WINDIR 'System32\OpenSSH\ssh.exe'
+    $scp = Join-Path $env:WINDIR 'System32\OpenSSH\scp.exe'
+    if (-not (Test-Path $key) -or -not (Test-Path $ssh)) { Write-ServerLog 'TweetPilot：密钥或系统自带的 ssh 不存在'; return }
+    & icacls.exe $key /inheritance:r /grant:r "$($env:USERNAME):F" 2>&1 | Out-Null
+    $opts = "-i `"$key`" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o `"UserKnownHostsFile=$(Join-Path $sshDir 'known_hosts')`" -o ConnectTimeout=20 -o ServerAliveInterval=30"
+    Write-ServerLog '== TweetPilot 配置有变化，开始同步'
+    $ok = (Invoke-ServerTool $ssh "$opts root@$ip bash -s" 'mkdir -p /opt/tweetpilot/secret && chmod 700 /opt/tweetpilot/secret') -eq 0
+    foreach ($n in $TweetFiles) {
+        $f = Join-Path $TweetDir $n
+        if (-not $ok -or -not (Test-Path $f)) { continue }
+        $code = Invoke-ServerTool $scp "$opts -q `"$f`" root@${ip}:/opt/tweetpilot/secret/$n" $null
+        Write-ServerLog "TweetPilot：上传 ${n}：退出码 $code"
+        $ok = $code -eq 0
+    }
+    if ($ok) { $ok = (Invoke-ServerTool $ssh "$opts root@$ip bash -s" $TweetInstall) -eq 0 }
+    if ($ok) {
+        Set-Content -Path $TweetSynced -Value $hash -Encoding ASCII
+        Remove-Item $TweetFailed -ErrorAction SilentlyContinue
+        Write-ServerLog 'TweetPilot：配置已同步并生效'
+    } else {
+        Set-Content -Path $TweetFailed -Value $hash -Encoding ASCII
+        Write-ServerLog 'TweetPilot：同步没有完成，30 分钟后再试'
     }
 }
 
@@ -457,6 +515,7 @@ try {
         }
     }
     try { Invoke-ServerRequest } catch { Write-Log "服务器请求执行出错：$($_.Exception.Message)" }
+    try { Sync-TweetPilot } catch { Write-Log "TweetPilot 配置同步出错：$($_.Exception.Message)" }
 
     # ---------- 2. 检查新提交 ----------
     if (-not (Test-Path (Join-Path $SrcDir '.git'))) {
