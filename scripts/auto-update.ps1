@@ -211,6 +211,7 @@ $ServerScripts = @{
     'migrate-fresh' = 'touch /opt/trendpilot/data/trendpilot.db && bash /opt/trendpilot/scripts/linux/migrate-in.sh'
     fallback = 'mkdir -p /opt/trendpilot/app && touch /opt/trendpilot/app/disabled.flag && systemctl stop trendpilot.service && echo "服务器上的服务已停止并停用"'
     export   = "$BootClone && bash /tmp/tp-boot/scripts/linux/export.sh"
+    disk     = 'bash /opt/trendpilot/scripts/linux/disk-report.sh'   # 不克隆：硬盘满时也能运行
 }
 
 function Write-ServerLog($msg) {

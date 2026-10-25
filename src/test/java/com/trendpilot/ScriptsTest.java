@@ -34,4 +34,16 @@ class ScriptsTest {
                 .noneMatch(l -> l.contains("$CONFIG") || l.contains("config/") || l.contains("logs/")
                         || l.contains("notification_outbox"));
     }
+
+    @Test
+    void diskActionOnlyReads() throws Exception {
+        String ps = Files.readString(Path.of("scripts/auto-update.ps1"), StandardCharsets.UTF_8);
+        assertThat(ps).contains("disk     = 'bash /opt/trendpilot/scripts/linux/disk-report.sh'");
+        String sh = Files.readString(Path.of("scripts/linux/disk-report.sh"), StandardCharsets.UTF_8);
+        assertThat(sh).doesNotContain("\r");
+        // 只看不改：不删除、不停服务、不安装、不输出 crontab 内容和命令行参数
+        assertThat(sh.lines().filter(l -> !l.trim().startsWith("#")))
+                .noneMatch(l -> l.matches(".*\\b(rm -rf|systemctl (stop|restart|disable)|apt-get|crontab -l|truncate)\\b.*"))
+                .noneMatch(l -> l.contains("/cmdline") || l.contains("config/"));
+    }
 }
