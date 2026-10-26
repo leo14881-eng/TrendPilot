@@ -66,6 +66,7 @@ echo "  $(q "SELECT (SELECT COUNT(*) FROM position), (SELECT ROUND(IFNULL(SUM(CA
 echo "  额度参考：硬顶 20000 × 行情比例（RISK_OFF 0.60 / NEUTRAL 0.75 / CONSTRUCTIVE 0.85 / STRONG 0.95）× 恢复系数（正常 1，减半 0.5）− 占用成本 + 亏损部分"
 echo "  V2 各持仓（symbol tranches 成本 浮动净值）：$(q "SELECT GROUP_CONCAT(symbol || ':' || tranches || ':' || ROUND(CAST(cost_basis AS REAL),0) || ':' || ROUND(CAST(mark_net AS REAL),1), '  ') FROM position;")"
 echo "--- 自动优化（V2 参数集、最近一次评估）"
+echo "  变体风控：$(q "SELECT GROUP_CONCAT(name || ' ' || IFNULL((SELECT value FROM app_state WHERE key = 'risk:' || name || ':status'), 'NORMAL'), '，') FROM variant_registry WHERE status != 'ARCHIVED';")"
 echo "  V2 参数集：$(q "SELECT IFNULL((SELECT value FROM app_state WHERE key = 'params:V2'), '基准');")"
 q "SELECT day, variant, decision, substr(reason, 1, 120) FROM variant_eval WHERE day = (SELECT MAX(day) FROM variant_eval) ORDER BY id;" | sed 's/^/  /'
 echo "--- 风控状态（app_state）"

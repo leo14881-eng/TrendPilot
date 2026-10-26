@@ -97,7 +97,7 @@ public class DiscoveryJob {
     static final java.time.Duration MAX_BOOK_AGE = java.time.Duration.ofSeconds(90);
 
     /** 不允许新开仓（保留其他风险结论）。 */
-    static RiskState blockNew(RiskState r, String reason) {
+    public static RiskState blockNew(RiskState r, String reason) {
         List<String> reasons = new ArrayList<>(r.reasons());
         reasons.add(reason);
         return new RiskState(r.regime(), false, 0, r.btc24hPct(), r.btc4hPct(), r.btc1hPct(), r.breadth(),
@@ -347,6 +347,9 @@ public class DiscoveryJob {
             // V2 已转正的参数改动（没有转正过时为空，V2 按基准审核，和以前完全一样）
             com.trendpilot.variant.VariantOverrides v2Overrides = paramSets.current();
             Map<String, Venue> venueOf = new LinkedHashMap<>();
+            // 配置化影子变体各自的风控：账本部分（亏损冻结、减半、恢复期）按变体自己的盈亏算，市场部分与 V2 相同
+            variantRound.prepareRisk(main.btc() == null ? null : new com.trendpilot.variant.VariantTracker.MarketRisk(main.btc(),
+                    btcTicker, main.universe(), ev, leaseOk, gen, now));
             for (Candidate c : candidates) {
                 EarlySignal s = c.signal();
                 Pool pool = poolBy.get(c.venue());
@@ -379,13 +382,13 @@ public class DiscoveryJob {
                 }
                 // 配置化影子变体（V5 强信号、V6…）：每个候选独立判断（不看 V2 结论），变体没有这个币时，用变体自己的卖出记录、
                 // V2 的审核规则加变体的参数改动重新审核；出错只记日志，不影响 V2
-                variantRound.review(s.symbol(), vb -> {
+                variantRound.review(s.symbol(), (vb, vRisk) -> {
                     Instant vExit = vb.lastExit(s.symbol()).orElse(null);
                     int vEarly = vExit == null ? 0 : book.earlyObservationsSince(s.symbol(), vExit);
                     boolean vHit = vExit == null || !EarlySignalCalculator
                             .hitsAfter(pool.bars().bars().get(s.symbol()), s, vExit).isEmpty();
                     return new ReviewInput(gen, signalAsOf, now, scanComplete, s, c.ticker(),
-                            books.get(s.symbol()), risk, book.earlySeenPrice(s.symbol()).orElse(null), null,
+                            books.get(s.symbol()), vRisk, book.earlySeenPrice(s.symbol()).orElse(null), null,
                             vExit, researched.get(s.symbol()), vEarly, vHit);
                 });
             }
@@ -418,7 +421,7 @@ public class DiscoveryJob {
             depthVariant.enter(gen, now, venueOf, relaxed);
             try {
                 variantRound.enter(gen, now, venueOf);
-                variantRound.momentumEnter(gen, now, risk, main.complete(), books, Venue.BINANCE);
+                variantRound.momentumEnter(gen, now, main.complete(), books, Venue.BINANCE);
             } catch (RuntimeException e) {
                 log.warn("影子变体本轮买入出错，跳过：{}", e.toString());
             }

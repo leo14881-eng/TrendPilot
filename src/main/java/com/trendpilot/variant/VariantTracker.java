@@ -61,11 +61,20 @@ public class VariantTracker {
     private final VariantRules rules = new VariantRules();
 
     private final org.springframework.jdbc.core.simple.JdbcClient jdbc;
+    private final com.trendpilot.risk.SystemRiskAssessor assessor;
+    private final com.trendpilot.job.AppState state;
+    private final com.trendpilot.capital.CapitalAllocator allocator;
+    /** 每个变体自己的恢复期状态机（状态存 app_state 的 risk:&lt;变体&gt;:*）。 */
+    private final Map<String, com.trendpilot.risk.RiskRecovery> recoveries = new java.util.concurrent.ConcurrentHashMap<>();
 
     public VariantTracker(VariantRegistry registry, CapitalReviewer reviewer, StrategyParams params, Markets markets,
                           EarlySignalCalculator signals, ExitPolicy exitPolicy, LossGuard guard,
-                          org.springframework.jdbc.core.simple.JdbcClient jdbc) {
+                          org.springframework.jdbc.core.simple.JdbcClient jdbc, com.trendpilot.risk.SystemRiskAssessor assessor,
+                          com.trendpilot.job.AppState state, com.trendpilot.capital.CapitalAllocator allocator) {
         this.jdbc = jdbc;
+        this.assessor = assessor;
+        this.state = state;
+        this.allocator = allocator;
         this.registry = registry;
         this.reviewer = reviewer;
         this.params = params;
@@ -139,25 +148,107 @@ public class VariantTracker {
         }
     }
 
+    /**
+     * 本轮市场层面的风险输入（与 V2 共用）：BTC K 线和 24h 行情、Binance 主池、流动性 / 稳定币 / 已确认冲击 / 山寨崩盘证据、运行租约。
+     * 账本层面的部分（亏损冻结、额度减半、恢复期）每个变体按自己的盈亏单独算。
+     */
+    public record MarketRisk(SymbolBars btc, com.trendpilot.market.Ticker24h btcTicker, List<com.trendpilot.market.Ticker24h> universe,
+                             com.trendpilot.risk.MarketEvidence evidence, boolean leaseOk, String generation, Instant now) {
+    }
+
+    /** 某个变体本轮的风控状态（报表用）：NORMAL / LOSS_FREEZE / LOSS_HALF_BUDGET / RECOVERING。 */
+    public static String statusKey(String book) {
+        return BookState.key(book, "risk:status");
+    }
+
+    public static String statusLabel(String status) {
+        if (status == null || status.isBlank()) return "正常";
+        return switch (status) {
+            case "NORMAL" -> "正常";
+            case "LOSS_FREEZE" -> "亏损冻结";
+            case "LOSS_HALF_BUDGET" -> "额度减半";
+            case "RECOVERING" -> "恢复期";
+            case "MARKET_BLOCKED" -> "市场风险暂停";
+            default -> status;
+        };
+    }
+
+    /** 报表用：变体最近一次记录的风控状态（中文）。 */
+    public String riskLabel(String book) {
+        try {
+            return statusLabel(state.get(statusKey(book)).orElse("NORMAL"));
+        } catch (RuntimeException e) {
+            return "暂时取不到";
+        }
+    }
+
+    /**
+     * 按 V2 同一套规则和参数算这个变体自己的风险结论：亏损冻结 = 窗口内自己的亏损卖出 + 自己深度浮亏的持仓（冻结修复口径），
+     * 市场部分（BTC 急跌、行情状态、流动性、稳定币、山寨崩盘）与 V2 相同；恢复期状态存 risk:&lt;变体&gt;:*。
+     */
+    com.trendpilot.risk.RiskState riskFor(VariantRegistry.Variant v, MarketRisk m) {
+        StrategyParams.Risk p = params.risk();
+        java.time.Duration window = java.time.Duration.ofHours(p.lossWindowHours());
+        int losses = v.book().lossExitsSince(m.now().minus(window))
+                + v.book().underwaterCountWithin(p.underwaterLossPct(), m.now(), window);
+        com.trendpilot.risk.RiskState raw = assessor.assess(m.btc(), m.btcTicker(), m.universe(), losses, m.evidence());
+        com.trendpilot.risk.RiskRecovery rec = recoveries.computeIfAbsent(v.name(),
+                k -> new com.trendpilot.risk.RiskRecovery(new BookState(state, k), params));
+        com.trendpilot.risk.RiskState r = rec.apply(raw, m.generation());
+        if (!m.leaseOk()) r = com.trendpilot.job.DiscoveryJob.blockNew(r, "LEASE_UNCONFIRMED");
+        String status = r.reasons().contains("LOSS_FREEZE") ? "LOSS_FREEZE"
+                : r.reasons().stream().anyMatch(x -> x.startsWith("RISK_RECOVERY")) ? "RECOVERING"
+                : r.reasons().contains("LOSS_HALF_BUDGET") ? "LOSS_HALF_BUDGET"
+                : !r.newRiskAllowed() ? "MARKET_BLOCKED" : "NORMAL";
+        state.put(statusKey(v.name()), status);
+        return r;
+    }
+
     /** 一轮 Discovery 里各变体的待买清单。 */
     public final class Round {
         private final List<VariantRegistry.Variant> active;
         private final Map<String, List<ReviewResult>> pending = new LinkedHashMap<>();
+        private final Map<String, com.trendpilot.risk.RiskState> risks = new LinkedHashMap<>();
 
         Round(List<VariantRegistry.Variant> active) {
             this.active = active;
         }
 
+        /** 本轮每个变体自己的风险结论（组合锁内，候选审核之前调用一次）。市场输入缺失时变体本轮不买。 */
+        public void prepareRisk(MarketRisk m) {
+            for (VariantRegistry.Variant v : active) {
+                try {
+                    if (m != null && m.btc() != null && m.btcTicker() != null) risks.put(v.name(), riskFor(v, m));
+                } catch (RuntimeException e) {
+                    log.warn("{} 本轮风控计算出错，不买入：{}", v.name(), e.toString());
+                }
+            }
+        }
+
+        /** 这个变体本轮的风险结论；没算出来（缺数据、出错）时为 null，变体本轮不买。 */
+        public com.trendpilot.risk.RiskState risk(String name) {
+            return risks.get(name);
+        }
+
+        /** 按变体自己的额度分配（与 V2 的 CapitalAllocator 同规则：行情上限 × 恢复系数 − 已占用 + 亏损部分）。 */
+        private List<ReviewResult> funded(VariantRegistry.Variant v, List<ReviewResult> approved) {
+            com.trendpilot.risk.RiskState r = risks.get(v.name());
+            if (r == null || approved.isEmpty()) return List.of();
+            return allocator.allocate(approved, r, v.book().deployedCost(), v.book().realizedPnl(), v.book().unrealizedPnl()).funded();
+        }
+
         /**
          * 审核一个候选。inputFor：给定变体的账本，构造这个变体自己的审核输入（卖出记录、再入场证据都按变体自己的账）。
          */
-        public void review(String symbol, Function<Ledger, ReviewInput> inputFor) {
+        public void review(String symbol, java.util.function.BiFunction<Ledger, com.trendpilot.risk.RiskState, ReviewInput> inputFor) {
             for (VariantRegistry.Variant v : active) {
                 if (v.overrides().isMomentum()) continue; // 涨幅榜动量不走 EARLY 审核，见 momentumEnter
+                com.trendpilot.risk.RiskState r0 = risks.get(v.name());
+                if (r0 == null) continue;
                 try {
                     if (v.book().position(symbol).isPresent()) continue;
                     if (v.overrides().tradeUsdtOr(params.capital().tradeSize()) <= 0) continue;
-                    ReviewResult r = VariantRules.review(reviewer, params, inputFor.apply(v.book()), v.overrides());
+                    ReviewResult r = VariantRules.review(reviewer, params, inputFor.apply(v.book(), r0), v.overrides());
                     pending.computeIfAbsent(v.name(), k -> new ArrayList<>()).add(r);
                 } catch (RuntimeException e) {
                     log.warn("{} {} 本轮审核出错，跳过：{}", v.name(), symbol, e.toString());
@@ -193,16 +284,18 @@ public class VariantTracker {
          * 涨幅榜动量买入（组合锁内）：前 N 名里没持有的、卖出满 60 分钟的，盘口新鲜、深度和滑点过 V2 审核门槛、扫描完整、
          * 系统风险允许新增（V2 同一轮的风险结论）、没超过 max-open，就按变体每笔金额在这份盘口上模拟买入。缺盘口就不买。
          */
-        public Map<String, List<String>> momentumEnter(String gen, Instant now, com.trendpilot.risk.RiskState risk, boolean scanComplete,
+        public Map<String, List<String>> momentumEnter(String gen, Instant now, boolean scanComplete,
                                                        Map<String, OrderBook> books, Venue venue) {
             Map<String, List<String>> out = new LinkedHashMap<>();
-            if (!scanComplete || risk == null || !risk.newRiskAllowed()) return out;
+            if (!scanComplete) return out;
             StrategyParams.Review rv = params.review();
             for (VariantRegistry.Variant v : active) {
                 List<String> top = momentumTop.get(v.name());
-                if (top == null) continue;
+                com.trendpilot.risk.RiskState risk = risks.get(v.name());
+                if (top == null || risk == null || !risk.newRiskAllowed()) continue;
                 try {
                     List<String> entered = new ArrayList<>();
+                    List<ReviewResult> picks = new ArrayList<>();
                     int open = v.book().positions().size();
                     for (String sym : top) {
                         if (v.overrides().maxOpen() != null && open >= v.overrides().maxOpen()) break;
@@ -220,9 +313,15 @@ public class VariantTracker {
                                 || !fill.complete() || fill.slippageBps() > rv.maxSlippageBps()) {
                             continue;
                         }
-                        v.book().open(venue, sym, fill, gen, now);
-                        entered.add(sym);
+                        picks.add(new ReviewResult(sym, Action.BUY, com.trendpilot.capital.Decision.BUY, List.of(), List.of(),
+                                picks.size() == 0 ? 10 : 10 - picks.size() * 0.01, Double.NaN, ob.spreadBps(), fill.slippageBps(),
+                                depth, depth, fill));
                         open++;
+                    }
+                    // 按变体自己的额度（同 V2 的分配规则），排名靠前的先分到
+                    for (ReviewResult r : funded(v, picks)) {
+                        v.book().open(venue, r.symbol(), r.fill(), gen, now);
+                        entered.add(r.symbol());
                     }
                     if (!entered.isEmpty()) {
                         log.info("{} 涨幅榜动量买入 {} 个 {}：{}", v.name(), entered.size(), gen, entered);
@@ -264,8 +363,9 @@ public class VariantTracker {
             for (VariantRegistry.Variant v : active) {
                 try {
                     List<String> entered = new ArrayList<>();
-                    for (ReviewResult r : pending.getOrDefault(v.name(), List.of())) {
-                        if (!r.approved() || r.action() != Action.BUY || r.fill() == null) continue;
+                    List<ReviewResult> approved = pending.getOrDefault(v.name(), List.of()).stream()
+                            .filter(r -> r.approved() && r.action() == Action.BUY && r.fill() != null).toList();
+                    for (ReviewResult r : funded(v, approved)) {
                         if (v.book().position(r.symbol()).isPresent() || venueOf.get(r.symbol()) == null) continue;
                         v.book().open(venueOf.get(r.symbol()), r.symbol(), r.fill(), gen, now);
                         entered.add(r.symbol());

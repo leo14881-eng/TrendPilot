@@ -108,9 +108,14 @@ public class HealthJob {
             var reg = variants == null ? null : variants.getIfAvailable();
             if (reg == null) return out;
             for (var v : reg.all()) {
-                if (v.name().equals(com.trendpilot.portfolio.StrongVariantBook.BOOK)) continue;
+                String risk = com.trendpilot.variant.VariantTracker.statusLabel(
+                        state.get(com.trendpilot.variant.VariantTracker.statusKey(v.name())).orElse("NORMAL"));
+                if (v.name().equals(com.trendpilot.portfolio.StrongVariantBook.BOOK)) {
+                    out.add(new String[]{"V5 风控：" + risk, "V5 风控：" + risk + "（V5 自己的亏损冻结 / 减半 / 恢复期）"});
+                    continue;
+                }
                 var st = v.book().stats();
-                String tag = "（" + com.trendpilot.variant.VariantRegistry.statusLabel(v.status()) + "：" + v.overrides().describe() + "）";
+                String tag = "（" + com.trendpilot.variant.VariantRegistry.statusLabel(v.status()) + "，风控" + risk + "：" + v.overrides().describe() + "）";
                 out.add(new String[]{st.shortLine() + tag, st.line() + tag});
             }
         } catch (RuntimeException e) {

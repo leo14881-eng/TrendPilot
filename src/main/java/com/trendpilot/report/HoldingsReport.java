@@ -370,8 +370,8 @@ public class HoldingsReport {
         out.add(rows.isEmpty() ? "- V5 暂无持仓"
                 : String.format(Locale.ROOT, "- 持仓 %d 个，成本 %s U，浮动 %s U（%s），%d 个浮亏、%d 个浮盈", rows.size(),
                         money(cost), signed(net), pct(cost == 0 ? 0 : net / cost * 100), losers, rows.size() - losers));
-        out.add(String.format(Locale.ROOT, "- 当天买入 %d 笔，卖出 %d 笔（已实现 %s U）；累计已实现 %s U", buys.size(), sells.size(),
-                signed(today), signed(realized)));
+        out.add(String.format(Locale.ROOT, "- 当天买入 %d 笔，卖出 %d 笔（已实现 %s U）；累计已实现 %s U；风控%s（V5 自己的亏损冻结 / 减半 / 恢复期）",
+                buys.size(), sells.size(), signed(today), signed(realized), riskOf(book)));
         out.add(String.format(Locale.ROOT, "- 对比（同口径，V5 / V2）：合计 %s / %s U；累计已实现 %s / %s U；浮动 %s / %s U；最大单笔亏损 %s / %s U",
                 signed(realized + net), signed(v2Realized + v2Net), signed(realized), signed(v2Realized), signed(net),
                 signed(v2Net), worstLoss(book), worstLoss(ShadowBook.BOOK)));
@@ -419,8 +419,8 @@ public class HoldingsReport {
             List<Row> rows = rows(v.book());
             double net = rows.stream().mapToDouble(Row::net).sum();
             double realized = v.book().realizedPnl();
-            out.add(String.format(Locale.ROOT, "- **%s**（%s，%s 起）合计 %s U%s；持仓 %d 个；当天买 %d 卖 %d。%s",
-                    v.name(), com.trendpilot.variant.VariantRegistry.statusLabel(v.status()),
+            out.add(String.format(Locale.ROOT, "- **%s**（%s，风控%s，%s 起）合计 %s U%s；持仓 %d 个；当天买 %d 卖 %d。%s",
+                    v.name(), com.trendpilot.variant.VariantRegistry.statusLabel(v.status()), riskOf(v.name()),
                     v.startedAt().atZone(zone).toLocalDate(), signed(realized + net), dayChange(v.name(), dayStart, realized + net),
                     rows.size(), buys(v.name(), dayStart, dayEnd).size(), sells(v.name(), dayStart, dayEnd).size(),
                     v.overrides().describe()));
@@ -440,6 +440,16 @@ public class HoldingsReport {
                     "| %s | %s | %s | %s | %s | %s |", r.p().symbol().replace("USDT", ""), r.p().venue(), money(r.cost()),
                     signed(r.net()), pct(r.pct()), hours(r.p().openedAt(), now))));
             out.add("");
+        }
+    }
+
+    /** 变体自己的风控状态（正常 / 亏损冻结 / 额度减半 / 恢复期），每轮 Discovery 更新。 */
+    private String riskOf(String book) {
+        try {
+            return com.trendpilot.variant.VariantTracker.statusLabel(
+                    state.get(com.trendpilot.variant.VariantTracker.statusKey(book)).orElse("NORMAL"));
+        } catch (RuntimeException e) {
+            return "暂时取不到";
         }
     }
 
