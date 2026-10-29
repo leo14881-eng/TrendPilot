@@ -49,4 +49,25 @@ class BtcFlowTest {
         assertThat(f.gate("share-min:4:0.4").test(100)).isFalse();
         assertThat(f.gate("pct-min:4:0").test(100)).isFalse();
     }
+
+    @Test
+    void altBuySurgeNeedsBuyerVolumeShareAndSmallMove() {
+        Series s = btc(300, 0.5);
+        int q = 250;
+        s.set(q, 100, 101, 99, 101, 6000, 4800); // 15m 买入 4800 ≈ 之前平均 500 的 9.6 倍，占比 80%，涨 1%
+        MarketData md = null;
+        AltFlowStudy st = new AltFlowStudy(md);
+        var buy = new AltFlowStudy.Sign("a", "a", 1, 5, 0.7, false);
+        var vol = new AltFlowStudy.Sign("v", "v", 1, 5, 0, true);
+        assertThat(st.score(s, q, buy)).isGreaterThan(9);
+        assertThat(st.score(s, q, vol)).isGreaterThan(5);
+        assertThat(st.score(s, q - 1, buy)).isNaN();
+        Series sell = btc(300, 0.5);
+        sell.set(q, 100, 101, 99, 101, 6000, 1200); // 放量但主要是主动卖出
+        assertThat(st.score(sell, q, buy)).isNaN();
+        assertThat(st.score(sell, q, vol)).isGreaterThan(5);
+        Series up = btc(300, 0.5);
+        up.set(q, 100, 105, 99, 104, 6000, 4800); // 已经涨了 4%
+        assertThat(st.score(up, q, buy)).isNaN();
+    }
 }

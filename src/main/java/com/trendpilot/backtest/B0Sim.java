@@ -400,6 +400,9 @@ public final class B0Sim extends Sim {
         if (momentumTopN > 0) {
             approved.addAll(momentumPicks(universe, q, now, risk));
             signals.clear(); // 不走 EARLY 审核
+        } else if (pickScore != null) {
+            approved.addAll(scorePicks(universe, q, now, risk));
+            signals.clear();
         }
         for (EarlySignal s : signals.values()) {
             String sym = s.symbol();
@@ -473,12 +476,44 @@ public final class B0Sim extends Sim {
 
     /** 涨幅榜前 N 名（按 q 收盘时已知的滚动涨幅），过盘口深度、滑点和系统风险就作为 BUY。 */
     private List<ReviewResult> momentumPicks(List<String> universe, int q, Instant now, RiskState risk) {
-        List<ReviewResult> out = new ArrayList<>();
-        if (!risk.newRiskAllowed()) return out;
+        if (!risk.newRiskAllowed()) return new ArrayList<>();
         List<String> ranked = universe.stream().filter(sym -> !sym.equals(MarketData.BTC))
                 .filter(sym -> data.get(sym) != null && data.get(sym).has(q) && q - momentumLookback >= 0 && data.get(sym).has(q - momentumLookback))
                 .sorted(java.util.Comparator.comparingDouble(sym -> -(data.get(sym).close[q] / data.get(sym).close[q - momentumLookback])))
                 .limit(momentumTopN).toList();
+        return buyRanked(ranked, q, now);
+    }
+
+    /**
+     * 迹象买入（山寨自己的主动买入激增研究 2026-10-30）：pickScore 返回非 NaN 的币按分数从高到低取前 pickTop 个，
+     * 过盘口深度、滑点和系统风险就作为 BUY；退出、资金、冻结照 V2（= V6 的卖法）。null = 不用。
+     */
+    private java.util.function.BiFunction<String, Integer, Double> pickScore;
+    private int pickTop = 3;
+
+    B0Sim pickBy(java.util.function.BiFunction<String, Integer, Double> score, int top) {
+        this.pickScore = score;
+        this.pickTop = top;
+        return this;
+    }
+
+    private List<ReviewResult> scorePicks(List<String> universe, int q, Instant now, RiskState risk) {
+        if (!risk.newRiskAllowed()) return new ArrayList<>();
+        List<String> ranked = new ArrayList<>();
+        Map<String, Double> sc = new HashMap<>();
+        for (String sym : universe) {
+            if (sym.equals(MarketData.BTC) || data.get(sym) == null || !data.get(sym).has(q)) continue;
+            Double v = pickScore.apply(sym, q);
+            if (v == null || v.isNaN()) continue;
+            sc.put(sym, v);
+            ranked.add(sym);
+        }
+        ranked.sort(java.util.Comparator.comparingDouble(sym -> -sc.get(sym)));
+        return buyRanked(ranked.subList(0, Math.min(pickTop, ranked.size())), q, now);
+    }
+
+    private List<ReviewResult> buyRanked(List<String> ranked, int q, Instant now) {
+        List<ReviewResult> out = new ArrayList<>();
         StrategyParams.Review rv = params.review();
         for (String sym : ranked) {
             if (positions.containsKey(sym)) continue;

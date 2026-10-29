@@ -69,6 +69,38 @@ public final class BtcFlowStudy {
         Files.createDirectories(outDir);
 
         StrategyParams params = BacktestMain.loadParams();
+        MarketData data = load(params, dataDir, from, to, lastDay, threads);
+        LocalDate endDay = lastDay != null ? lastDay.plusDays(1) : to.plusMonths(1).atDay(1);
+        int size = data.size;
+        Regimes regimes = new Regimes(data);
+        SignalTape tape = new SignalTape(data, new EarlySignalCalculator(params));
+        BtcFlow flow = new BtcFlow(data.btc);
+        int fromQ = q(data, tradeFrom);
+        int splitQ = q(data, split);
+        if (which.equals("alt")) {
+            String alt = AltFlowStudy.run(data, regimes, tape, params, fromQ, splitQ, size, threads, tradeFrom, split, endDay.minusDays(1));
+            Files.writeString(outDir.resolve("report.md"), alt);
+            System.out.println(alt);
+            return;
+        }
+
+        StringBuilder md = new StringBuilder();
+        md.append("# BTC 主动买卖当山寨开仓过滤（").append(tradeFrom).append(" ～ ").append(endDay.minusDays(1)).append("）\n\n");
+        md.append("校准期 ").append(tradeFrom).append(" ～ ").append(split.minusDays(1)).append("，验证期 ").append(split).append(" ～ ")
+                .append(endDay.minusDays(1)).append("。BTC 主动买入 = K 线 taker buy quote volume。\n\n");
+        md.append(coverage(data, flow, fromQ, size));
+        md.append(describe(data, flow, fromQ, splitQ, size));
+
+        List<String> bases = which.equals("all") ? List.of("v2", "v6") : List.of(which);
+        for (String b : bases) {
+            md.append(runBase(b, data, regimes, tape, params, flow, fromQ, splitQ, size, threads));
+        }
+        Files.writeString(outDir.resolve("report.md"), md.toString());
+        System.out.println(md);
+    }
+
+    /** 下载（已缓存的跳过）并读入前 150 个币的 15m K 线，和 CandidateStudy 同一口径。 */
+    static MarketData load(StrategyParams params, Path dataDir, YearMonth from, YearMonth to, LocalDate lastDay, int threads) throws Exception {
         Set<String> excluded = new HashSet<>();
         Archive archive = new Archive(dataDir);
         List<String> symbols = new ArrayList<>();
@@ -98,26 +130,7 @@ public final class BtcFlowStudy {
             }
             for (Future<?> f : fs) f.get();
         }
-        MarketData data = new MarketData(start, size, series, 150, excluded);
-        Regimes regimes = new Regimes(data);
-        SignalTape tape = new SignalTape(data, new EarlySignalCalculator(params));
-        BtcFlow flow = new BtcFlow(data.btc);
-        int fromQ = q(data, tradeFrom);
-        int splitQ = q(data, split);
-
-        StringBuilder md = new StringBuilder();
-        md.append("# BTC 主动买卖当山寨开仓过滤（").append(tradeFrom).append(" ～ ").append(endDay.minusDays(1)).append("）\n\n");
-        md.append("校准期 ").append(tradeFrom).append(" ～ ").append(split.minusDays(1)).append("，验证期 ").append(split).append(" ～ ")
-                .append(endDay.minusDays(1)).append("。BTC 主动买入 = K 线 taker buy quote volume。\n\n");
-        md.append(coverage(data, flow, fromQ, size));
-        md.append(describe(data, flow, fromQ, splitQ, size));
-
-        List<String> bases = which.equals("all") ? List.of("v2", "v6") : List.of(which);
-        for (String b : bases) {
-            md.append(runBase(b, data, regimes, tape, params, flow, fromQ, splitQ, size, threads));
-        }
-        Files.writeString(outDir.resolve("report.md"), md.toString());
-        System.out.println(md);
+        return new MarketData(start, size, series, 150, excluded);
     }
 
     /** 一套基准（V2 或 V6）+ 9 种过滤 + 各自的随机对照，发布前检查对这套基准做。 */
@@ -310,7 +323,7 @@ public final class BtcFlowStudy {
         return new double[]{ma - mb, 1.96 * Math.sqrt(var)};
     }
 
-    private static int q(MarketData data, LocalDate d) {
+    static int q(MarketData data, LocalDate d) {
         return (int) ((d.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() - data.start) / Series.Q);
     }
 }
