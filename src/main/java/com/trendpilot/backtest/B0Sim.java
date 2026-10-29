@@ -127,6 +127,14 @@ public final class B0Sim extends Sim {
         return this;
     }
 
+    /** 大盘过滤（BTC 主动买卖研究 2026-10-30）：Discovery 第 q 根时返回 false 就不开新仓（加仓不受限）；null = 不过滤。 */
+    private java.util.function.IntPredicate buyGate;
+
+    B0Sim buyGate(java.util.function.IntPredicate gate) {
+        this.buyGate = gate;
+        return this;
+    }
+
     B0Sim randomEntry(long seed) {
         this.random = new java.util.Random(seed);
         return this;
@@ -428,6 +436,7 @@ public final class B0Sim extends Sim {
                     && !entryFilter.test(feat(sym, q, s, t.quoteVolume(), risk))) continue;
             if (r.approved() && (buyRegimes == null || r.action() != Action.BUY || buyRegimes.contains(risk.regime()))) approved.add(r);
         }
+        if (buyGate != null && !buyGate.test(q)) approved.removeIf(r -> r.action() == Action.BUY);
         double unrealized = markNet.values().stream().mapToDouble(Double::doubleValue).sum();
         double deployed = positions.values().stream().mapToDouble(p -> p.costBasis().doubleValue()).sum();
         CapitalAllocator.Allocation alloc = allocator.allocate(approved, risk, deployed, realized, unrealized);
