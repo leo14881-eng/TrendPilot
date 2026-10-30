@@ -17,7 +17,8 @@ num() { case "$1" in ''|*[!0-9.-]*) echo "?" ;; *) echo "$1" ;; esac; }
 
 health=$(curl -fsS -m 10 "$BASE/api/health" 2>/dev/null)
 hv() { echo "$health" | jq -r ".$1 // \"?\"" 2>/dev/null | head -c 40; }
-day_start=$(date -u -d "$(date +%F) 00:00" +%Y-%m-%dT%H:%M:%S)
+# "今天" = 越南时间 0 点起（与 V2 日报同一日界），换算成 UTC 再和库里的 UTC 时间比较；不依赖服务器时区
+day_start=$(date -u -d "$(TZ=Asia/Ho_Chi_Minh date +%F) 00:00 +07:00" +%Y-%m-%dT%H:%M:%S)
 utc_start_ms=$(( $(date -u -d "$(date -u +%F) 00:00" +%s) * 1000 ))
 since_1h=$(date -d '-1 hour' '+%Y-%m-%dT%H')
 
@@ -43,7 +44,7 @@ summary() {
     echo "- 内存：$(free -m | awk 'NR==2{print $3"M / "$2"M"}')，硬盘：$(df -h / | awk 'NR==2{print $3" / "$2" ("$5")"}')"
     echo "- 最近 1 小时 WARN/ERROR 条数：$(num "$errors")"
     echo
-    echo "| 账本 | 持仓 | 今天开仓 | 今天平仓 | 累计已实现 U | 未实现 U | 合计 U |"
+    echo "| 账本 | 持仓 | 今天（越南时间）开仓 | 今天平仓 | 累计已实现 U | 未实现 U | 合计 U |"
     echo "|---|---:|---:|---:|---:|---:|---:|"
     book V2 position
     book V2D15 v2d_position
@@ -59,7 +60,7 @@ summary() {
     echo "- 影子变体风控（各自的亏损冻结 / 减半 / 恢复期）：$(q "SELECT GROUP_CONCAT(r.name || ' ' || IFNULL((SELECT value FROM app_state WHERE key = 'risk:' || r.name || ':status'), 'NORMAL'), ', ') FROM variant_registry r WHERE r.status != 'ARCHIVED';" | tr -cd 'A-Z0-9_ ,' | head -c 300)"
     echo "- V2 参数集（自动转正）：$(q "SELECT IFNULL((SELECT value FROM app_state WHERE key = 'params:V2'), '基准');" | tr -cd 'a-z0-9=.,_-' | head -c 200 | sed 's/^$/基准/')"
     echo "- BTC 短线计划（日期 开盘 不开新一轮 金额倍数）：$plan；第 1 档挂单价：$level0"
-    echo "- BTC 短线持仓数量（BTC）：$(num "$(q "SELECT qty FROM btc_daily_state WHERE id = 1;")")，成本 U：$(num "$(q "SELECT ROUND(cost,2) FROM btc_daily_state WHERE id = 1;")")，未实现 U：$(num "$(q "SELECT ROUND(s.qty * (SELECT close FROM kline_15m WHERE venue='BINANCE' AND symbol='BTCUSDT' ORDER BY open_time DESC LIMIT 1) - s.cost, 2) FROM btc_daily_state s WHERE s.id = 1;")")，累计已实现 U：$(num "$(q "SELECT ROUND(realized,2) FROM btc_daily_state WHERE id = 1;")")，今天成交笔数：$(num "$(q "SELECT COUNT(*) FROM btc_daily_trade WHERE voided = 0 AND created_at >= '$day_start';")")"
+    echo "- BTC 短线持仓数量（BTC）：$(num "$(q "SELECT qty FROM btc_daily_state WHERE id = 1;")")，成本 U：$(num "$(q "SELECT ROUND(cost,2) FROM btc_daily_state WHERE id = 1;")")，未实现 U：$(num "$(q "SELECT ROUND(s.qty * (SELECT close FROM kline_15m WHERE venue='BINANCE' AND symbol='BTCUSDT' ORDER BY open_time DESC LIMIT 1) - s.cost, 2) FROM btc_daily_state s WHERE s.id = 1;")")，累计已实现 U：$(num "$(q "SELECT ROUND(realized,2) FROM btc_daily_state WHERE id = 1;")")，今天（越南时间）成交笔数：$(num "$(q "SELECT COUNT(*) FROM btc_daily_trade WHERE voided = 0 AND created_at >= '$day_start';")")"
     echo "- 今天（UTC 日）BTCUSDT 最低 / 最高：$(q "SELECT MIN(low), MAX(high) FROM kline_15m WHERE venue='BINANCE' AND symbol='BTCUSDT' AND open_time >= $utc_start_ms;")"
     echo "- 最近一轮扫描（时间 数据状态 批准 实际买入）：$(q "SELECT j.started_at, j.data_status,
         (SELECT COUNT(*) FROM decision_log d WHERE d.generation = j.generation AND d.decision = 'BUY'),

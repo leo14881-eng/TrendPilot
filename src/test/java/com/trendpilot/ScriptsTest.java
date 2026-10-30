@@ -81,4 +81,12 @@ class ScriptsTest {
         // 替换前先备份本机数据库
         assertThat(fb).contains("before-fallback");
     }
+
+    @Test
+    void statusSummaryTodayUsesTheVietnamDayLikeTheDailyReport() throws Exception {
+        String sh = Files.readString(Path.of("scripts/linux/status-push.sh"), StandardCharsets.UTF_8);
+        // "今天" = 越南时间 0 点起（与 V2 日报同一日界），换算成 UTC 再和库里的 UTC 时间比较；不依赖服务器时区
+        assertThat(sh).contains("day_start=$(date -u -d \"$(TZ=Asia/Ho_Chi_Minh date +%F) 00:00 +07:00\" +%Y-%m-%dT%H:%M:%S)");
+        assertThat(sh).contains("今天（越南时间）开仓").contains("今天（越南时间）成交笔数");
+    }
 }
