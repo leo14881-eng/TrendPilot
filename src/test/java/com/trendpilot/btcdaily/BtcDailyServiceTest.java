@@ -69,6 +69,8 @@ class BtcDailyServiceTest {
     @Autowired BtcDailyStore store;
     @Autowired Markets markets;
     @Autowired ContextService context;
+    @Autowired com.trendpilot.notify.Notifier notifier;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
 
     @BeforeEach
     void reset() {
@@ -178,6 +180,24 @@ class BtcDailyServiceTest {
         market.quarters.put("BTCUSDT", q);
         service.tick(Instant.ofEpochMilli(start + 3 * Q + 60_000), false);
         assertThat(jdbc.sql("SELECT side FROM btc_daily_trade ORDER BY id").query(String.class).list()).containsExactly("BUY", "SELL");
+    }
+
+    @Test
+    void liveRulesNeverAllowLossSellingWhateverTheStoredBacktestSays() {
+        // 卖法按回测选（AUTO）：即使存档里写的是止损卖法 STOP（旧版本或手改的数据），实盘也不能用它
+        BtcDailyProperties auto = BtcDailyProperties.defaults().withExitMode("AUTO").withStrategy("AUTO");
+        BtcDailyService s = new BtcDailyService(auto, store, markets, klines, notifier, json, context);
+        store.saveBacktest(auto.version(), "{\"liveStrategy\":\"V3\",\"liveExit\":\"STOP\"}", Instant.now());
+        BtcDailyProperties live = s.live();
+        assertThat(live.exit().mode()).isNotEqualTo("STOP");
+        assertThat(live.v3().guard()).isEqualTo("NONE");
+        DailyPlan v2Plan = BtcDailyRules.plan(LocalDate.parse("2026-10-15"),
+                BtcDailyRulesTest.daily(LocalDate.parse("2026-10-14"), 80, 60_000, 2_000), 60_000, new Book(), live);
+        assertThat(BtcDailyRules.lossCompare(v2Plan, live)).isFalse();
+        // 配置里写了被套保护（只该用于回测）：实盘同样去掉
+        BtcDailyService g = new BtcDailyService(auto.withStrategy("V3").withGuard("STOP"), store, markets, klines, notifier, json, context);
+        assertThat(g.live().v3().guard()).isEqualTo("NONE");
+        assertThat(g.live().exit().mode()).isNotEqualTo("STOP");
     }
 
     @Test

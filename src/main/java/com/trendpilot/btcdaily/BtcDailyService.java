@@ -218,17 +218,27 @@ public class BtcDailyService {
             }
             p = props.withStrategy(s == null ? "V2" : s);
         }
-        // 硬规则（用户 2026-10-20）：BTC 绝不卖亏。止损类卖法和 V3 被套保护只在回测里对比，实盘一律不用
-        if (!"NONE".equals(p.v3().guard())) p = p.withGuard("NONE");
-        if ("STOP".equals(p.exit().mode())) p = p.withExitMode("FIXED");
         BtcDailyProperties.Exit x = p.exit();
-        if ("FIXED".equals(x.mode()) || (!x.requireBacktest() && !"AUTO".equals(x.mode()))) return p;
-        String mode = liveExit;
-        if (mode == null) {
-            mode = store.backtest(props.version()).map(j -> jsonField(j, "liveExit")).orElse(null);
-            liveExit = mode;
+        if (!"FIXED".equals(x.mode()) && (x.requireBacktest() || "AUTO".equals(x.mode()))) {
+            String mode = liveExit;
+            if (mode == null) {
+                mode = store.backtest(props.version()).map(j -> jsonField(j, "liveExit")).orElse(null);
+                liveExit = mode;
+            }
+            p = p.withExitMode(mode == null ? "FIXED" : mode);
         }
-        return p.withExitMode(mode == null ? "FIXED" : mode);
+        return neverSellAtLoss(p);
+    }
+
+    /**
+     * 硬规则（用户 2026-10-20）：BTC 绝不卖亏。止损类卖法（STOP）和 V3 被套保护只在回测里对比，实盘一律不用。
+     * 放在最后一步：不管配置、回测存档里写的是什么，实盘拿到的参数都过这一关。
+     */
+    static BtcDailyProperties neverSellAtLoss(BtcDailyProperties p) {
+        if (!"NONE".equals(p.v3().guard())) p = p.withGuard("NONE");
+        String m = p.exit().mode();
+        if ("STOP".equals(m) || "AUTO".equals(m)) p = p.withExitMode("FIXED");
+        return p;
     }
 
     /** 测试用：清掉已缓存的回测结论。 */
