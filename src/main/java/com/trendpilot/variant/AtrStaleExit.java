@@ -22,6 +22,7 @@ public final class AtrStaleExit {
     static final double FLOOR_PCT = 30;
     static final Duration STALE_AFTER = Duration.ofHours(72);
     static final Duration MAX_WAIT = Duration.ofHours(24);
+    static final long HOUR_MS = 3_600_000L;
 
     private AtrStaleExit() {
     }
@@ -62,6 +63,9 @@ public final class AtrStaleExit {
         if (!(hourClose > 0) || !(avgEntry > 0) || (st.lastHour() != null && hourOpen <= st.lastHour())) {
             return new Step(null, st);
         }
+        // 只用开仓之后才收盘的 1h K 线（与回测一致：回测在整点收盘买入，从下一根开始判断）；
+        // 开仓前就已收盘的那根反映的是买入前的价格，不能拿来判断止损
+        if (hourOpen + HOUR_MS <= openedAt.toEpochMilli()) return new Step(null, st);
         double ret = (hourClose / avgEntry - 1) * 100;
         double dist = st.distPct() == null ? distancePct(Double.NaN) : st.distPct();
         if (ret <= -FLOOR_PCT) return new Step("X1_FLOOR", st);

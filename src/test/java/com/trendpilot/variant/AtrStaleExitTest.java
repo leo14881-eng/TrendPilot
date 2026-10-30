@@ -30,6 +30,7 @@ class AtrStaleExitTest {
     static final Path dataDir = TestData.dataDir();
     static final long H = 3_600_000L;
     static final Instant OPEN = Instant.parse("2026-10-10T00:00:00Z");
+    static final long T0 = OPEN.toEpochMilli();
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry r) {
@@ -52,15 +53,28 @@ class AtrStaleExitTest {
     }
 
     @Test
+    void hourBarsThatClosedBeforeTheBuyAreIgnored() {
+        AtrStaleExit.State st = AtrStaleExit.State.fresh(6.0);
+        Instant opened = OPEN.plus(Duration.ofMinutes(17));
+        // 买在 107，开仓前已收盘的 1h（收盘 100，低 6.5%）：不判断，状态不变
+        AtrStaleExit.Step s = AtrStaleExit.step(st, opened, opened.plusSeconds(180), false, 107, 100, T0 - H, -1);
+        assertThat(s.exit()).isNull();
+        assertThat(s.next()).isEqualTo(st);
+        // 开仓所在那一小时收盘（在开仓之后）：照常判断
+        assertThat(AtrStaleExit.step(st, opened, OPEN.plus(Duration.ofMinutes(62)), false, 107, 100, T0, -1).exit())
+                .isEqualTo("X1_STOP");
+    }
+
+    @Test
     void stopOnHourCloseBelowDistanceOnlyOncePerHour() {
         AtrStaleExit.State st = AtrStaleExit.State.fresh(12.0);
         Instant now = OPEN.plus(Duration.ofHours(5));
-        assertThat(AtrStaleExit.step(st, OPEN, now, false, 1.0, 0.87, 4 * H, -130).exit()).isEqualTo("X1_STOP");
-        AtrStaleExit.Step ok = AtrStaleExit.step(st, OPEN, now, false, 1.0, 0.90, 4 * H, -100);
+        assertThat(AtrStaleExit.step(st, OPEN, now, false, 1.0, 0.87, T0 + 4 * H, -130).exit()).isEqualTo("X1_STOP");
+        AtrStaleExit.Step ok = AtrStaleExit.step(st, OPEN, now, false, 1.0, 0.90, T0 + 4 * H, -100);
         assertThat(ok.exit()).isNull();
         // 同一根 1h K 线不重复判断
-        assertThat(AtrStaleExit.step(ok.next(), OPEN, now, false, 1.0, 0.5, 4 * H, -500).exit()).isNull();
-        assertThat(AtrStaleExit.step(ok.next(), OPEN, now, false, 1.0, 0.69, 5 * H, -310).exit()).isEqualTo("X1_FLOOR");
+        assertThat(AtrStaleExit.step(ok.next(), OPEN, now, false, 1.0, 0.5, T0 + 4 * H, -500).exit()).isNull();
+        assertThat(AtrStaleExit.step(ok.next(), OPEN, now, false, 1.0, 0.69, T0 + 5 * H, -310).exit()).isEqualTo("X1_FLOOR");
     }
 
     @Test
@@ -68,26 +82,26 @@ class AtrStaleExitTest {
         AtrStaleExit.State st = AtrStaleExit.State.fresh(20.0);
         Instant t71 = OPEN.plus(Duration.ofHours(71));
         // 71 小时还没到
-        st = AtrStaleExit.step(st, OPEN, t71, false, 1.0, 0.95, 70 * H, -50).next();
+        st = AtrStaleExit.step(st, OPEN, t71, false, 1.0, 0.95, T0 + 70 * H, -50).next();
         assertThat(st.waitSince()).isNull();
         // 72 小时仍亏损 → 开始等反弹
         Instant t72 = OPEN.plus(Duration.ofHours(72));
-        st = AtrStaleExit.step(st, OPEN, t72, false, 1.0, 0.95, 71 * H, -50).next();
+        st = AtrStaleExit.step(st, OPEN, t72, false, 1.0, 0.95, T0 + 71 * H, -50).next();
         assertThat(st.waitSince()).isEqualTo(t72);
         // 回落、反弹、再回落 → 在反弹后的第一根回落收盘卖
-        AtrStaleExit.Step s1 = AtrStaleExit.step(st, OPEN, t72.plus(Duration.ofHours(1)), false, 1.0, 0.94, 72 * H, -60);
+        AtrStaleExit.Step s1 = AtrStaleExit.step(st, OPEN, t72.plus(Duration.ofHours(1)), false, 1.0, 0.94, T0 + 72 * H, -60);
         assertThat(s1.exit()).isNull();
-        AtrStaleExit.Step s2 = AtrStaleExit.step(s1.next(), OPEN, t72.plus(Duration.ofHours(2)), false, 1.0, 0.97, 73 * H, -30);
+        AtrStaleExit.Step s2 = AtrStaleExit.step(s1.next(), OPEN, t72.plus(Duration.ofHours(2)), false, 1.0, 0.97, T0 + 73 * H, -30);
         assertThat(s2.exit()).isNull();
-        assertThat(AtrStaleExit.step(s2.next(), OPEN, t72.plus(Duration.ofHours(3)), false, 1.0, 0.96, 74 * H, -40).exit())
+        assertThat(AtrStaleExit.step(s2.next(), OPEN, t72.plus(Duration.ofHours(3)), false, 1.0, 0.96, T0 + 74 * H, -40).exit())
                 .isEqualTo("X1_STALE_BOUNCE");
         // 等待中回本 → 卖；利润保护已启动的不进入等待
-        assertThat(AtrStaleExit.step(st, OPEN, t72.plus(Duration.ofHours(1)), false, 1.0, 1.01, 72 * H, 2).exit())
+        assertThat(AtrStaleExit.step(st, OPEN, t72.plus(Duration.ofHours(1)), false, 1.0, 1.01, T0 + 72 * H, 2).exit())
                 .isEqualTo("X1_STALE_EVEN");
-        assertThat(AtrStaleExit.step(AtrStaleExit.State.fresh(20.0), OPEN, t72, true, 1.0, 0.95, 71 * H, -50).next().waitSince())
+        assertThat(AtrStaleExit.step(AtrStaleExit.State.fresh(20.0), OPEN, t72, true, 1.0, 0.95, T0 + 71 * H, -50).next().waitSince())
                 .isNull();
         // 一直不反弹：最多等 24 小时
-        assertThat(AtrStaleExit.step(st, OPEN, t72.plus(Duration.ofHours(24)), false, 1.0, 0.93, 95 * H, -70).exit())
+        assertThat(AtrStaleExit.step(st, OPEN, t72.plus(Duration.ofHours(24)), false, 1.0, 0.93, T0 + 95 * H, -70).exit())
                 .isEqualTo("X1_STALE_TIMEOUT");
     }
 

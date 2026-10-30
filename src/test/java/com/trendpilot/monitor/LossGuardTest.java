@@ -28,6 +28,7 @@ class LossGuardTest {
     static final Path dataDir = TestData.dataDir();
     static final long H = 3_600_000L;
     static final Instant OPEN = Instant.parse("2026-10-10T00:00:00Z");
+    static final long T0 = OPEN.toEpochMilli();
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry r) {
@@ -52,15 +53,15 @@ class LossGuardTest {
         assertThat(guard.needDailyAtr("V2", List.of(p))).containsExactly(p);
         guard.provideDailyAtr("V2", p, 6); // 距离 9%
         Instant now = OPEN.plus(Duration.ofHours(5));
-        assertThat(guard.check("V2", p, hold(p, -82, true, List.of()), 0.92, 3 * H, now)).isNull();
+        assertThat(guard.check("V2", p, hold(p, -82, true, List.of()), 0.92, T0 + 3 * H, now)).isNull();
         assertThat(guard.needDailyAtr("V2", List.of(p))).isEmpty();
         // 盘口异常 / 成交不完整 / 没有 K 线：不动作
-        assertThat(guard.check("V2", p, hold(p, -102, true, List.of("ABNORMAL_BOOK_HOLD")), 0.90, 4 * H, now)).isNull();
-        assertThat(guard.check("V2", p, hold(p, -102, false, List.of()), 0.90, 4 * H, now)).isNull();
-        assertThat(guard.check("V2", p, hold(p, -102, true, List.of()), Double.NaN, 4 * H, now)).isNull();
-        assertThat(guard.check("V2", p, hold(p, -102, true, List.of()), 0.90, 4 * H, now)).isEqualTo(LossGuard.STOP_LOSS);
+        assertThat(guard.check("V2", p, hold(p, -102, true, List.of("ABNORMAL_BOOK_HOLD")), 0.90, T0 + 4 * H, now)).isNull();
+        assertThat(guard.check("V2", p, hold(p, -102, false, List.of()), 0.90, T0 + 4 * H, now)).isNull();
+        assertThat(guard.check("V2", p, hold(p, -102, true, List.of()), Double.NaN, T0 + 4 * H, now)).isNull();
+        assertThat(guard.check("V2", p, hold(p, -102, true, List.of()), 0.90, T0 + 4 * H, now)).isEqualTo(LossGuard.STOP_LOSS);
         // 另一个账本的同一个币状态独立：还没有距离，按默认 15.5%，−10% 不止损
-        assertThat(guard.check("V2D15", p, hold(p, -102, true, List.of()), 0.90, 4 * H, now)).isNull();
+        assertThat(guard.check("V2D15", p, hold(p, -102, true, List.of()), 0.90, T0 + 4 * H, now)).isNull();
         ExitDecision sold = LossGuard.asExit(hold(p, -102, true, List.of()), LossGuard.STOP_LOSS);
         assertThat(sold.sell()).isTrue();
         assertThat(sold.reason()).isEqualTo("STOP_LOSS");
@@ -71,9 +72,9 @@ class LossGuardTest {
         Position p = pos("GUARDBUSDT");
         guard.provideDailyAtr("V2", p, 10); // 距离 15%
         Instant t72 = OPEN.plus(Duration.ofHours(72));
-        assertThat(guard.check("V2", p, hold(p, -50, true, List.of()), 0.95, 71 * H, t72)).isNull();
-        assertThat(guard.check("V2", p, hold(p, -40, true, List.of()), 0.96, 72 * H, t72.plus(Duration.ofHours(1)))).isNull();
-        assertThat(guard.check("V2", p, hold(p, -45, true, List.of()), 0.955, 73 * H, t72.plus(Duration.ofHours(2))))
+        assertThat(guard.check("V2", p, hold(p, -50, true, List.of()), 0.95, T0 + 71 * H, t72)).isNull();
+        assertThat(guard.check("V2", p, hold(p, -40, true, List.of()), 0.96, T0 + 72 * H, t72.plus(Duration.ofHours(1)))).isNull();
+        assertThat(guard.check("V2", p, hold(p, -45, true, List.of()), 0.955, T0 + 73 * H, t72.plus(Duration.ofHours(2))))
                 .isEqualTo(LossGuard.STALE_EXIT);
     }
 }
