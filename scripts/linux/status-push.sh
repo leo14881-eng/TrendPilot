@@ -79,7 +79,7 @@ summary() {
     echo "- 池子状态：$(q "SELECT GROUP_CONCAT(pool || ' ' || status, '，') FROM (SELECT pool, status FROM lp_pool ORDER BY pool);" | tr -cd 'a-zA-Z0-9_ ，-' | head -c 200)"
     echo "- 最近 24 小时覆盖率（池子 有效分钟占比% 有效分钟数 其中有永续报价的分钟数）：$(q "SELECT GROUP_CONCAT(pool || ' ' || ROUND(100.0 * n / 1440, 1) || '% ' || n || ' ' || pn, '，') FROM (SELECT pool, SUM(status = 'OK') AS n, SUM(status = 'OK' AND perp_mark IS NOT NULL) AS pn FROM lp_pool_snapshot WHERE ts >= $lp_since GROUP BY pool ORDER BY pool);" | tr -cd 'a-z0-9_ .%，-' | head -c 200)"
     lp_best="SELECT strategy || ' ' || printf('%+.2f', (json_extract(state_json, '\$.lastValue') / 10000.0 - 1) * 100) || '%' FROM lp_state WHERE strategy LIKE '%-w%' ORDER BY json_extract(state_json, '\$.lastValue')"
-    echo "- 做市策略累计收益最好 / 最差：$(q "$lp_best DESC LIMIT 1;" | tr -cd 'a-z0-9_ .%+-' | head -c 60) / $(q "$lp_best ASC LIMIT 1;" | tr -cd 'a-z0-9_ .%+-' | head -c 60)；持有 50/50 平均：$(q "SELECT printf('%+.2f', AVG(json_extract(state_json, '\$.lastValue') / 10000.0 - 1) * 100) || '%' FROM lp_state WHERE strategy LIKE '%-hold5050';" | tr -cd '0-9 .%+-' | head -c 20)"
+    echo "- 做市策略累计收益最好 / 最差：$(q "$lp_best DESC LIMIT 1;" | tr -cd 'a-zA-Z0-9_ .%+-' | head -c 60) / $(q "$lp_best ASC LIMIT 1;" | tr -cd 'a-zA-Z0-9_ .%+-' | head -c 60)；持有 50/50 平均：$(q "SELECT printf('%+.2f', AVG(json_extract(state_json, '\$.lastValue') / 10000.0 - 1) * 100) || '%' FROM lp_state WHERE strategy LIKE '%-hold5050';" | tr -cd '0-9 .%+-' | head -c 20)"
     echo "- 第一条 / 最新快照（UTC）：$(q "SELECT IFNULL(datetime(MIN(ts), 'unixepoch'), '-') || ' / ' || IFNULL(datetime(MAX(ts), 'unixepoch'), '-') FROM lp_pool_snapshot;" | tr -cd '0-9 :/-' | head -c 60)"
 }
 
