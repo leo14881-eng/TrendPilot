@@ -56,6 +56,15 @@ class RpcClientTest {
     }
 
     @Test
+    void longRetryAfterIsHonouredInFull() {
+        FakeChain chain = FakeChain.base();
+        RpcClient c = new RpcClient("t", chain, 0, clock::get);
+        chain.failWith = new RpcClient.RateLimited(900_000);   // 公开 RPC 要求等 15 分钟
+        assertThatThrownBy(() -> c.batch(List.of(Call.gasPrice()))).isInstanceOf(RpcClient.RpcException.class);
+        assertThat(c.pausedUntilMs() - clock.get()).isEqualTo(900_000);
+    }
+
+    @Test
     void repeated429BacksOffExponentiallyWithoutRetryAfter() {
         FakeChain chain = FakeChain.base();
         RpcClient c = new RpcClient("t", chain, 0, clock::get);

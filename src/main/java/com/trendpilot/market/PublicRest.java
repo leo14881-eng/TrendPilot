@@ -18,7 +18,8 @@ import com.fasterxml.jackson.databind.JsonNode;
  * 公开行情 REST 请求，每个交易所一个统一限速器：
  * <ul>
  * <li>全局最多 maxConcurrency 个并发，且相邻两次请求至少间隔 minGapMs（排队发出）；</li>
- * <li>429 / 交易所限流码：读 Retry-After（没有则 2s、4s、8s… 封顶 2 分钟），期间该交易所全部请求暂停；</li>
+ * <li>429：按 Retry-After 全额暂停（没有则 2s、4s、8s…），封顶 30 分钟，期间该交易所全部请求暂停；</li>
+ * <li>200 响应体里的限流码（Bybit 10006 等）：暂停 1 分钟起、连续出现时翻倍（封顶 30 分钟），本次直接失败不再重试；</li>
  * <li>418（IP 被封禁，可能几分钟到几天）：按 Retry-After 全额暂停，不设上限（没有 Retry-After 按 10 分钟），
  *     封禁期间继续请求只会延长封禁；</li>
  * <li>暂停超过 30 秒时本次直接失败（标记缺失），不让任务长时间卡住；</li>
@@ -31,7 +32,8 @@ final class PublicRest {
     private static final Logger log = LoggerFactory.getLogger(PublicRest.class);
     private static final int MAX_ATTEMPTS = 3;
 
-    private static final long MAX_PAUSE_MS = 120_000;
+    private static final long MAX_PAUSE_MS = 30 * 60_000L;
+    static final long BODY_LIMIT_PAUSE_MS = 60_000;
     private static final long MAX_WAIT_MS = 30_000;
     private static final long BAN_DEFAULT_MS = 600_000;
     static final int BREAKER_FAILURES = 5;
@@ -45,6 +47,7 @@ final class PublicRest {
     /** 当前暂停的原因，写进失败信息：交易所限流、IP 封禁和网络连续不通分开说明，便于判断是不是请求太多。 */
     private volatile String pauseLabel = "限流暂停中";
     private int consecutiveFailures;
+    private int consecutiveBodyLimits;
 
     PublicRest(String name, int maxConcurrency, long minGapMs) {
         this.name = name;
@@ -84,6 +87,14 @@ final class PublicRest {
 
     private synchronized void succeeded() {
         consecutiveFailures = 0;
+        consecutiveBodyLimits = 0;
+    }
+
+    /** 响应体里的限流码：1 分钟起，连续出现翻倍。 */
+    private synchronized long bodyLimited() {
+        long ms = BODY_LIMIT_PAUSE_MS << Math.min(consecutiveBodyLimits++, 5);
+        pause(ms);
+        return Math.min(ms, MAX_PAUSE_MS);
     }
 
     /** 网络错误或 5xx：连续失败太多次说明交易所整体不可用，熔断一段时间。 */
@@ -147,8 +158,9 @@ final class PublicRest {
                 failed(what);
                 last = e;
             } catch (RetryableException e) {
-                last = e;
-                pause(2_000L << (attempt - 1));
+                long ms = bodyLimited();
+                log.warn("{} 交易所返回限流，全部请求暂停 {} 秒：{}", name, ms / 1000, what);
+                throw new MarketDataException(name + " 交易所返回限流（" + e.getMessage() + "），" + ms / 1000 + " 秒后恢复：" + what, e);
             }
             if (attempt < MAX_ATTEMPTS) {
                 log.warn("{} 请求失败（{}），第 {} 次重试：{}", name, reason(last), attempt, what);

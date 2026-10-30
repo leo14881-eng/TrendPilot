@@ -20,7 +20,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * 一条链的公开 JSON-RPC（只读）。只允许 eth_call 和 eth_gasPrice 两个方法，其他方法在发出前就拒绝。
  * <ul>
  * <li>每次把多个调用合成一个 batch 请求；</li>
- * <li>每条链一个限流器：相邻请求至少间隔 minGapMs；429 或 RPC 返回限流时按 Retry-After（没有就 2s、4s、8s… 封顶 5 分钟）暂停；</li>
+ * <li>每条链一个限流器：相邻请求至少间隔 minGapMs；429 或 RPC 返回限流时按 Retry-After 全额暂停（封顶 30 分钟；没有就 2s、4s、8s… 封顶 5 分钟）；</li>
  * <li>暂停期间不排队等待，直接失败，由调用方把这一分钟记为 gap。</li>
  * </ul>
  */
@@ -28,6 +28,7 @@ final class RpcClient {
 
     static final Set<String> ALLOWED_METHODS = Set.of("eth_call", "eth_gasPrice");
     static final long MAX_BACKOFF_MS = 300_000;
+    static final long MAX_RETRY_AFTER_MS = 30 * 60_000L;
 
     /** 一个调用；result 是十六进制字符串，error 非空表示这一项失败。 */
     record Call(String method, String to, String data) {
@@ -196,8 +197,10 @@ final class RpcClient {
 
     private synchronized void limited(long retryAfterMs) {
         consecutiveLimited++;
-        long ms = retryAfterMs > 0 ? retryAfterMs : 2_000L << Math.min(consecutiveLimited - 1, 10);
-        pausedUntilMs = Math.max(pausedUntilMs, clock.getAsLong() + Math.min(MAX_BACKOFF_MS, ms));
+        // 有 Retry-After 就按它全额暂停（封顶 30 分钟）；没有就 2s、4s、8s…（封顶 5 分钟）
+        long ms = retryAfterMs > 0 ? Math.min(MAX_RETRY_AFTER_MS, retryAfterMs)
+                : Math.min(MAX_BACKOFF_MS, 2_000L << Math.min(consecutiveLimited - 1, 10));
+        pausedUntilMs = Math.max(pausedUntilMs, clock.getAsLong() + ms);
     }
 
     private synchronized void ok() {
