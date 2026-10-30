@@ -41,6 +41,7 @@ public class LpShadowJob {
 
     private final LpShadowProperties props;
     private final LpCollector collector;
+    private final LpEngine engine;
     private final ObjectProvider<ActiveLease> lease;
     private final boolean schedulingEnabled;
     private ScheduledExecutorService executor;
@@ -61,6 +62,7 @@ public class LpShadowJob {
             return new PerpQuotes.Quote(p.markPrice(), p.lastFundingRate());
         });
         this.collector = new LpCollector(props, rpc, perp, store, notifier::send);
+        this.engine = new LpEngine(store);
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -103,15 +105,22 @@ public class LpShadowJob {
     /** 一分钟的工作；所有异常都在这里吞掉（只记 warn）。 */
     public List<Snapshot> run(Instant now) {
         long ts = now.truncatedTo(ChronoUnit.MINUTES).getEpochSecond();
+        List<Snapshot> rows;
         try {
-            return collector.collect(ts, now);
+            rows = collector.collect(ts, now);
         } catch (RuntimeException e) {
             log.warn("LP 影子盘：本分钟采集出错，记为 gap：{}", e.toString());
             return List.of();
         }
+        engine.onSnapshots(collector.activePools(), rows);
+        return rows;
     }
 
     LpCollector collector() {
         return collector;
+    }
+
+    LpEngine engine() {
+        return engine;
     }
 }

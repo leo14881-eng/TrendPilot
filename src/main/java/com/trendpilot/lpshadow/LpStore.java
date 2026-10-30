@@ -125,6 +125,61 @@ public class LpStore {
         return out;
     }
 
+    // ---------- 账本 ----------
+
+    public long openPosition(String strategy, String pool, int tickLower, int tickUpper, double liquidity, long ts) {
+        return jdbc.sql("""
+                INSERT INTO lp_position(strategy, pool, tick_lower, tick_upper, liquidity, opened_ts)
+                VALUES (:s, :p, :tl, :tu, :l, :ts) RETURNING id
+                """).param("s", strategy).param("p", pool).param("tl", tickLower).param("tu", tickUpper).param("l", liquidity)
+                .param("ts", ts).query(Long.class).single();
+    }
+
+    public void closePosition(long id, long ts) {
+        jdbc.sql("UPDATE lp_position SET closed_ts = :ts WHERE id = :id AND closed_ts IS NULL").param("ts", ts).param("id", id).update();
+    }
+
+    public void event(long ts, String strategy, String type, String detailJson) {
+        jdbc.sql("INSERT INTO lp_event(ts, strategy, type, detail_json) VALUES (:ts, :s, :t, :d)")
+                .param("ts", ts).param("s", strategy).param("t", type).param("d", detailJson).update();
+    }
+
+    /** 一个池子全部策略的最新状态一次写入。 */
+    public void saveStates(List<String[]> strategyPoolJson, long ts) {
+        if (strategyPoolJson.isEmpty()) return;
+        List<Object[]> args = strategyPoolJson.stream().map(r -> new Object[] {r[0], r[1], r[2], ts}).toList();
+        template.batchUpdate("""
+                INSERT INTO lp_state(strategy, pool, state_json, updated_ts) VALUES (?, ?, ?, ?)
+                ON CONFLICT(strategy) DO UPDATE SET pool = excluded.pool, state_json = excluded.state_json, updated_ts = excluded.updated_ts
+                """, args);
+    }
+
+    /** strategy → state_json。 */
+    public Map<String, String> states(String pool) {
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        jdbc.sql("SELECT strategy, state_json FROM lp_state WHERE pool = :p ORDER BY strategy").param("p", pool)
+                .query(rs -> {
+                    out.put(rs.getString(1), rs.getString(2));
+                });
+        return out;
+    }
+
+    public Map<String, String> allStates() {
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        jdbc.sql("SELECT strategy, state_json FROM lp_state ORDER BY strategy").query(rs -> {
+            out.put(rs.getString(1), rs.getString(2));
+        });
+        return out;
+    }
+
+    /** 某池子在 ts 之前最近的一条快照（重启后作为"上一分钟"）。 */
+    public java.util.Optional<Snapshot> lastSnapshotBefore(String pool, long ts) {
+        List<Long> t = jdbc.sql("SELECT MAX(ts) FROM lp_pool_snapshot WHERE pool = :p AND ts < :t").param("p", pool).param("t", ts)
+                .query(Long.class).list();
+        if (t.isEmpty() || t.getFirst() == null) return java.util.Optional.empty();
+        return snapshots(pool, t.getFirst(), t.getFirst() + 1).stream().findFirst();
+    }
+
     static String str(BigInteger v) {
         return v == null ? null : v.toString();
     }

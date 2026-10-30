@@ -59,6 +59,59 @@ public final class LpMath {
     }
 
     /**
+     * 标准 V3 公式：流动性 L、区间 [sa, sb]（√P 原始单位）、当前 √P = s 时持有的 token0 / token1（原始单位）。
+     * 价格在区间下方全是 token0，上方全是 token1。
+     */
+    public static double[] amounts(double liquidity, double sa, double sb, double s) {
+        if (s <= sa) return new double[] {liquidity * (sb - sa) / (sa * sb), 0};
+        if (s >= sb) return new double[] {0, liquidity * (sb - sa)};
+        return new double[] {liquidity * (sb - s) / (s * sb), liquidity * (s - sa)};
+    }
+
+    /** 仓位里的 [WETH 数量, USDC 数量]（人类单位）。 */
+    public static double[] wethUsdc(PoolInfo p, double liquidity, int tickLower, int tickUpper, double sqrtRaw) {
+        double[] a = amounts(liquidity, sqrtAtTick(tickLower), sqrtAtTick(tickUpper), sqrtRaw);
+        double a0 = a[0] / Math.pow(10, p.dec0());
+        double a1 = a[1] / Math.pow(10, p.dec1());
+        return p.wethIsToken0() ? new double[] {a0, a1} : new double[] {a1, a0};
+    }
+
+    /** 仓位价值（USDC）。 */
+    public static double value(PoolInfo p, double liquidity, int tickLower, int tickUpper, double sqrtRaw) {
+        double[] wu = wethUsdc(p, liquidity, tickLower, tickUpper, sqrtRaw);
+        return wu[0] * ethPriceAtSqrt(p, sqrtRaw) + wu[1];
+    }
+
+    /** 用 valueUsdc 的资金在 [tickLower, tickUpper) 开仓能得到的流动性（价值和 L 成正比）。 */
+    public static double liquidityFor(PoolInfo p, double valueUsdc, int tickLower, int tickUpper, double sqrtRaw) {
+        double unit = value(p, 1.0, tickLower, tickUpper, sqrtRaw);
+        return unit > 0 ? valueUsdc / unit : 0;
+    }
+
+    /**
+     * 以当前 ETH 价格为中心、上下各 width（如 0.05 = ±5%）的区间，换成 tick 并对齐 tickSpacing（下沿向下、上沿向上取整）。
+     * token0 / token1 顺序不同时原始价格方向相反，这里统一处理。
+     */
+    public static int[] rangeTicks(PoolInfo p, double sqrtRaw, double width) {
+        double eth = ethPriceAtSqrt(p, sqrtRaw);
+        double ra = rawPrice(p, eth * (1 - width));
+        double rb = rawPrice(p, eth * (1 + width));
+        int spacing = p.tickSpacing();
+        int lo = Math.floorDiv(tickAtRawPrice(Math.min(ra, rb)), spacing) * spacing;
+        int hi = -Math.floorDiv(-tickAtRawPrice(Math.max(ra, rb)), spacing) * spacing;
+        int minT = -Math.floorDiv(-MIN_TICK, spacing) * spacing;   // 向内对齐
+        int maxT = Math.floorDiv(MAX_TICK, spacing) * spacing;
+        lo = Math.max(lo, minT);
+        hi = Math.min(hi, maxT);
+        if (hi <= lo) hi = lo + spacing;
+        return new int[] {lo, hi};
+    }
+
+    public static boolean inRange(int tick, int tickLower, int tickUpper) {
+        return tick >= tickLower && tick < tickUpper;
+    }
+
+    /**
      * 池子 TVL（USDC）和实测集中度 m = L_active × 2√P / TVL（都按 token1 原始单位）。
      * m = 1 相当于所有流动性都是全区间；越大说明其他 LP 越集中在当前价格附近。
      */
