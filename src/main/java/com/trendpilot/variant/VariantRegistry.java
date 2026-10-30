@@ -74,6 +74,14 @@ public class VariantRegistry {
         this.clock = clock;
     }
 
+    /** 变体账本的开仓 / 平仓事务（VariantBook 不是 Spring bean，@Transactional 对它不生效）。 */
+    private org.springframework.transaction.support.TransactionTemplate tx;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTransactionManager(org.springframework.transaction.PlatformTransactionManager tm) {
+        this.tx = new org.springframework.transaction.support.TransactionTemplate(tm);
+    }
+
     public static String tableFor(String name) {
         return StrongVariantBook.BOOK.equals(name) ? "v5_position" : name.toLowerCase(Locale.ROOT) + "_position";
     }
@@ -189,7 +197,7 @@ public class VariantRegistry {
             return null;
         }
         String table = rs.getString("position_table");
-        Ledger book = books.computeIfAbsent(name, n -> StrongVariantBook.BOOK.equals(n) ? v5 : new VariantBook(jdbc, params, n, table));
+        Ledger book = books.computeIfAbsent(name, n -> StrongVariantBook.BOOK.equals(n) ? v5 : new VariantBook(jdbc, params, n, table, tx));
         return new Variant(name, rs.getString("base"), o, table, rs.getString("source"), rs.getInt("backtest_passed") == 1,
                 rs.getString("evidence"), rs.getString("status"), Instant.parse(rs.getString("started_at")), book);
     }

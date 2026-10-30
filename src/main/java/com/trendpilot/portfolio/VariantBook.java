@@ -1,8 +1,13 @@
 package com.trendpilot.portfolio;
 
+import java.time.Instant;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.trendpilot.config.StrategyParams;
+import com.trendpilot.market.ExecutionSimulator.Fill;
+import com.trendpilot.market.Venue;
 
 /**
  * 配置化影子变体的账本（V6、V7…）：每个变体一张自己的持仓表（结构与 v5_position 相同），事件写 shadow_event（book = 变体名）。
@@ -10,8 +15,36 @@ import com.trendpilot.config.StrategyParams;
  */
 public class VariantBook extends Ledger {
 
+    /** 不是 Spring bean，Ledger 上的 @Transactional 不生效：开仓 / 加仓 / 平仓用它包成一个事务（null = 测试里不用事务）。 */
+    private final TransactionTemplate tx;
+
     public VariantBook(JdbcClient jdbc, StrategyParams params, String book, String table) {
+        this(jdbc, params, book, table, null);
+    }
+
+    public VariantBook(JdbcClient jdbc, StrategyParams params, String book, String table, TransactionTemplate tx) {
         super(jdbc, params, book, table);
+        this.tx = tx;
+    }
+
+    @Override
+    public Position open(Venue venue, String symbol, Fill fill, String generation, Instant now) {
+        return tx == null ? super.open(venue, symbol, fill, generation, now)
+                : tx.execute(st -> super.open(venue, symbol, fill, generation, now));
+    }
+
+    @Override
+    public Position add(Position cur, Fill fill, String generation, Instant now) {
+        return tx == null ? super.add(cur, fill, generation, now) : tx.execute(st -> super.add(cur, fill, generation, now));
+    }
+
+    @Override
+    public void close(Position cur, Fill fill, java.math.BigDecimal pnl, String reason, String generation, Instant now) {
+        if (tx == null) {
+            super.close(cur, fill, pnl, reason, generation, now);
+            return;
+        }
+        tx.executeWithoutResult(st -> super.close(cur, fill, pnl, reason, generation, now));
     }
 
     /** 建持仓表（已存在就不动，已有数据保留）。表名只能来自 VariantRegistry 校验过的变体名。 */
