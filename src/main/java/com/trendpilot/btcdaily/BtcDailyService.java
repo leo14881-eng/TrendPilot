@@ -56,7 +56,15 @@ public class BtcDailyService {
     }
 
     /** 一次检查：补处理新收盘的 15m K 线，缺当天计划时生成并推送。 */
-    public synchronized void tick(Instant now) {
+    public void tick(Instant now) {
+        tick(now, true);
+    }
+
+    /**
+     * @param canEnter 运行租约是否已确认（{@link com.trendpilot.lease.ActiveLease#canEnter()}）。确认不了时另一台机器可能已经接管，
+     *                 空仓不开新一轮；已有仓位的止盈和加仓照常
+     */
+    public synchronized void tick(Instant now, boolean canEnter) {
         VenueMarket m = markets.get(Venue.BINANCE);
         if (m == null) return;
         String sym = props.symbol();
@@ -101,7 +109,8 @@ public class BtcDailyService {
                     plan = createPlan(day, daily, book, now);
                 }
                 if (plan == null) break; // 日线暂缺：下次再处理，不跳过 K 线
-                List<Fill> f = BtcDailyRules.onBar(plan, book, bar, p);
+                DailyPlan use = !canEnter && !book.holding() ? plan.withoutLevels() : plan;
+                List<Fill> f = BtcDailyRules.onBar(use, book, bar, p);
                 last = bar.openTime();
                 if (!f.isEmpty()) {
                     fills.addAll(f);

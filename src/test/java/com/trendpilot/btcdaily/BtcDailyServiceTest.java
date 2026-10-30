@@ -150,6 +150,37 @@ class BtcDailyServiceTest {
     }
 
     @Test
+    void noNewRoundWhileRunLeaseIsUnconfirmedButTakeProfitStillWorks() {
+        LocalDate day = LocalDate.parse("2026-10-15");
+        long start = BtcDailyRules.dayStart(day);
+        List<Kline> daily = new ArrayList<>(BtcDailyRulesTest.daily(day.minusDays(1), 80, 60_000, 2_000));
+        daily.add(new Kline(start, 60_000, 60_000, 60_000, 60_000, 1e9, start + 86_399_999L));
+        market.daily.put("BTCUSDT", daily);
+        seedContext(day);
+        market.quarters.put("BTCUSDT", quarters(start - 120 * Q, start, 60_000));
+        service.tick(Instant.ofEpochMilli(start + 60_000));
+
+        // 租约确认不了（另一台可能已接管）：跌到第 1 档也不开新一轮
+        List<Kline> q = new ArrayList<>(quarters(start - 120 * Q, start, 60_000));
+        q.add(new Kline(start, 60_000, 60_000, 58_700, 58_900, 1e6, start + Q - 1));
+        market.quarters.put("BTCUSDT", q);
+        service.tick(Instant.ofEpochMilli(start + Q + 60_000), false);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM btc_daily_trade").query(Integer.class).single()).isZero();
+
+        // 确认恢复：照常买入
+        q.add(new Kline(start + Q, 58_900, 58_900, 58_700, 58_800, 1e6, start + 2 * Q - 1));
+        market.quarters.put("BTCUSDT", q);
+        service.tick(Instant.ofEpochMilli(start + 2 * Q + 60_000), true);
+        assertThat(jdbc.sql("SELECT side FROM btc_daily_trade ORDER BY id").query(String.class).list()).containsExactly("BUY");
+
+        // 又确认不了：已有仓位照常止盈
+        q.add(new Kline(start + 2 * Q, 58_800, 60_500, 58_800, 60_400, 1e6, start + 3 * Q - 1));
+        market.quarters.put("BTCUSDT", q);
+        service.tick(Instant.ofEpochMilli(start + 3 * Q + 60_000), false);
+        assertThat(jdbc.sql("SELECT side FROM btc_daily_trade ORDER BY id").query(String.class).list()).containsExactly("BUY", "SELL");
+    }
+
+    @Test
     void liveExitStaysFixedWhileConfigSaysFixed() {
         // 配置为 FIXED（等用户确认新设计）：即使回测结论是 TRAIL 也不切换
         assertThat(service.live().exit().mode()).isEqualTo("FIXED");

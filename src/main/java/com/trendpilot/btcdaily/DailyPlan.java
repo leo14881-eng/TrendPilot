@@ -23,6 +23,12 @@ public record DailyPlan(LocalDate day, String version, double open, double atr, 
                         double multiplier, String reasons, String strategy, String regime, double hourAtr,
                         double addFloor) {
 
+    /** 同一份计划去掉全部挂单（运行租约确认不了时，空仓不开新一轮用）；只在内存里用，不改已保存的计划。 */
+    public DailyPlan withoutLevels() {
+        return new DailyPlan(day, version, open, atr, ema, prevClose, strong, carried, tpPct, List.of(), skipNew, multiplier,
+                reasons, strategy, regime, hourAtr, addFloor);
+    }
+
     public DailyPlan {
         if (strategy == null || strategy.isBlank()) strategy = "V2";
         if (regime == null) regime = "";

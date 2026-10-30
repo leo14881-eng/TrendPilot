@@ -41,13 +41,19 @@ public class BtcDailyJob {
         if (!props.enabled()) return;
         Instant started = Instant.now();
         try {
-            service.tick(started);
+            service.tick(started, canEnter());
             runs.record(JOB, null, started, Instant.now(), "SUCCESS", "N/A", null);
         } catch (Exception e) {
             log.warn("BTC 每日短线检查失败：{}", e.getMessage());
             // 记失败：连续 3 次失败或 45 分钟没成功，每 5 分钟的自检会发 Telegram
             runs.record(JOB, null, started, Instant.now(), "FAILED", "N/A", String.valueOf(e.getMessage()));
         }
+    }
+
+    /** 运行租约已确认才开新一轮（与 V2 开新仓同一判断）；没有启用跨机器保护时总是可以。 */
+    private boolean canEnter() {
+        var l = lease.getIfAvailable();
+        return l == null || l.canEnter();
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -58,7 +64,7 @@ public class BtcDailyJob {
                 Thread.sleep(STARTUP_DELAY_MS);
                 var l = lease.getIfAvailable();
                 if (l != null && !l.active()) return; // 待命机器不记 BTC 账本
-                service.tick(Instant.now());
+                service.tick(Instant.now(), canEnter());
                 service.backtestIfNeeded(Instant.now());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
