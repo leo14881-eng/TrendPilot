@@ -56,8 +56,8 @@ class LpEngineTest {
         }
         double fees = e1.books().get(p.key()).states.get("w0-w05-U-c0").fees;
         assertThat(fees).isPositive();
-        assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_state").query(Long.class).single()).isEqualTo(13L);  // 10 个不对冲 + 3 个基准
-        assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_position WHERE closed_ts IS NULL").query(Long.class).single()).isEqualTo(10L);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_state").query(Long.class).single()).isEqualTo(23L);  // 20 个做市 + 3 个基准
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_position WHERE closed_ts IS NULL").query(Long.class).single()).isEqualTo(20L);
 
         // "重启"：新引擎从数据库恢复；停机 2 分钟（t0+180、t0+240 没有快照）
         LpEngine e2 = new LpEngine(store);
@@ -71,7 +71,7 @@ class LpEngineTest {
         e2.onSnapshots(active, List.of(s6));
         assertThat(e2.books().get(p.key()).states.get("w0-w05-U-c0").fees).isCloseTo(fees * 1.5, within(1e-9));
         assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_event WHERE type = 'GAP'").query(Long.class).single()).isEqualTo(1L);
-        assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_position").query(Long.class).single()).isEqualTo(10L);   // 没有重复开仓
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_position").query(Long.class).single()).isEqualTo(20L);   // 没有重复开仓
     }
 
     @Test
@@ -81,7 +81,7 @@ class LpEngineTest {
         LpEngine e = new LpEngine(store);
         BigInteger liq = BigInteger.TEN.pow(24);
         Snapshot g = LpBookTest.snap(1_800_000_000L - 1_800_000_000L % 60, 3000, liq, BigInteger.ZERO, BigInteger.ZERO);
-        Snapshot b = new Snapshot(g.ts(), "bad", g.sqrtPriceX96(), g.tick(), liq, BigInteger.ZERO, BigInteger.ZERO, null, null, null,
+        Snapshot b = new Snapshot(g.ts(), "bad", g.sqrtPriceX96(), g.tick(), liq, BigInteger.ZERO, BigInteger.ZERO, null, 3000.0, 0.0001,
                 Snapshot.OK, null);
         e.onSnapshots(Map.of(good.key(), good, "bad", bad), List.of(b, g));
         assertThat(e.books()).containsKey(good.key()).doesNotContainKey("bad");

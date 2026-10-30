@@ -112,4 +112,82 @@ class LpBookTest {
         assertThat(book.states.get("w0-usdc").lastValue).isEqualTo(10_000);
         assertThat(st.lastValue).isCloseTo(10_000 + st.fees, within(1e-6));
     }
+
+    static Snapshot withPerp(Snapshot s, Double mark, Double rate, BigInteger gas) {
+        return new Snapshot(s.ts(), s.pool(), s.sqrtPriceX96(), s.tick(), s.liquidity(), s.fg0(), s.fg1(), gas, mark, rate, s.status(), null);
+    }
+
+    @Test
+    void noRebalanceDuringOrRightAfterGapAndCooldownIsRespected() {
+        FakeLedger ledger = new FakeLedger();
+        LpBook book = new LpBook(P, Strategy.forPool(P.key()), Map.of(), null, ledger);
+        BigInteger liq = BigInteger.TEN.pow(24);
+        long t0 = 1_800_000_000L - 1_800_000_000L % 60;
+        book.onSnapshot(snap(t0, 3000, liq, BigInteger.ZERO, BigInteger.ZERO));
+        book.onSnapshot(Snapshot.gap(t0 + 60, P.key(), 3000.0, 0.0001, "RPC 超时"));
+        // gap 后第一条：价格已经出 ±2% 区间，但这一段不是有效区间 → 不调仓
+        book.onSnapshot(snap(t0 + 120, 3100, liq, BigInteger.ZERO, BigInteger.ZERO));
+        assertThat(book.states.get("w0-w02-U-c0").rebalances).isZero();
+        // 下一分钟有效：冷却 0 的立即调仓，冷却 30 的开始计时
+        book.onSnapshot(snap(t0 + 180, 3100, liq, BigInteger.ZERO, BigInteger.ZERO));
+        PositionState c0 = book.states.get("w0-w02-U-c0");
+        PositionState c30 = book.states.get("w0-w02-U-c30");
+        assertThat(c0.rebalances).isEqualTo(1);
+        assertThat(c0.gasCost).isCloseTo(1e7 * 4e5 / 1e18 * 3100, within(1e-9));   // 0.01 gwei × 40 万 gas
+        assertThat(LpMath.inRange(book.prev.tick(), c0.tickLower, c0.tickUpper)).isTrue();
+        assertThat(c30.rebalances).isZero();
+        assertThat(c30.outSince).isEqualTo(t0 + 180);
+        // gas 缺失的分钟不调仓
+        long t = t0 + 240;
+        for (; t < t0 + 180 + 30 * 60; t += 60) book.onSnapshot(snap(t, 3100, liq, BigInteger.ZERO, BigInteger.ZERO));
+        assertThat(c30.rebalances).isZero();
+        book.onSnapshot(withPerp(snap(t, 3100, liq, BigInteger.ZERO, BigInteger.ZERO), 3100.0, 0.0001, null));
+        assertThat(c30.rebalances).isZero();
+        book.onSnapshot(snap(t + 60, 3100, liq, BigInteger.ZERO, BigInteger.ZERO));
+        assertThat(c30.rebalances).isEqualTo(1);
+        // 宽区间没出界，不动
+        assertThat(book.states.get("w0-w10-U-c0").rebalances).isZero();
+        // 调仓成本 = 一半仓位价值 ×（0.05% + 0.02%）
+        assertThat(ledger.details.get(ledger.events.indexOf("REBALANCE w0-w02-U-c0")).get("swap"))
+                .isEqualTo(((Double) ledger.details.get(ledger.events.indexOf("REBALANCE w0-w02-U-c0")).get("value")) / 2 * 0.0007);
+    }
+
+    @Test
+    void hedgeOpensShortAndFundingAndRiskEventsAreRecorded() {
+        FakeLedger ledger = new FakeLedger();
+        LpBook book = new LpBook(P, Strategy.forPool(P.key()), Map.of(), null, ledger);
+        BigInteger liq = BigInteger.TEN.pow(24);
+        long t0 = 1_800_028_800L - 120;   // 资金费结算点（8 小时的整数倍）前 2 分钟
+        assertThat((t0 + 120) % (8 * 3600)).isZero();
+        book.onSnapshot(withPerp(snap(t0, 3000, liq, BigInteger.ZERO, BigInteger.ZERO), 3000.0, 0.0001, BigInteger.TEN));
+        PositionState h = book.states.get("w0-w50-H-c0");
+        PositionState u = book.states.get("w0-w50-U-c0");
+        // 保证金 = 做市资金 × ETH 占比 / 3，空单数量 = 仓位里的 ETH
+        double eth = LpMath.wethUsdc(P, h.liquidity, h.tickLower, h.tickUpper, LpMath.sqrtRaw(sqrtX96(3000)))[0];
+        assertThat(h.hedgeQty).isCloseTo(eth, within(1e-12));
+        assertThat(h.initMargin).isCloseTo((10_000 - h.initMargin) * (eth * 3000 / h.lastLpValue) / 3, within(1e-6));
+        assertThat(h.lastValue).isCloseTo(10_000 - eth * 3000 * 0.0005, within(1e-6));   // 只扣了开空单的 taker
+        assertThat(u.hedgeQty).isZero();
+        // 跨过 08:00：按结算前看到的 0.01% 结算，空单收钱
+        book.onSnapshot(withPerp(snap(t0 + 60, 3000, liq, BigInteger.ZERO, BigInteger.ZERO), 3000.0, 0.0001, BigInteger.TEN));
+        book.onSnapshot(withPerp(snap(t0 + 120, 3000, liq, BigInteger.ZERO, BigInteger.ZERO), 3000.0, -0.0005, BigInteger.TEN));
+        assertThat(h.funding).isCloseTo(h.hedgeQty * 3000 * 0.0001, within(1e-9));
+        assertThat(u.funding).isZero();
+        assertThat(ledger.events).contains("FUNDING w0-w50-H-c0");
+        // 价格大涨：离强平价不到 15% 记一次风险事件（只记一次），涨过强平价按爆仓处理
+        double liqPrice = LpBook.liquidationPrice(h.margin, h.hedgeQty, h.hedgeEntry);
+        double near = liqPrice / 1.10;
+        book.onSnapshot(withPerp(snap(t0 + 180, near, liq, BigInteger.ZERO, BigInteger.ZERO), near, 0.0001, BigInteger.TEN));
+        book.onSnapshot(withPerp(snap(t0 + 240, near, liq, BigInteger.ZERO, BigInteger.ZERO), near, 0.0001, BigInteger.TEN));
+        assertThat(h.riskEvents).isEqualTo(1);
+        assertThat(ledger.events.stream().filter(e -> e.equals("LIQ_RISK w0-w50-H-c0")).count()).isEqualTo(1);
+        // 一分钟内跳到强平价以上：按原来的空单爆仓（保证金清零，之后不再对冲）
+        PositionState h2 = book.states.get("w0-w50-H-c30");
+        double above = LpBook.liquidationPrice(h2.margin, h2.hedgeQty, h2.hedgeEntry) * 1.01;
+        book.onSnapshot(withPerp(snap(t0 + 300, above, liq, BigInteger.ZERO, BigInteger.ZERO), above, 0.0001, BigInteger.TEN));
+        h = h2;
+        assertThat(h.liquidated).isTrue();
+        assertThat(h.hedgeQty).isZero();
+        assertThat(ledger.events).contains("LIQUIDATION w0-w50-H-c30");
+    }
 }

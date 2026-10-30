@@ -35,12 +35,15 @@ public class PositionState {
     public double holdUsdc;
 
     // ----- 对冲（空 ETHUSDT 永续）-----
+    public double initMargin;      // 开始时划给保证金的资金（3 倍杠杆，不参与做市）
     public double margin;          // 保证金账户现金（含已实现盈亏、资金费、已扣 taker 手续费）
     public double hedgeQty;        // 空单数量（ETH）
     public double hedgeEntry;      // 平均开仓价
     public double hedgeRealized;   // 已实现价格盈亏
     public double hedgeFees;       // taker 手续费累计（也计入 swapCost）
     public double funding;         // 资金费累计（正 = 收到）
+    public int hedgeTrades;
+    public long lastFundingBoundary; // 最近一次处理过的资金费结算时间（epoch 秒，每 8 小时）
     public int riskEvents;
     public boolean atRisk;
     public boolean liquidated;

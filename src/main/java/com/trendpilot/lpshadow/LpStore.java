@@ -180,6 +180,70 @@ public class LpStore {
         return snapshots(pool, t.getFirst(), t.getFirst() + 1).stream().findFirst();
     }
 
+    // ---------- 报告 ----------
+
+    public boolean hasDaily(String date) {
+        return jdbc.sql("SELECT COUNT(*) FROM lp_daily WHERE date = :d").param("d", date).query(Long.class).single() > 0;
+    }
+
+    public void saveDaily(String date, String strategy, double value, double fees, double il, double gas, double swap, double hedge,
+                          double funding, double coverage) {
+        jdbc.sql("""
+                INSERT OR REPLACE INTO lp_daily(date, strategy, value, fees, il, gas_cost, swap_cost, hedge_pnl, funding, coverage)
+                VALUES (:d, :s, :v, :f, :il, :g, :sw, :h, :fu, :c)
+                """).param("d", date).param("s", strategy).param("v", value).param("f", fees).param("il", il).param("g", gas)
+                .param("sw", swap).param("h", hedge).param("fu", funding).param("c", coverage).update();
+    }
+
+    /** strategy → 每天日末价值（按日期升序）。 */
+    public Map<String, double[]> dailyValues() {
+        return dailySeries("value");
+    }
+
+    public Map<String, double[]> dailyCoverage() {
+        return dailySeries("coverage");
+    }
+
+    private Map<String, double[]> dailySeries(String column) {
+        Map<String, List<Double>> tmp = new java.util.LinkedHashMap<>();
+        jdbc.sql("SELECT strategy, " + column + " FROM lp_daily ORDER BY strategy, date").query(rs -> {
+            tmp.computeIfAbsent(rs.getString(1), k -> new java.util.ArrayList<>()).add(rs.getDouble(2));
+        });
+        Map<String, double[]> out = new java.util.LinkedHashMap<>();
+        tmp.forEach((k, v) -> out.put(k, v.stream().mapToDouble(Double::doubleValue).toArray()));
+        return out;
+    }
+
+    /** [fromTs, toTs) 内各类事件的条数。 */
+    public Map<String, Long> eventCounts(long fromTs, long toTs) {
+        Map<String, Long> out = new TreeMap<>();
+        jdbc.sql("SELECT type, COUNT(*) FROM lp_event WHERE ts >= :a AND ts < :b AND type NOT LIKE '%_REPORT' GROUP BY type")
+                .param("a", fromTs).param("b", toTs)
+                .query(rs -> {
+                    out.put(rs.getString(1), rs.getLong(2));
+                });
+        return out;
+    }
+
+    /** strategy → 爆仓风险事件数（LIQ_RISK + LIQUIDATION，全部历史）。 */
+    public Map<String, Integer> riskEventCounts() {
+        Map<String, Integer> out = new TreeMap<>();
+        jdbc.sql("SELECT strategy, COUNT(*) FROM lp_event WHERE type IN ('LIQ_RISK', 'LIQUIDATION') GROUP BY strategy")
+                .query(rs -> {
+                    out.put(rs.getString(1), rs.getInt(2));
+                });
+        return out;
+    }
+
+    public boolean hasWeekly(String date) {
+        return jdbc.sql("SELECT COUNT(*) FROM lp_event WHERE type = 'WEEKLY_REPORT' AND strategy = :d").param("d", date)
+                .query(Long.class).single() > 0;
+    }
+
+    public void markWeekly(String date, long ts) {
+        event(ts, date, "WEEKLY_REPORT", null);
+    }
+
     static String str(BigInteger v) {
         return v == null ? null : v.toString();
     }
