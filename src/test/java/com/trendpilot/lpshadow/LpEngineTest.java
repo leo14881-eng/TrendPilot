@@ -33,6 +33,32 @@ class LpEngineTest {
 
     @Autowired LpStore store;
     @Autowired JdbcClient jdbc;
+    @Autowired org.springframework.transaction.PlatformTransactionManager tm;
+
+    @org.junit.jupiter.api.AfterEach
+    void dropTrigger() {
+        jdbc.sql("DROP TRIGGER IF EXISTS fail_state").update();
+    }
+
+    @Test
+    void aMinuteThatCannotBeSavedLeavesNoHalfWrittenPositions() {
+        PoolInfo p = LpMathTest.W0;
+        Map<String, PoolInfo> active = Map.of(p.key(), p);
+        BigInteger liq = BigInteger.TEN.pow(24);
+        long t0 = 1_800_000_000L - 1_800_000_000L % 60;
+        LpEngine e = new LpEngine(store, LpBook.DEFAULT_REBALANCE_GAS,
+                new org.springframework.transaction.support.TransactionTemplate(tm), java.time.ZoneId.of("Asia/Ho_Chi_Minh"));
+        // 开仓这一分钟写状态时数据库出错：仓位和事件也不能留下（否则下一分钟会重复开仓）
+        jdbc.sql("CREATE TRIGGER fail_state BEFORE INSERT ON lp_state BEGIN SELECT RAISE(ABORT, 'busy'); END").update();
+        Snapshot s0 = LpBookTest.snap(t0, 3000, liq, BigInteger.ZERO, BigInteger.ZERO);
+        e.onSnapshots(active, List.of(s0));
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_position").query(Long.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_event").query(Long.class).single()).isZero();
+        dropTrigger();
+        e.onSnapshots(active, List.of(LpBookTest.snap(t0 + 60, 3000, liq, BigInteger.ZERO, BigInteger.ZERO)));
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_position").query(Long.class).single()).isEqualTo(20L);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_state").query(Long.class).single()).isEqualTo(23L);
+    }
 
     @BeforeEach
     void clean() {

@@ -51,7 +51,8 @@ public class LpShadowJob {
                        ObjectProvider<BinanceClient> binance, ObjectProvider<ActiveLease> lease,
                        @Value("${trendpilot.scheduling.enabled:true}") boolean schedulingEnabled,
                        @Value("${trendpilot.zone:Asia/Ho_Chi_Minh}") String zone,
-                       @Value("${trendpilot.data-dir:./data}") String dataDir) {
+                       @Value("${trendpilot.data-dir:./data}") String dataDir,
+                       org.springframework.transaction.PlatformTransactionManager tm) {
         this.props = props;
         this.lease = lease;
         this.schedulingEnabled = schedulingEnabled;
@@ -65,7 +66,8 @@ public class LpShadowJob {
             return new PerpQuotes.Quote(p.markPrice(), p.lastFundingRate());
         });
         this.collector = new LpCollector(props, rpc, perp, store, notifier::send);
-        this.engine = new LpEngine(store, props.rebalanceGas());
+        this.engine = new LpEngine(store, props.rebalanceGas(), new org.springframework.transaction.support.TransactionTemplate(tm),
+                java.time.ZoneId.of(zone));
         this.reports = new LpReports(store, java.time.ZoneId.of(zone), java.nio.file.Path.of(dataDir, "reports"), notifier::send,
                 notifier::sendDocument);
     }

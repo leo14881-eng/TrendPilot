@@ -24,6 +24,9 @@ final class LpEngine {
 
     private final LpStore store;
     private final long rebalanceGas;
+    /** 一个池子一分钟的全部写库（开平仓、事件、状态）放进一个事务；null = 不用事务（只在部分测试里）。 */
+    private final org.springframework.transaction.support.TransactionTemplate tx;
+    private final java.time.ZoneId zone;
     private final Map<String, LpBook> books = new LinkedHashMap<>();
     private final Map<String, Integer> errors = new HashMap<>();
 
@@ -32,8 +35,14 @@ final class LpEngine {
     }
 
     LpEngine(LpStore store, long rebalanceGas) {
+        this(store, rebalanceGas, null, java.time.ZoneId.of("Asia/Ho_Chi_Minh"));
+    }
+
+    LpEngine(LpStore store, long rebalanceGas, org.springframework.transaction.support.TransactionTemplate tx, java.time.ZoneId zone) {
         this.store = store;
         this.rebalanceGas = rebalanceGas;
+        this.tx = tx;
+        this.zone = zone;
     }
 
     Map<String, LpBook> books() {
@@ -46,8 +55,11 @@ final class LpEngine {
             if (info == null) continue;
             try {
                 LpBook book = books.computeIfAbsent(s.pool(), k -> load(info, s.ts()));
-                book.onSnapshot(s);
-                save(book, s.ts());
+                if (tx == null) {
+                    apply(book, s);
+                } else {
+                    tx.executeWithoutResult(st -> apply(book, s));   // 出错整体回滚，内存账本下一分钟从数据库重新加载
+                }
                 errors.remove(s.pool());
             } catch (RuntimeException e) {
                 int n = errors.merge(s.pool(), 1, Integer::sum);
@@ -55,6 +67,11 @@ final class LpEngine {
                 books.remove(s.pool());   // 下一分钟从数据库重新加载
             }
         }
+    }
+
+    private void apply(LpBook book, Snapshot s) {
+        book.onSnapshot(s);
+        save(book, s.ts());
     }
 
     private LpBook load(PoolInfo info, long ts) {
