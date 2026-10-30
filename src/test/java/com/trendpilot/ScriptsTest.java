@@ -60,4 +60,25 @@ class ScriptsTest {
         String wait = sh.substring(sh.indexOf("wait_monitor_ok() {"), sh.indexOf("# GitHub Actions"));
         assertThat(wait).contains("[ \"$(instance_role)\" = STANDBY ] && return 0");
     }
+
+    @Test
+    void fallbackStartsThePcOnlyAfterTheServerIsStoppedAndItsDatabaseIsBack() throws Exception {
+        String ps = Files.readString(Path.of("scripts/auto-update.ps1"), StandardCharsets.UTF_8).replace("\r", "");
+        // 服务器端：停服务后再确认确实不在运行，否则退出码非 0
+        assertThat(ps).contains("systemctl stop trendpilot.service && ! systemctl is-active --quiet trendpilot.service");
+        String fb = ps.substring(ps.indexOf("} elseif ($action -eq 'fallback') {"), ps.indexOf("} elseif ($action -eq 'export') {"));
+        int stopCheck = fb.indexOf("$ServerScripts.fallback) -eq 0");
+        int download = fb.indexOf("root@${ip}:/opt/trendpilot/data/$n");
+        int clearWal = fb.indexOf("trendpilot.db-wal");
+        int start = fb.indexOf("Start-TrendPilot");
+        assertThat(stopCheck).isPositive();
+        assertThat(download).isGreaterThan(stopCheck);
+        assertThat(start).isGreaterThan(download);
+        assertThat(clearWal).isGreaterThan(stopCheck).isLessThan(start);
+        // 只有一处启动电脑服务，而且在"全部成功"的分支里；失败要发 Telegram 请人工处理
+        assertThat(fb.split("Start-TrendPilot", -1)).hasSize(2);
+        assertThat(fb).contains("if ($ok)").contains("需要人工处理");
+        // 替换前先备份本机数据库
+        assertThat(fb).contains("before-fallback");
+    }
 }

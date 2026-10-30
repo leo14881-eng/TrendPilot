@@ -209,7 +209,7 @@ $ServerScripts = @{
     status   = 'bash /opt/trendpilot/scripts/linux/status.sh'
     migrate  = 'bash /opt/trendpilot/scripts/linux/migrate-in.sh'
     'migrate-fresh' = 'touch /opt/trendpilot/data/trendpilot.db && bash /opt/trendpilot/scripts/linux/migrate-in.sh'
-    fallback = 'mkdir -p /opt/trendpilot/app && touch /opt/trendpilot/app/disabled.flag && systemctl stop trendpilot.service && echo "服务器上的服务已停止并停用"'
+    fallback = 'mkdir -p /opt/trendpilot/app && touch /opt/trendpilot/app/disabled.flag && systemctl stop trendpilot.service && ! systemctl is-active --quiet trendpilot.service && echo "服务器上的服务已停止并停用"'
     export   = "$BootClone && bash /tmp/tp-boot/scripts/linux/export.sh"
     disk     = 'bash /opt/trendpilot/scripts/linux/disk-report.sh'   # 不克隆：硬盘满时也能运行
 }
@@ -303,9 +303,53 @@ function Invoke-ServerRequest {
             Send-Telegram '⚠️ 迁移到服务器没有完成，已恢复由电脑运行'
         }
     } elseif ($action -eq 'fallback') {
-        Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts.fallback | Out-Null
-        Remove-Item $Disabled -ErrorAction SilentlyContinue
-        if (Start-TrendPilot) { Write-ServerLog '本机服务已启动'; Send-Telegram '✅ 已切回电脑运行' }
+        # 切回电脑：先确认服务器上的服务确实停了，再把服务器停服后的数据库（含 -wal / -shm）下载回来替换本机的旧库，
+        # 全部成功才启动电脑服务；任何一步失败都不启动（避免两台同时运行，或电脑用旧账本继续跑），发 Telegram 请人工处理
+        $ok = (Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts.fallback) -eq 0
+        if (-not $ok) { Write-ServerLog '服务器上的服务没有确认停止' }
+        $dataDir = Join-Path $AppDir 'data'
+        $stage = Join-Path $Bin 'fallback-db'
+        if ($ok) {
+            Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+            foreach ($n in 'trendpilot.db', 'trendpilot.db-wal', 'trendpilot.db-shm') {
+                if (-not $ok) { break }
+                if ($n -ne 'trendpilot.db') {
+                    # -wal / -shm 停服后通常已经并回主库、不存在；存在才下载
+                    if ((Invoke-ServerTool $ssh "$opts root@$ip bash -s" "test -f /opt/trendpilot/data/$n") -ne 0) { continue }
+                }
+                $code = Invoke-ServerTool $scp "$opts -q root@${ip}:/opt/trendpilot/data/$n `"$(Join-Path $stage $n)`"" $null
+                Write-ServerLog "下载 ${n}：退出码 $code"
+                $ok = $code -eq 0 -and (Test-Path (Join-Path $stage $n))
+            }
+        }
+        if ($ok) { $ok = Stop-TrendPilot }
+        if ($ok) {
+            try {
+                # 先备份本机旧库，再删掉旧的 -wal / -shm（留着会被套到新库上），最后放入服务器的库
+                $backup = Join-Path $dataDir ('before-fallback-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+                New-Item -ItemType Directory -Force -Path $backup | Out-Null
+                foreach ($n in 'trendpilot.db', 'trendpilot.db-wal', 'trendpilot.db-shm') {
+                    $f = Join-Path $dataDir $n
+                    if (Test-Path $f) { Move-Item $f (Join-Path $backup $n) -Force -ErrorAction Stop }
+                }
+                foreach ($n in 'trendpilot.db', 'trendpilot.db-wal', 'trendpilot.db-shm') {
+                    $f = Join-Path $stage $n
+                    if (Test-Path $f) { Move-Item $f (Join-Path $dataDir $n) -Force -ErrorAction Stop }
+                }
+                Write-ServerLog "已换成服务器的数据库（本机旧库备份在 $backup）"
+            } catch {
+                Write-ServerLog "替换数据库没有完成：$($_.Exception.Message)"
+                $ok = $false
+            }
+        }
+        if ($ok) {
+            Remove-Item $Disabled -ErrorAction SilentlyContinue
+            if (Start-TrendPilot) { Write-ServerLog '本机服务已启动'; Send-Telegram '✅ 已切回电脑运行（账本已从服务器带回）' }
+        } else {
+            Set-Content $Disabled (Get-Date).ToString('o')
+            Send-Telegram '⚠️ 切回电脑没有完成：服务器停止或数据库下载没有成功，电脑服务保持停用，需要人工处理（详见 logs\server.log）'
+        }
     } elseif ($action -eq 'export') {
         $code = Invoke-ServerTool $ssh "$opts root@$ip bash -s" $ServerScripts.export
         Write-ServerLog "导出退出码 $code"
