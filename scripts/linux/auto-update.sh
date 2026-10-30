@@ -36,12 +36,13 @@ wait_quiet_window() {
     done
 }
 
-# 新版本启动后，等到一次成功的 Monitor（最多约 11 分钟）
+# 新版本启动后，等到一次成功的 Monitor（最多约 11 分钟）；本机待命时 Monitor 不跑，服务正常响应就算启动成功
 wait_monitor_ok() {
     local since=$1
     for _ in $(seq 1 132); do
         sleep 5
         [ "$(last_monitor_ok)" -ge "$since" ] && return 0
+        [ "$(instance_role)" = STANDBY ] && return 0
     done
     return 1
 }
@@ -67,6 +68,8 @@ watchdog() {
         return
     fi
     healthy || return 0   # 刚启动或短暂无响应：下一轮再看
+    # 待命（另一台机器在运行）时 Monitor 本来就不跑，不能当成卡死
+    [ "$(instance_role)" = STANDBY ] && return 0
     local ok now started
     ok=$(last_monitor_ok)
     now=$(date +%s)

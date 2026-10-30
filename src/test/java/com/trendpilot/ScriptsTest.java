@@ -46,4 +46,18 @@ class ScriptsTest {
                 .noneMatch(l -> l.matches(".*\\b(rm -rf|systemctl (stop|restart|disable)|apt-get|crontab -l|truncate)\\b.*"))
                 .noneMatch(l -> l.contains("/cmdline") || l.contains("config/"));
     }
+
+    @Test
+    void serverAutoUpdateDoesNotTreatStandbyAsStuck() throws Exception {
+        String common = Files.readString(Path.of("scripts/linux/common.sh"), StandardCharsets.UTF_8);
+        assertThat(common).doesNotContain("\r").contains("instance_role()").contains("$BASE/api/instance");
+        String sh = Files.readString(Path.of("scripts/linux/auto-update.sh"), StandardCharsets.UTF_8);
+        assertThat(sh).doesNotContain("\r");
+        // 待命（另一台机器在运行）时 Monitor 本来就不跑：守护不因此重启，更新不因此回滚
+        String watchdog = sh.substring(sh.indexOf("watchdog() {"), sh.indexOf("# ---------- 2."));
+        assertThat(watchdog).contains("[ \"$(instance_role)\" = STANDBY ] && return 0");
+        assertThat(watchdog.indexOf("instance_role")).isLessThan(watchdog.indexOf("systemctl restart"));
+        String wait = sh.substring(sh.indexOf("wait_monitor_ok() {"), sh.indexOf("# GitHub Actions"));
+        assertThat(wait).contains("[ \"$(instance_role)\" = STANDBY ] && return 0");
+    }
 }

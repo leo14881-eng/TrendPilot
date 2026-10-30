@@ -51,3 +51,8 @@ last_monitor_ok() {
     v=$(curl -fsS -m 15 "$BASE/api/health" 2>/dev/null | jq -r '.lastMonitorOk // empty' 2>/dev/null)
     [ -n "$v" ] && date -d "$v" +%s 2>/dev/null || echo 0
 }
+
+# 本机角色：ACTIVE（负责运行）/ STANDBY（另一台机器在运行，定时任务不跑）；取不到输出空
+instance_role() {
+    curl -fsS -m 15 "$BASE/api/instance" 2>/dev/null | jq -r '.role // empty' 2>/dev/null | head -c 20
+}
