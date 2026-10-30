@@ -85,6 +85,22 @@ public class BinanceClient implements MarketDataSource {
         return new OrderBook(symbol, levels(root.path("bids")), levels(root.path("asks")), Instant.now());
     }
 
+    /** USDⓈ-M 永续的标记价格和资金费率（lastFundingRate = 下一次结算要用的费率，小数，如 0.0001 = 0.01%）。 */
+    public record PremiumIndex(String symbol, double markPrice, double lastFundingRate, long nextFundingTime) {
+    }
+
+    /**
+     * 永续合约公开行情 premiumIndex（只读），和现货请求共用同一个 Binance 限速器（429 / Retry-After 处理相同）。
+     * futuresBaseUrl 例如 https://fapi.binance.com。
+     */
+    public PremiumIndex premiumIndex(String futuresBaseUrl, String symbol) {
+        java.net.URI uri = java.net.URI.create(futuresBaseUrl + "/fapi/v1/premiumIndex?symbol=" + symbol);
+        JsonNode n = get(() -> http.get().uri(uri), "premiumIndex " + symbol);
+        double mark = n.path("markPrice").asDouble(Double.NaN);
+        if (!(mark > 0)) throw new MarketDataException("premiumIndex 没有标记价格：" + symbol);
+        return new PremiumIndex(symbol, mark, n.path("lastFundingRate").asDouble(Double.NaN), n.path("nextFundingTime").asLong(0));
+    }
+
     private static SymbolInfo toSymbol(JsonNode s) {
         return new SymbolInfo(s.path("symbol").asText(), s.path("baseAsset").asText(), s.path("quoteAsset").asText(),
                 "TRADING".equals(s.path("status").asText()) && s.path("isSpotTradingAllowed").asBoolean(), "");

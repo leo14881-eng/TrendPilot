@@ -72,6 +72,13 @@ summary() {
     echo "- 总价值 U（按最新价）：$(q "SELECT ROUND(SUM(CASE WHEN state = 'BTC' THEN btc * (SELECT CAST(value AS REAL) FROM btc_trend_meta WHERE key = 'last_price') ELSE usdt END), 2) FROM btc_trend_slot;")"
     echo "- 信号日 / 收盘 / SMA75 / SMA100 / SMA125 / SMA150：$(q "SELECT GROUP_CONCAT(value, ' / ') FROM (SELECT value FROM btc_trend_meta WHERE key IN ('signal_day','signal_close','sma75','sma100','sma125','sma150') ORDER BY CASE key WHEN 'signal_day' THEN 0 WHEN 'signal_close' THEN 1 WHEN 'sma75' THEN 2 WHEN 'sma100' THEN 3 WHEN 'sma125' THEN 4 ELSE 5 END);")"
     echo "- 影子成交笔数：$(num "$(q "SELECT COUNT(*) FROM btc_trend_trade;")")"
+    echo
+    echo "## LP 影子盘（只读影子）"
+    echo
+    lp_since=$(( $(date -u +%s) - 86400 ))
+    echo "- 池子状态：$(q "SELECT GROUP_CONCAT(pool || ' ' || status, '，') FROM (SELECT pool, status FROM lp_pool ORDER BY pool);" | tr -cd 'a-zA-Z0-9_ ，-' | head -c 200)"
+    echo "- 最近 24 小时覆盖率（池子 有效分钟占比% 有效分钟数）：$(q "SELECT GROUP_CONCAT(pool || ' ' || ROUND(100.0 * n / 1440, 1) || '% ' || n, '，') FROM (SELECT pool, SUM(status = 'OK') AS n FROM lp_pool_snapshot WHERE ts >= $lp_since GROUP BY pool ORDER BY pool);" | tr -cd 'a-z0-9_ .%，-' | head -c 200)"
+    echo "- 第一条 / 最新快照（UTC）：$(q "SELECT IFNULL(datetime(MIN(ts), 'unixepoch'), '-') || ' / ' || IFNULL(datetime(MAX(ts), 'unixepoch'), '-') FROM lp_pool_snapshot;" | tr -cd '0-9 :/-' | head -c 60)"
 }
 
 as_user() { sudo -u "$RUN_USER" -H env GIT_SSH_COMMAND="ssh -i $KEY -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$APP_DIR/ssh/known_hosts" "$@"; }

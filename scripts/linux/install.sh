@@ -36,6 +36,17 @@ check_network() {
         esac
     done
     rm -f /tmp/tp-net-check
+    # LP 影子盘用的公开 RPC 和永续行情：只提示，不影响安装（连不上时这个模块只记 gap）
+    for item in \
+        "Base RPC|https://mainnet.base.org" \
+        "Arbitrum RPC|https://arb1.arbitrum.io/rpc"; do
+        local name=${item%%|*} url=${item#*|}
+        code=$(curl -s -m 20 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"eth_gasPrice","params":[]}' "$url" || echo 000)
+        [ "$code" = 200 ] && echo "OK   $name" || echo "WARN $name（HTTP $code）：LP 影子盘这条链会记为 gap，不影响其他功能"
+    done
+    code=$(curl -s -m 20 -o /dev/null -w '%{http_code}' "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=ETHUSDT" || echo 000)
+    [ "$code" = 200 ] && echo "OK   Binance 永续行情" || echo "WARN Binance 永续行情（HTTP $code）：LP 影子盘的对冲策略会记为 gap，不影响其他功能"
     return $fail
 }
 

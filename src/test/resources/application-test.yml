@@ -14,6 +14,8 @@ trendpilot:
     enabled: false
   btc-trend:
     enabled: false
+  lpshadow:
+    enabled: false
 
 logging:
   file:

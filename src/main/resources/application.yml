@@ -305,6 +305,31 @@ trendpilot.v3:
 trendpilot.btc-trend:
   enabled: true
 
+# LP 影子盘（Uniswap V3 做市 + 合约对冲，只读影子，见 docs/规则说明.md "LP 影子盘"）：每分钟读 3 个池子的链上状态，
+# 60 个虚拟仓位 + 3 个基准，独立表 lp_*，不影响其他账本。只用公开 RPC 和 Binance 公开行情，不需要任何密钥。
+# 池子地址不写死：启动时用 Factory.getPool 解析，并核对代币 symbol / decimals，不一致就停用该池并告警。
+trendpilot.lpshadow:
+  enabled: true
+  binance-futures-url: https://fapi.binance.com
+  perp-symbol: ETHUSDT
+  chains:
+    base:
+      rpc-url: https://mainnet.base.org
+      factory: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD"
+      weth: "0x4200000000000000000000000000000000000006"
+      usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+      min-gap-ms: 1000
+    arbitrum:
+      rpc-url: https://arb1.arbitrum.io/rpc
+      factory: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+      weth: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+      usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+      min-gap-ms: 1000
+  pools:
+    - { key: base-030, chain: base, fee: 3000 }
+    - { key: base-005, chain: base, fee: 500 }
+    - { key: arb-005, chain: arbitrum, fee: 500 }
+
 # 秒级启动探测（docs/规则说明.md 16.5）：用已订阅的 15m K 线实时推送记录"5 分钟急涨 + 放量"，只写 launch_event，不买卖、不进任何账本
 trendpilot.launch:
   enabled: true
