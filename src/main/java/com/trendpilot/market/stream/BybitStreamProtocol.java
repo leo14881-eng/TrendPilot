@@ -87,6 +87,7 @@ final class BybitStreamProtocol implements StreamProtocol {
                 Kline kl = new Kline(open, k.path("open").asDouble(), k.path("high").asDouble(), k.path("low").asDouble(),
                         k.path("close").asDouble(), k.path("turnover").asDouble(), open + QUARTER_MS - 1);
                 String sym = topic.substring("kline.15.".length());
+                if (!kl.valid()) continue; // 缺字段或价格不合理：按缺失处理，不写缓存
                 if (k.path("confirm").asBoolean(false)) return new ClosedKline(sym, kl);
                 if (live == null) live = new LiveKline(sym, kl);
             }

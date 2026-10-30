@@ -34,19 +34,19 @@ public class KlineStore {
 
     /** open_time 在 [from, to] 内的 K 线，按时间升序。 */
     public List<Kline> range(Venue venue, String symbol, long from, long to) {
-        return jdbc.sql("""
+        return Kline.validOnly(jdbc.sql("""
                 SELECT open_time, open, high, low, close, quote_volume, close_time FROM kline_15m
                 WHERE venue = :v AND symbol = :s AND open_time BETWEEN :f AND :t ORDER BY open_time
                 """)
                 .param("v", venue.name()).param("s", symbol).param("f", from).param("t", to)
                 .query((rs, i) -> new Kline(rs.getLong(1), rs.getDouble(2), rs.getDouble(3), rs.getDouble(4),
                         rs.getDouble(5), rs.getDouble(6), rs.getLong(7)))
-                .list();
+                .list(), venue + " " + symbol + " 缓存");
     }
 
     @Transactional
     public void upsert(Venue venue, String symbol, List<Kline> closed) {
-        for (Kline k : closed) {
+        for (Kline k : Kline.validOnly(closed, venue + " " + symbol + " 入库")) {
             jdbc.sql("""
                     INSERT OR REPLACE INTO kline_15m(venue, symbol, open_time, open, high, low, close, quote_volume, close_time)
                     VALUES (:v, :s, :ot, :o, :h, :l, :c, :qv, :ct)

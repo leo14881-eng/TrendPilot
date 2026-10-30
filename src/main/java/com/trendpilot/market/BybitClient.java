@@ -120,7 +120,7 @@ public class BybitClient implements MarketDataSource {
                     k.get(6).asDouble(), open + ms - 1));
         }
         out.sort((a, b) -> Long.compare(a.openTime(), b.openTime()));
-        return out;
+        return Kline.validOnly(out, "Bybit " + symbol + " " + interval);
     }
 
     @Override

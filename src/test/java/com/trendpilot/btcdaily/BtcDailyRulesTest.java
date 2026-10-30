@@ -472,7 +472,7 @@ class BtcDailyRulesTest {
         DailyPlan plan = BtcDailyRules.planV3(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000),
                 hourlyFlat(DAY, 72, 60_000, 400), 60_000, new Book(), V3, null);
         Book book = new Book();
-        BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 56_900, 56_000), V3);
+        BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 56_900, 56_900), V3);
         LocalDate next = DAY.plusDays(1);
         DailyPlan p2 = BtcDailyRules.planV3(next, daily(DAY, 60, 60_000, 2_000), hourlyFlat(next, 72, 56_000, 400),
                 56_000, book, V3, null);
@@ -496,7 +496,7 @@ class BtcDailyRulesTest {
         for (String g : List.of("NONE", "TREND", "STOP", "TIME")) {
             BtcDailyProperties p = V3.withGuard(g);
             Book book = new Book();
-            BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 56_900, 56_000), p);
+            BtcDailyRules.onBar(plan, book, bar(DAY, 0, 60_000, 60_000, 56_900, 56_900), p);
             DailyPlan p2 = BtcDailyRules.planV3(next, down, hourlyFlat(next, 72, 52_000, 400), 52_000, book, p, null);
             assertThat(p2.regime()).isEqualTo("DOWN");
             List<Fill> f = BtcDailyRules.onBar(p2, book, bar(next, 0, 52_000, 52_100, 51_000, 51_500), p);
@@ -518,5 +518,26 @@ class BtcDailyRulesTest {
         List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 1, 58_000, 58_000, avg * 0.91, avg * 0.915), stop);
         assertThat(f).extracting(Fill::side).contains(Fill.Side.SELL);
         assertThat(f.stream().filter(x -> x.side() == Fill.Side.SELL).findFirst().orElseThrow().reason()).isEqualTo("止损 8%");
+    }
+
+    @Test
+    void brokenBarIsTreatedAsMissingAndNeverFills() {
+        Book book = new Book();
+        DailyPlan plan = BtcDailyRules.plan(DAY, daily(DAY.minusDays(1), 60, 60_000, 2_000), 60_000, book, P);
+        // 缺字段的 K 线（价格都是 0）：不成交、账本不变
+        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 0, 0, 0, 0, 0), P)).isEmpty();
+        assertThat(book.holding()).isFalse();
+        assertThat(book.cost()).isZero();
+        // 最低价 0、开盘正常：同样不成交
+        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 1, 60_000, 60_000, 0, 59_000), P)).isEmpty();
+        assertThat(book.holding()).isFalse();
+
+        // 持仓中遇到错误的最高价：不卖、不改跟踪状态
+        List<Fill> f = BtcDailyRules.onBar(plan, book, bar(DAY, 2, 60_000, 60_000, 58_700, 58_900), P);
+        assertThat(f).extracting(Fill::side).containsExactly(Fill.Side.BUY);
+        double qty = book.qty();
+        assertThat(BtcDailyRules.onBar(plan, book, bar(DAY, 3, 58_900, Double.NaN, 58_800, 58_900), P)).isEmpty();
+        assertThat(book.qty()).isEqualTo(qty);
+        assertThat(book.trailPeak).isEqualTo(0);
     }
 }

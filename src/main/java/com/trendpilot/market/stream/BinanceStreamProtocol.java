@@ -100,6 +100,7 @@ final class BinanceStreamProtocol implements StreamProtocol {
             Kline kl = new Kline(k.path("t").asLong(), k.path("o").asDouble(),
                     k.path("h").asDouble(), k.path("l").asDouble(), k.path("c").asDouble(), k.path("q").asDouble(),
                     k.path("T").asLong());
+            if (!kl.valid()) return null; // 缺字段或价格不合理：按缺失处理，不写缓存
             return k.path("x").asBoolean(false) ? new ClosedKline(d.path("s").asText(), kl) : new LiveKline(d.path("s").asText(), kl);
         }
         if (stream.endsWith("@bookTicker")) {

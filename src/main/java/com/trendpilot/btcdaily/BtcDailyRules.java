@@ -236,11 +236,14 @@ public final class BtcDailyRules {
         LocalDate day = plan.day();
 
         book.lastRound = null;
+        // 价格不可信的 K 线按缺失处理：不成交、不改跟踪状态（数据缺失只能导致不动作）
+        if (!bar.valid()) return fills;
         if (book.holding()) {
             track(book, bar, p);
             Exit e = exitSignal(plan, book, bar, p);
             // 绝不卖亏（只有回测对比用的止损类卖法例外，实盘的 live() 不会用到它们）
             if (e != null && !lossCompare(plan, p) && !profitable(book, e, slip, p)) e = null;
+            if (e != null && !(e.price() > 0 && Double.isFinite(e.price()))) e = null; // 成交价不可信：不卖
             if (e != null && e.fraction() < 1) {
                 double price = e.price() * (1 - slip);
                 double q = book.qty * e.fraction();
@@ -309,6 +312,7 @@ public final class BtcDailyRules {
                 if (bar.low() > trigger) continue;
                 if (book.cost + l.usdt() > p.capUsdt() + 1e-6) break;
                 double price = Math.min(trigger, bar.open()) * (1 + slip);
+                if (!(price > 0 && Double.isFinite(price))) break; // 成交价不可信：不买
                 double fee = l.usdt() * p.feeRate() / (1 + p.feeRate());
                 double qty = (l.usdt() - fee) / price;
                 if (!book.holding()) {

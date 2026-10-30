@@ -68,4 +68,12 @@ class StreamProtocolTest {
         assertThat(q.bid()).isEqualTo(1.01);
         assertThat(bybit.subscribe(List.of("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"), List.of())).hasSize(2);
     }
+    @Test
+    void streamBarsWithMissingFieldsAreDropped() {
+        assertThat(binance.parse("""
+                {"stream":"btcusdt@kline_15m","data":{"s":"BTCUSDT","k":{"t":1000,"T":900999,"q":"123","x":true}}}""")).isNull();
+        assertThat(bybit.parse("""
+                {"topic":"kline.15.BTCUSDT","data":[{"start":0,"open":"0","high":"0","low":"0","close":"0","turnover":"1","confirm":true}]}""")).isNull();
+    }
+
 }

@@ -66,7 +66,7 @@ public class BinanceClient implements MarketDataSource {
             out.add(new Kline(k.get(0).asLong(), k.get(1).asDouble(), k.get(2).asDouble(), k.get(3).asDouble(),
                     k.get(4).asDouble(), k.get(7).asDouble(), k.get(6).asLong()));
         }
-        return out;
+        return Kline.validOnly(out, "Binance " + symbol + " " + interval);
     }
 
     @Override
