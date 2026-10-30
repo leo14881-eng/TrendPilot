@@ -65,7 +65,7 @@ public class LpShadowJob {
             return new PerpQuotes.Quote(p.markPrice(), p.lastFundingRate());
         });
         this.collector = new LpCollector(props, rpc, perp, store, notifier::send);
-        this.engine = new LpEngine(store);
+        this.engine = new LpEngine(store, props.rebalanceGas());
         this.reports = new LpReports(store, java.time.ZoneId.of(zone), java.nio.file.Path.of(dataDir, "reports"), notifier::send,
                 notifier::sendDocument);
     }

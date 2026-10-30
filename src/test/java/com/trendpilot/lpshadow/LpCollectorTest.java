@@ -92,7 +92,10 @@ class LpCollectorTest {
 
         // 第 1 分钟：Base 解析 2 个 batch + 采集 1 个 + TVL 1 个
         assertThat(base.requests).hasSize(4);
-        assertThat(base.requests.get(2)).hasSize(2 * 4 + 1);
+        assertThat(base.requests.get(2)).hasSize(2 * 4 + 1 + 2);   // 两个池子 × 4 + gasPrice + 两个 L1 费只读调用
+        assertThat(b5.l1FeeWei()).isEqualTo(BigInteger.valueOf(3 * 40_000_000_000L));   // 每笔 4e10 × 3 笔
+        assertThat(b5.l1Source()).isEqualTo("getL1FeeUpperBound");
+        assertThat(store.snapshots("base-005", ts, ts + 60).getFirst().l1FeeWei()).isEqualTo(b5.l1FeeWei());
         // 数据库里 3 行
         assertThat(store.snapshots("base-005", ts, ts + 60)).hasSize(1);
         assertThat(store.okCounts(ts, ts + 60).get("arb-005")[0]).isZero();

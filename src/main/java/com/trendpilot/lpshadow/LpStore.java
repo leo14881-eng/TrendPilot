@@ -56,18 +56,19 @@ public class LpStore {
         if (rows.isEmpty()) return;
         List<Object[]> args = rows.stream().map(s -> new Object[] {s.ts(), s.pool(), str(s.sqrtPriceX96()), s.tick(),
                 str(s.liquidity()), str(s.fg0()), str(s.fg1()), str(s.gasPriceWei()), s.perpMark(), s.fundingRate(), s.status(),
-                s.note()}).toList();
+                s.note(), str(s.l1FeeWei()), s.l1Source()}).toList();
         template.batchUpdate("""
                 INSERT OR IGNORE INTO lp_pool_snapshot(ts, pool, sqrt_price_x96, tick, liquidity, fg0, fg1, gas_price_wei,
-                    perp_mark, funding_rate, status, note)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    perp_mark, funding_rate, status, note, l1_fee_wei, l1_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, args);
     }
 
     /** [fromTs, toTs) 内某池子的快照，按时间升序。 */
     public List<Snapshot> snapshots(String pool, long fromTs, long toTs) {
         return jdbc.sql("""
-                SELECT ts, pool, sqrt_price_x96, tick, liquidity, fg0, fg1, gas_price_wei, perp_mark, funding_rate, status, note
+                SELECT ts, pool, sqrt_price_x96, tick, liquidity, fg0, fg1, gas_price_wei, perp_mark, funding_rate, status, note,
+                    l1_fee_wei, l1_source
                 FROM lp_pool_snapshot WHERE pool = :p AND ts >= :a AND ts < :b ORDER BY ts
                 """).param("p", pool).param("a", fromTs).param("b", toTs)
                 .query((rs, n) -> {
@@ -75,7 +76,7 @@ public class LpStore {
                     return new Snapshot(rs.getLong(1), rs.getString(2), big(rs.getString(3)),
                             tick == null ? null : ((Number) tick).intValue(), big(rs.getString(5)), big(rs.getString(6)),
                             big(rs.getString(7)), big(rs.getString(8)), dbl(rs.getObject(9)), dbl(rs.getObject(10)),
-                            rs.getString(11), rs.getString(12));
+                            rs.getString(11), rs.getString(12), big(rs.getString(13)), rs.getString(14));
                 })
                 .list();
     }

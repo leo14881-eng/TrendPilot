@@ -23,8 +23,12 @@ class LpBookTest {
     static Snapshot snap(long ts, double ethPrice, BigInteger liq, BigInteger fg0, BigInteger fg1) {
         BigInteger s = sqrtX96(ethPrice);
         int tick = LpMath.tickAtRawPrice(Math.pow(LpMath.sqrtRaw(s), 2));
-        return new Snapshot(ts, P.key(), s, tick, liq, fg0, fg1, BigInteger.valueOf(10_000_000), ethPrice, 0.0001, Snapshot.OK, null);
+        return new Snapshot(ts, P.key(), s, tick, liq, fg0, fg1, BigInteger.valueOf(10_000_000), ethPrice, 0.0001, Snapshot.OK, null,
+                L1_WEI, "test");
     }
+
+    /** 一次调仓的 L1 数据费（测试用 2e12 wei）。 */
+    static final BigInteger L1_WEI = BigInteger.valueOf(2_000_000_000_000L);
 
     @Test
     void feeShareMatchesHandCalculation() {
@@ -114,7 +118,35 @@ class LpBookTest {
     }
 
     static Snapshot withPerp(Snapshot s, Double mark, Double rate, BigInteger gas) {
-        return new Snapshot(s.ts(), s.pool(), s.sqrtPriceX96(), s.tick(), s.liquidity(), s.fg0(), s.fg1(), gas, mark, rate, s.status(), null);
+        return new Snapshot(s.ts(), s.pool(), s.sqrtPriceX96(), s.tick(), s.liquidity(), s.fg0(), s.fg1(), gas, mark, rate, s.status(), null,
+                s.l1FeeWei(), s.l1Source());
+    }
+
+    @Test
+    void missingL1FeeForOverAnHourMeansNoRebalance() {
+        FakeLedger ledger = new FakeLedger();
+        LpBook book = new LpBook(P, Strategy.forPool(P.key()), Map.of(), null, ledger);
+        BigInteger liq = BigInteger.TEN.pow(24);
+        long t0 = 1_800_000_000L - 1_800_000_000L % 60;
+        book.onSnapshot(snap(t0, 3000, liq, BigInteger.ZERO, BigInteger.ZERO));                         // 有 L1 费
+        long t = t0 + 60;
+        for (; t <= t0 + 3600; t += 60) book.onSnapshot(snap(t, 3000, liq, BigInteger.ZERO, BigInteger.ZERO).withL1(null, null));
+        // 第 61 分钟价格出区间：最近的 L1 费是 61 分钟前 → 不调仓，记一次 COST_GAP
+        book.onSnapshot(snap(t, 3100, liq, BigInteger.ZERO, BigInteger.ZERO).withL1(null, null));
+        book.onSnapshot(snap(t + 60, 3100, liq, BigInteger.ZERO, BigInteger.ZERO).withL1(null, null));
+        PositionState c0 = book.states.get("w0-w02-U-c0");
+        assertThat(c0.rebalances).isZero();
+        assertThat(ledger.events.stream().filter(e -> e.equals("COST_GAP w0")).count()).isEqualTo(1);
+        // L1 费恢复：立即调仓
+        book.onSnapshot(snap(t + 120, 3100, liq, BigInteger.ZERO, BigInteger.ZERO));
+        assertThat(c0.rebalances).isEqualTo(1);
+        // 1 小时内的缺失：沿用最近值
+        LpBook b2 = new LpBook(P, Strategy.forPool(P.key()), Map.of(), null, new FakeLedger());
+        b2.onSnapshot(snap(t0, 3000, liq, BigInteger.ZERO, BigInteger.ZERO));
+        b2.onSnapshot(snap(t0 + 60, 3100, liq, BigInteger.ZERO, BigInteger.ZERO).withL1(null, null));
+        assertThat(b2.states.get("w0-w02-U-c0").rebalances).isEqualTo(1);
+        assertThat(b2.chainCostWei(t0 + 3600)).containsExactly(1e7 * 6e5, 2e12);
+        assertThat(b2.chainCostWei(t0 + 3661)).isNull();
     }
 
     @Test
@@ -133,18 +165,19 @@ class LpBookTest {
         PositionState c0 = book.states.get("w0-w02-U-c0");
         PositionState c30 = book.states.get("w0-w02-U-c30");
         assertThat(c0.rebalances).isEqualTo(1);
-        assertThat(c0.gasCost).isCloseTo(1e7 * 4e5 / 1e18 * 3100, within(1e-9));   // 0.01 gwei × 40 万 gas
+        // 链上成本 = L2 执行费（0.01 gwei × 60 万 gas）+ L1 数据费（2e12 wei），按 ETH 价格换成 USDC
+        assertThat(c0.gasCost).isCloseTo((1e7 * 6e5 + 2e12) / 1e18 * 3100, within(1e-9));
+        assertThat(c0.l1Cost).isCloseTo(2e12 / 1e18 * 3100, within(1e-12));
         assertThat(LpMath.inRange(book.prev.tick(), c0.tickLower, c0.tickUpper)).isTrue();
         assertThat(c30.rebalances).isZero();
         assertThat(c30.outSince).isEqualTo(t0 + 180);
-        // gas 缺失的分钟不调仓
+        // 冷却 30 分钟满了的那一分钟 gasPrice 缺失：沿用 1 小时内最近一次的值照常调仓
         long t = t0 + 240;
         for (; t < t0 + 180 + 30 * 60; t += 60) book.onSnapshot(snap(t, 3100, liq, BigInteger.ZERO, BigInteger.ZERO));
         assertThat(c30.rebalances).isZero();
         book.onSnapshot(withPerp(snap(t, 3100, liq, BigInteger.ZERO, BigInteger.ZERO), 3100.0, 0.0001, null));
-        assertThat(c30.rebalances).isZero();
-        book.onSnapshot(snap(t + 60, 3100, liq, BigInteger.ZERO, BigInteger.ZERO));
         assertThat(c30.rebalances).isEqualTo(1);
+        assertThat(c30.gasCost).isCloseTo((1e7 * 6e5 + 2e12) / 1e18 * 3100, within(1e-9));
         // 宽区间没出界，不动
         assertThat(book.states.get("w0-w10-U-c0").rebalances).isZero();
         // 调仓成本 = 一半仓位价值 ×（0.05% + 0.02%）

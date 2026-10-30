@@ -21,7 +21,8 @@ MIN_TICK, MAX_TICK = -887272, 887272
 CAPITAL = 10_000.0
 WIDTHS = [0.02, 0.05, 0.10, 0.20, 0.50]
 COOLDOWNS = [0, 30]
-GAS = 400_000
+GAS = 600_000
+COST_MAX_AGE = 3600
 SLIP = 0.0002
 BAND = 0.02
 TAKER = 0.0005
@@ -158,11 +159,15 @@ def generate():
                 mark, rate = None, None  # 永续报价缺失
             if key == "rw0" and i == 400:
                 gas = None
+            l1 = 1_500_000_000_000 if p[2] else 9_000_000_000_000  # 一次调仓的 L1 数据费（wei）
+            if key == "rw0" and 400 <= i < 540:
+                l1 = None  # L1 费缺 140 分钟：前 60 分钟沿用最近值，之后不调仓
             if status == "GAP":
-                rows.append([ts, key, "", "", "", "", "", "", mark if mark else "", rate if rate is not None else "", "GAP"])
+                rows.append([ts, key, "", "", "", "", "", "", mark if mark else "", rate if rate is not None else "", "GAP", ""])
             else:
                 rows.append([ts, key, str(sqrt_x96), tick, str(liq), str(fg0), str(fg1), "" if gas is None else str(gas),
-                             "" if mark is None else repr(mark), "" if rate is None else repr(rate), "OK"])
+                             "" if mark is None else repr(mark), "" if rate is None else repr(rate), "OK",
+                             "" if l1 is None else str(l1)])
     return rows
 
 
@@ -193,7 +198,8 @@ def parse(r):
                 sqrt=int(r[2]) / Q96 if ok else None, tick=int(r[3]) if ok else None,
                 liq=int(r[4]) if ok else None, fg0=int(r[5]) if ok else None, fg1=int(r[6]) if ok else None,
                 gas=int(r[7]) if ok and r[7] != "" else None,
-                mark=float(r[8]) if r[8] != "" else None, rate=float(r[9]) if r[9] != "" else None)
+                mark=float(r[8]) if r[8] != "" else None, rate=float(r[9]) if r[9] != "" else None,
+                l1=int(r[11]) if ok and r[11] != "" else None)
 
 
 def perp_ok(s):
@@ -222,6 +228,7 @@ def run_pool(key, snaps):
     prev = None
     last_rate = last_mark = None
     last_rate_ts = 0
+    cost = dict(gas=None, gas_ts=0, l1=None, l1_ts=0)
 
     def started():
         return any(x.started for x in st.values())
@@ -313,6 +320,11 @@ def run_pool(key, snaps):
                 x.funding += amt
         if perp_ok(cur):
             last_rate, last_rate_ts, last_mark = cur["rate"], cur["ts"], cur["mark"]
+        if cur["ok"]:
+            if cur["gas"] is not None:
+                cost["gas"], cost["gas_ts"] = cur["gas"], cur["ts"]
+            if cur["l1"] is not None:
+                cost["l1"], cost["l1_ts"] = cur["l1"], cur["ts"]
         if not cur["ok"]:
             prev = cur
             continue
@@ -360,10 +372,12 @@ def run_pool(key, snaps):
                     else:
                         if x.out_since == 0:
                             x.out_since = cur["ts"]
-                        if cur["ts"] - x.out_since >= s[4] * 60 and cur["gas"] is not None:
+                        have = (cost["gas"] is not None and cur["ts"] - cost["gas_ts"] <= COST_MAX_AGE
+                                and cost["l1"] is not None and cur["ts"] - cost["l1_ts"] <= COST_MAX_AGE)
+                        if cur["ts"] - x.out_since >= s[4] * 60 and have:
                             price = eth_price(p, sqrt * sqrt)
                             lp = value(p, x.L, x.lo, x.hi, sqrt)
-                            gas = float(cur["gas"]) * GAS / 1e18 * price
+                            gas = (float(cost["gas"]) * GAS + float(cost["l1"])) / 1e18 * price
                             swap = lp / 2 * (p[3] / 1_000_000.0 + SLIP)
                             cap = lp - gas - swap
                             if cap > 0:
@@ -385,7 +399,7 @@ def main():
     with open(os.path.join(HERE, "replay_snapshots.csv"), "w", newline="\n") as f:
         w = csv.writer(f, lineterminator="\n")
         w.writerow(["ts", "pool", "sqrt_price_x96", "tick", "liquidity", "fg0", "fg1", "gas_price_wei", "perp_mark",
-                    "funding_rate", "status"])
+                    "funding_rate", "status", "l1_fee_wei"])
         w.writerows(rows)
     with open(os.path.join(HERE, "replay_snapshots.csv")) as f:
         parsed = [r for r in csv.reader(f)][1:]

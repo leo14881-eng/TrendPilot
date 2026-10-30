@@ -17,7 +17,9 @@ import java.util.Map;
  * 只有一端在区间内按一半计；都不在不计。按结束时的价格换算成 USDC 单独累计，不复投。
  *
  * <p><b>调仓</b>：价格出区间（冷却 N 分钟后仍在区间外）时以当前价格为中心重开同宽度区间；
- * 成本 = 实时 gasPrice × 400,000 gas × ETH 价格 + 一半仓位价值 × (池子费率 + 0.02% 滑点)，从做市资金里扣。gasPrice 缺失时这一分钟不调仓。
+ * 成本 = L2 执行费（实时 gasPrice × 60 万 gas）+ L1 数据费（链上只读估算，见 {@link L1Fees}），按 ETH 价格换成 USDC，
+ * 再加一半仓位价值 × (池子费率 + 0.02% 滑点)，从做市资金里扣。gasPrice / L1 费这一分钟缺失时用最近一次有效值；
+ * 超过 1 小时没有有效值，这一分钟不调仓（记一次 COST_GAP）。
  *
  * <p><b>对冲</b>：ETHUSDT 永续空单，目标数量 = 仓位里的 ETH 数量；偏离超过仓位价值 2% 才调整，taker 0.05%；
  * 保证金按 3 倍杠杆从本金里划出（不参与做市）；每 8 小时（UTC 00/08/16）按结算前最后看到的资金费率结算（费率为正时空单收钱）；
@@ -25,7 +27,8 @@ import java.util.Map;
  */
 final class LpBook {
 
-    static final double REBALANCE_GAS = 400_000;
+    static final long DEFAULT_REBALANCE_GAS = 600_000;   // decreaseLiquidity + collect + swap + mint
+    static final long COST_MAX_AGE = 3600;
     static final double SLIPPAGE = 0.0002;
     static final double HEDGE_BAND = 0.02;
     static final double TAKER = 0.0005;
@@ -47,7 +50,14 @@ final class LpBook {
     final List<Strategy> strategies;
     final Map<String, PositionState> states = new LinkedHashMap<>();
     private final Ledger ledger;
+    private final double rebalanceGas;
     Snapshot prev;
+    /** 最近一次有效的 gasPrice / L1 费（缺失时最多沿用 1 小时）。 */
+    BigInteger lastGasWei;
+    long lastGasTs;
+    BigInteger lastL1Wei;
+    long lastL1Ts;
+    boolean costGap;
     long gapStart;
     /** 最近一次看到的永续报价（任何快照，包括池子数据缺失的 GAP 行），用于资金费结算。 */
     Double lastRate;
@@ -55,11 +65,20 @@ final class LpBook {
     Double lastMark;
 
     LpBook(PoolInfo pool, List<Strategy> strategies, Map<String, PositionState> restored, Snapshot prev, Ledger ledger) {
+        this(pool, strategies, restored, prev, ledger, DEFAULT_REBALANCE_GAS);
+    }
+
+    LpBook(PoolInfo pool, List<Strategy> strategies, Map<String, PositionState> restored, Snapshot prev, Ledger ledger,
+           long rebalanceGas) {
         this.pool = pool;
         this.strategies = strategies;
         this.ledger = ledger;
+        this.rebalanceGas = rebalanceGas;
         this.prev = prev;
-        if (prev != null) notePerp(prev);
+        if (prev != null) {
+            notePerp(prev);
+            noteCosts(prev);
+        }
         for (Strategy s : strategies) {
             PositionState st = restored.get(s.name());
             if (st == null) {
@@ -80,6 +99,7 @@ final class LpBook {
         if (prev != null && cur.ts() <= prev.ts()) return;
         if (started()) settleFunding(cur);
         notePerp(cur);
+        noteCosts(cur);
         boolean missingMinutes = prev != null && cur.ts() - prev.ts() > 60;
         if (!cur.ok()) {
             if (gapStart == 0) gapStart = missingMinutes ? prev.ts() + 60 : cur.ts();
@@ -102,6 +122,24 @@ final class LpBook {
             }
         }
         prev = cur;
+    }
+
+    private void noteCosts(Snapshot s) {
+        if (!s.ok()) return;
+        if (s.gasPriceWei() != null) {
+            lastGasWei = s.gasPriceWei();
+            lastGasTs = s.ts();
+        }
+        if (s.l1FeeWei() != null) {
+            lastL1Wei = s.l1FeeWei();
+            lastL1Ts = s.ts();
+        }
+    }
+
+    /** 一次调仓的 [L2 执行费, L1 数据费]（wei）；1 小时内都没有有效值返回 null。 */
+    double[] chainCostWei(long ts) {
+        if (lastGasWei == null || ts - lastGasTs > COST_MAX_AGE || lastL1Wei == null || ts - lastL1Ts > COST_MAX_AGE) return null;
+        return new double[] {lastGasWei.doubleValue() * rebalanceGas, lastL1Wei.doubleValue()};
     }
 
     private void notePerp(Snapshot s) {
@@ -182,10 +220,17 @@ final class LpBook {
         }
         if (st.outSince == 0) st.outSince = cur.ts();
         if (cur.ts() - st.outSince < s.cooldownMinutes() * 60L) return;
-        if (cur.gasPriceWei() == null) return;   // 缺 gas 价格：这一分钟不调仓
+        double[] chain = chainCostWei(cur.ts());
+        if (chain == null) {   // 1 小时内没有有效的 gas / L1 费：这一分钟不调仓
+            if (!costGap) ledger.event(cur.ts(), pool.key(), "COST_GAP", Map.of("gasTs", lastGasTs, "l1Ts", lastL1Ts));
+            costGap = true;
+            return;
+        }
+        costGap = false;
         double price = LpMath.ethPriceAtSqrt(pool, sqrt);
         double lp = LpMath.value(pool, st.liquidity, st.tickLower, st.tickUpper, sqrt);
-        double gas = cur.gasPriceWei().doubleValue() * REBALANCE_GAS / 1e18 * price;
+        double l1 = chain[1] / 1e18 * price;
+        double gas = chain[0] / 1e18 * price + l1;
         double swap = lp / 2 * (pool.feeRate() + SLIPPAGE);
         double capital = lp - gas - swap;
         if (!(capital > 0)) return;
@@ -194,6 +239,7 @@ final class LpBook {
         ledger.closePosition(st.positionId, cur.ts());
         openRange(s, st, cur, sqrt, capital);
         st.gasCost += gas;
+        st.l1Cost += l1;
         st.swapCost += swap;
         st.rebalances++;
         Map<String, Object> d = new LinkedHashMap<>();
@@ -202,6 +248,7 @@ final class LpBook {
         d.put("to", List.of(st.tickLower, st.tickUpper));
         d.put("value", lp);
         d.put("gas", gas);
+        d.put("l1", l1);
         d.put("swap", swap);
         ledger.event(cur.ts(), s.name(), "REBALANCE", d);
     }

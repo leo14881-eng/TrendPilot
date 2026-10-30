@@ -26,7 +26,8 @@ public class PositionState {
     // ----- 累计 -----
     public double fees;
     public double ilRealized;
-    public double gasCost;
+    public double gasCost;         // 链上成本合计：L2 执行费 + L1 数据费
+    public double l1Cost;          // 其中 L1 数据费
     public double swapCost;
     public int rebalances;
 

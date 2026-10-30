@@ -86,7 +86,7 @@ final class FakeChain implements RpcClient.Transport {
     static final String POOL_030 = "0x6c561B446416E1A00E8E93E221854d6eA4171372";
 
     static LpShadowProperties.Chain baseChain() {
-        return new LpShadowProperties.Chain("http://fake", FACTORY, WETH, USDC, null, 0, null, 0, 0);
+        return new LpShadowProperties.Chain("http://fake", FACTORY, WETH, USDC, null, 0, null, 0, 0, "op-stack");
     }
 
     /** 设定代币信息和两个池子（WETH 是 token0），池子状态由各测试自己设。 */
@@ -98,6 +98,8 @@ final class FakeChain implements RpcClient.Transport {
         c.on(USDC, Abi.DECIMALS, uint(6));
         c.pool(POOL_005, 500, 10, WETH, USDC);
         c.pool(POOL_030, 3000, 60, WETH, USDC);
+        // GasPriceOracle.getL1FeeUpperBound(1000) = 4e10 wei / 笔
+        c.on(L1Fees.OP_GAS_PRICE_ORACLE, L1Fees.GET_L1_FEE_UPPER_BOUND + Abi.word(BigInteger.valueOf(1000)), uint(40_000_000_000L));
         return c;
     }
 

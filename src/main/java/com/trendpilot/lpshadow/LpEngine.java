@@ -23,11 +23,17 @@ final class LpEngine {
     static final ObjectMapper JSON = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     private final LpStore store;
+    private final long rebalanceGas;
     private final Map<String, LpBook> books = new LinkedHashMap<>();
     private final Map<String, Integer> errors = new HashMap<>();
 
     LpEngine(LpStore store) {
+        this(store, LpBook.DEFAULT_REBALANCE_GAS);
+    }
+
+    LpEngine(LpStore store, long rebalanceGas) {
         this.store = store;
+        this.rebalanceGas = rebalanceGas;
     }
 
     Map<String, LpBook> books() {
@@ -61,7 +67,7 @@ final class LpEngine {
             }
         });
         Snapshot prev = store.lastSnapshotBefore(info.key(), ts).orElse(null);
-        return new LpBook(info, Strategy.forPool(info.key()), restored, prev, ledger());
+        return new LpBook(info, Strategy.forPool(info.key()), restored, prev, ledger(), rebalanceGas);
     }
 
     private void save(LpBook book, long ts) {

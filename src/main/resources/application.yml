@@ -312,6 +312,11 @@ trendpilot.lpshadow:
   enabled: true
   binance-futures-url: https://fapi.binance.com
   perp-symbol: ETHUSDT
+  # 调仓成本按实际成本（用户 2026-10-30 批准）：L2 执行费 = gasPrice × rebalance-gas；
+  # L1 数据费 = 链上只读估算（每笔 l1-tx-bytes 字节 × l1-tx-count 笔）。eth_gasPrice 只含 L2 执行费
+  rebalance-gas: 600000   # decreaseLiquidity + collect + swap + mint
+  l1-tx-bytes: 1000
+  l1-tx-count: 3
   chains:
     base:
       rpc-url: https://mainnet.base.org
@@ -319,12 +324,14 @@ trendpilot.lpshadow:
       weth: "0x4200000000000000000000000000000000000006"
       usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
       min-gap-ms: 1000
+      l1-fee: op-stack     # GasPriceOracle 0x42…0F（只读）
     arbitrum:
       rpc-url: https://arb1.arbitrum.io/rpc
       factory: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
       weth: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
       usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
       min-gap-ms: 1000
+      l1-fee: arbitrum     # ArbGasInfo 0x…6C（只读）
   pools:
     - { key: base-030, chain: base, fee: 3000 }
     - { key: base-005, chain: base, fee: 500 }

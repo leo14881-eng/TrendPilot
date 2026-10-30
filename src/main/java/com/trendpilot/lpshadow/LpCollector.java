@@ -81,6 +81,10 @@ final class LpCollector {
                 calls.add(Call.ethCall(i.address(), Abi.FEE_GROWTH_GLOBAL1));
             }
             calls.add(Call.gasPrice());
+            LpShadowProperties.Chain chainCfg = props.chains().get(chain);
+            String l1Kind = chainCfg == null ? null : chainCfg.l1Fee();
+            List<Call> l1Calls = L1Fees.calls(l1Kind, props.l1TxBytes());
+            calls.addAll(l1Calls);
             List<Result> rs;
             try {
                 rs = rpc.get(chain).batch(calls);
@@ -90,10 +94,13 @@ final class LpCollector {
                 for (PoolInfo i : infos) rows.add(Snapshot.gap(ts, i.key(), mark, funding, "RPC：" + RpcClient.abbreviate(String.valueOf(ex.getMessage()))));
                 continue;
             }
-            Result gasR = rs.get(rs.size() - 1);
+            int gasIdx = infos.size() * 4;
+            Result gasR = rs.get(gasIdx);
             BigInteger gas = gasR.ok() ? Abi.quantity(gasR.value()) : null;
+            L1Fees.Estimate l1 = L1Fees.parse(l1Kind, rs.subList(gasIdx + 1, rs.size()), props.l1TxBytes(), props.l1TxCount());
             for (int k = 0; k < infos.size(); k++) {
-                rows.add(parse(ts, infos.get(k), rs.subList(k * 4, k * 4 + 4), gas, mark, funding));
+                Snapshot snap = parse(ts, infos.get(k), rs.subList(k * 4, k * 4 + 4), gas, mark, funding);
+                rows.add(l1 == null ? snap : snap.withL1(l1.totalWei(), l1.source()));
             }
         }
         store.insertSnapshots(rows);

@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * 回放测试：用一段录好的快照（src/test/resources/lpshadow/replay_snapshots.csv，两个池子各 11 小时，
- * 含 gap、缺分钟、永续报价缺失、gas 缺失、feeGrowth 跨 2^256 回绕、两次资金费结算、先涨 12% 再回落）跑 {@link LpBook}，
+ * 含 gap、缺分钟、永续报价缺失、gas 缺失、L1 费缺 140 分钟、feeGrowth 跨 2^256 回绕、两次资金费结算、先涨 12% 再回落）跑 {@link LpBook}，
  * 每个策略的结果必须和独立的参考实现 replay_reference.py 预先算好的数值（replay_expected.csv）一致。
  */
 class LpReplayTest {
@@ -43,7 +43,8 @@ class LpReplayTest {
         Double rate = c[9].isEmpty() ? null : Double.parseDouble(c[9]);
         if (!ok) return Snapshot.gap(Long.parseLong(c[0]), c[1], mark, rate, "replay gap");
         return new Snapshot(Long.parseLong(c[0]), c[1], new BigInteger(c[2]), Integer.parseInt(c[3]), new BigInteger(c[4]),
-                new BigInteger(c[5]), new BigInteger(c[6]), c[7].isEmpty() ? null : new BigInteger(c[7]), mark, rate, Snapshot.OK, null);
+                new BigInteger(c[5]), new BigInteger(c[6]), c[7].isEmpty() ? null : new BigInteger(c[7]), mark, rate, Snapshot.OK, null,
+                c[11].isEmpty() ? null : new BigInteger(c[11]), c[11].isEmpty() ? null : "replay");
     }
 
     static void close(String what, double actual, double expected) {
@@ -96,5 +97,8 @@ class LpReplayTest {
         assertThat(ev.stream().filter(x -> x.equals("FUNDING rw0-w05-H-c0")).count()).isEqualTo(2);
         assertThat(ev.stream().filter(x -> x.equals("GAP rw0")).count()).isEqualTo(2);
         assertThat(ev.stream().filter(x -> x.startsWith("REBALANCE rw0-w02-U-c0")).count()).isEqualTo(10);
+        // L1 费缺了 140 分钟：前 1 小时沿用最近值，之后出区间也不调仓（记 COST_GAP）
+        assertThat(ev).contains("COST_GAP rw0");
+        assertThat(ledgers.get("ru0").events).doesNotContain("COST_GAP ru0");
     }
 }
