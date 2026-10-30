@@ -155,6 +155,22 @@ public class LpStore {
                 """, args);
     }
 
+    /** 某天（越南日期）最后一分钟的状态；同一天已有就不覆盖。 */
+    public void saveDayClose(String date, List<String[]> strategyPoolJson) {
+        if (strategyPoolJson.isEmpty()) return;
+        List<Object[]> args = strategyPoolJson.stream().map(r -> new Object[] {date, r[0], r[1], r[2]}).toList();
+        template.batchUpdate("INSERT OR IGNORE INTO lp_day_close(date, strategy, pool, state_json) VALUES (?, ?, ?, ?)", args);
+    }
+
+    /** strategy → 某天最后一分钟的 state_json。 */
+    public Map<String, String> dayClose(String date) {
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        jdbc.sql("SELECT strategy, state_json FROM lp_day_close WHERE date = :d").param("d", date).query(rs -> {
+            out.put(rs.getString(1), rs.getString(2));
+        });
+        return out;
+    }
+
     /** strategy → state_json。 */
     public Map<String, String> states(String pool) {
         Map<String, String> out = new java.util.LinkedHashMap<>();

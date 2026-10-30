@@ -80,17 +80,32 @@ final class LpReports {
         }
     }
 
+    private static PositionState closeState(String json) {
+        if (json == null) return null;
+        try {
+            return LpEngine.JSON.readValue(json, PositionState.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return null;
+        }
+    }
+
     void daily(LocalDate day, Map<String, LpBook> books, Instant now) {
         long from = day.atStartOfDay(zone).toEpochSecond();
         long to = day.plusDays(1).atStartOfDay(zone).toEpochSecond();
         Map<String, long[]> ok = store.okCounts(from, to);
         Map<String, double[]> m = store.mAvg(from, to);
         Map<String, Long> events = store.eventCounts(from, to);
+        // 只用这一天之内的分钟：优先用"这一天最后一分钟"的存档；没有存档时内存状态还停在这一天才能用
+        Map<String, String> closes = store.dayClose(day.toString());
         List<Row> rows = new ArrayList<>();
         for (LpBook b : books.values()) {
             for (Strategy s : b.strategies) {
-                PositionState st = b.states.get(s.name());
-                if (!st.started || st.startTs >= to) continue;
+                PositionState st = closeState(closes.get(s.name()));
+                if (st == null) {
+                    PositionState cur = b.states.get(s.name());
+                    st = cur != null && cur.lastTs < to ? cur : null;
+                }
+                if (st == null || !st.started || st.startTs >= to) continue;
                 long expected = Math.max(1, (to - Math.max(from, st.startTs)) / 60);
                 long[] c = ok.getOrDefault(s.pool(), new long[2]);
                 double cov = Math.min(1.0, (s.hedged() ? c[1] : c[0]) / (double) expected);

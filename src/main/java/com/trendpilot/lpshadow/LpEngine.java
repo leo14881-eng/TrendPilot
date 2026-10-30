@@ -70,8 +70,26 @@ final class LpEngine {
     }
 
     private void apply(LpBook book, Snapshot s) {
+        saveDayCloseIfNewDay(book, s.ts());
         book.onSnapshot(s);
         save(book, s.ts());
+    }
+
+    /** 新一天（越南日期）的第一条快照之前：把各策略停在前一天最后一分钟的状态存下来，日报只用它。 */
+    private void saveDayCloseIfNewDay(LpBook book, long ts) {
+        java.time.LocalDate today = java.time.Instant.ofEpochSecond(ts).atZone(zone).toLocalDate();
+        Map<String, List<String[]>> byDay = new LinkedHashMap<>();
+        for (PositionState st : book.snapshotStates()) {
+            if (!st.started || st.lastTs <= 0) continue;
+            java.time.LocalDate d = java.time.Instant.ofEpochSecond(st.lastTs).atZone(zone).toLocalDate();
+            if (!d.isBefore(today)) continue;
+            try {
+                byDay.computeIfAbsent(d.toString(), k -> new ArrayList<>()).add(new String[] {st.strategy, st.pool, JSON.writeValueAsString(st)});
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        byDay.forEach(store::saveDayClose);
     }
 
     private LpBook load(PoolInfo info, long ts) {

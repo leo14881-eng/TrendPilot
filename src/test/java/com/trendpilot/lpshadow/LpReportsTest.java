@@ -110,6 +110,27 @@ class LpReportsTest {
     }
 
     @Test
+    void dailyReportAfterRestartAcrossMidnightUsesOnlyThatDaysMinutes() {
+        LocalDate day = LocalDate.of(2026, 11, 3);
+        LpEngine before = runLastMinutes(day);
+        double closing = before.books().values().iterator().next().states.get("w0-w05-U-c0").lastValue;
+        // 停机跨过零点：重启后的新引擎先处理了 11-04 的两分钟（价格大变），日报才第一次有机会运行
+        LpEngine after = new LpEngine(store);
+        PoolInfo p = LpMathTest.W0;
+        long midnight = day.plusDays(1).atStartOfDay(VN).toEpochSecond();
+        BigInteger liq = BigInteger.TEN.pow(24);
+        for (int i = 1; i <= 2; i++) {
+            Snapshot s = LpBookTest.snap(midnight + 60L * i, 3600, liq, BigInteger.ZERO, BigInteger.TEN.pow(30).multiply(BigInteger.valueOf(i)));
+            store.insertSnapshots(List.of(s));
+            after.onSnapshots(Map.of(p.key(), p), List.of(s));
+        }
+        assertThat(after.books().values().iterator().next().states.get("w0-w05-U-c0").lastValue).isNotEqualTo(closing);
+        lp.maybeRun(Instant.ofEpochSecond(midnight + 127), after.books());
+        assertThat(jdbc.sql("SELECT value FROM lp_daily WHERE date = '2026-11-03' AND strategy = 'w0-w05-U-c0'")
+                .query(Double.class).single()).isEqualTo(closing);
+    }
+
+    @Test
     void weeklyReportOnMondayWithBootstrapAndCriteria() throws Exception {
         LocalDate sunday = LocalDate.of(2026, 11, 8);
         for (int i = 0; i < 5; i++) {
