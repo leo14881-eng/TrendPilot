@@ -42,13 +42,16 @@ public class LpShadowJob {
     private final LpShadowProperties props;
     private final LpCollector collector;
     private final LpEngine engine;
+    private final LpReports reports;
     private final ObjectProvider<ActiveLease> lease;
     private final boolean schedulingEnabled;
     private ScheduledExecutorService executor;
 
     public LpShadowJob(LpShadowProperties props, LpStore store, Notifier notifier, RestClient.Builder builder,
                        ObjectProvider<BinanceClient> binance, ObjectProvider<ActiveLease> lease,
-                       @Value("${trendpilot.scheduling.enabled:true}") boolean schedulingEnabled) {
+                       @Value("${trendpilot.scheduling.enabled:true}") boolean schedulingEnabled,
+                       @Value("${trendpilot.zone:Asia/Ho_Chi_Minh}") String zone,
+                       @Value("${trendpilot.data-dir:./data}") String dataDir) {
         this.props = props;
         this.lease = lease;
         this.schedulingEnabled = schedulingEnabled;
@@ -63,6 +66,8 @@ public class LpShadowJob {
         });
         this.collector = new LpCollector(props, rpc, perp, store, notifier::send);
         this.engine = new LpEngine(store);
+        this.reports = new LpReports(store, java.time.ZoneId.of(zone), java.nio.file.Path.of(dataDir, "reports"), notifier::send,
+                notifier::sendDocument);
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -105,6 +110,12 @@ public class LpShadowJob {
     /** 一分钟的工作；所有异常都在这里吞掉（只记 warn）。 */
     public List<Snapshot> run(Instant now) {
         long ts = now.truncatedTo(ChronoUnit.MINUTES).getEpochSecond();
+        // 先出昨天的日报（这时状态正好是昨天最后一分钟），再处理新的一分钟
+        try {
+            reports.maybeRun(now, engine.books());
+        } catch (RuntimeException e) {
+            log.warn("LP 影子盘：报告生成出错，下一分钟再试：{}", e.toString());
+        }
         List<Snapshot> rows;
         try {
             rows = collector.collect(ts, now);
