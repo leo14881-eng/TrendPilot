@@ -101,9 +101,14 @@ public class TelegramCommands {
 
     /** /rollback 或文字"回滚"：撤销最近一次自动转正，恢复上一个参数集。 */
     String rollbackText(Instant now) {
+        return rollbackText(now, null);
+    }
+
+    /** @param updateId 触发的 Telegram 消息编号：同一条消息只回滚一次（重复处理时回复同样的结果） */
+    String rollbackText(Instant now, Long updateId) {
         var ps = paramSets == null ? null : paramSets.getIfAvailable();
         if (ps == null) return "参数集暂时取不到，请稍后再试。";
-        return ps.rollback(now).map(s -> "↩️ 已回滚：撤销 " + s.variant() + " 的自动转正，V2 恢复为"
+        return ps.rollback(now, updateId).map(s -> "↩️ 已回滚：撤销 " + s.variant() + " 的自动转正，V2 恢复为"
                         + (s.from().isBlank() ? "基准参数（application.yml）" : "上一个参数集（" + com.trendpilot.variant.VariantOverrides.parseInline(s.from()).describe() + "）")
                         + "。下一次 Discovery 起生效，已有持仓照常管理。")
                 .orElse("现在没有自动转正过的参数集可以回滚（V2 用的是基准参数）。如果要回滚某次代码发布，请在对话里说明。");
@@ -263,7 +268,7 @@ public class TelegramCommands {
             case "/holdings", "/v2", "v2" -> notifier.send("cmd:" + id, report.telegramText(now));
             case "/status" -> notifier.send("cmd:" + id, status.text(now));
             case "/trend" -> notifier.send("cmd:" + id, trendText());
-            case "/rollback", "回滚" -> notifier.send("cmd:" + id, rollbackText(now));
+            case "/rollback", "回滚" -> notifier.send("cmd:" + id, rollbackText(now, id));
             case "/help", "/start" -> notifier.send("cmd:" + id, HELP);
             default -> {
                 if (cmd.startsWith("/")) notifier.send("cmd:" + id, "不认识的指令。" + HELP);

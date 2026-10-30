@@ -60,7 +60,7 @@ class TelegramCommandsTest {
         when(provider.getIfAvailable()).thenReturn(ps);
         c.setParamSets(provider);
         Instant now = Instant.parse("2026-11-23T01:00:00Z");
-        when(ps.rollback(any(Instant.class)))
+        when(ps.rollback(any(Instant.class), org.mockito.ArgumentMatchers.anyLong()))
                 .thenReturn(java.util.Optional.of(new com.trendpilot.variant.ParamSets.Switch(1, "PROMOTE", "V6", "", "max-volume-accel=4", now, false)))
                 .thenReturn(java.util.Optional.empty());
         c.handle("""
@@ -70,6 +70,8 @@ class TelegramCommandsTest {
                 ]}""", now);
         verify(notifier).send(eq("cmd:20"), contains("已回滚：撤销 V6"));
         verify(notifier).send(eq("cmd:21"), contains("没有自动转正过的参数集"));
+        verify(ps).rollback(any(Instant.class), eq(20L)); // 带上消息编号，同一条消息只回滚一次
+        verify(ps).rollback(any(Instant.class), eq(21L));
     }
 
     @Test

@@ -79,7 +79,27 @@ public class ParamSets {
     }
 
     /** 回滚到上一个参数集：最近一次没被回滚过的转正。没有可回滚的返回空。回滚不受两周限制。 */
-    public synchronized Optional<Switch> rollback(Instant now) {
+    public Optional<Switch> rollback(Instant now) {
+        return rollback(now, null);
+    }
+
+    /**
+     * 同上；updateId = 触发回滚的 Telegram 消息编号。同一条消息只执行一次：再次处理时返回当时撤销的那次转正，不再多撤。
+     * 三步写库（标记已回滚、记录回滚、切换参数集）在一个事务里，中途出错整体不生效。
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public synchronized Optional<Switch> rollback(Instant now, Long updateId) {
+        if (updateId != null) {
+            Optional<Switch> done = jdbc.sql("""
+                    SELECT id, kind, variant, to_json, from_json, created_at, rolled_back FROM param_switch
+                    WHERE kind = 'ROLLBACK' AND update_id = :u
+                    """).param("u", updateId).query((rs, i) -> new Switch(rs.getLong(1), rs.getString(2), rs.getString(3),
+                    rs.getString(4), rs.getString(5), Instant.parse(rs.getString(6)), rs.getInt(7) == 1)).optional();
+            if (done.isPresent()) {
+                log.info("回滚指令 {} 已经执行过，不重复回滚", updateId);
+                return done;
+            }
+        }
         Optional<Switch> last = jdbc.sql("""
                 SELECT id, kind, variant, from_json, to_json, created_at, rolled_back FROM param_switch
                 WHERE book = :b AND kind = 'PROMOTE' AND rolled_back = 0 ORDER BY id DESC LIMIT 1
@@ -89,10 +109,10 @@ public class ParamSets {
         Switch s = last.get();
         jdbc.sql("UPDATE param_switch SET rolled_back = 1 WHERE id = :id").param("id", s.id()).update();
         jdbc.sql("""
-                INSERT INTO param_switch(book, kind, variant, from_json, to_json, created_at, note)
-                VALUES (:b, 'ROLLBACK', :v, :f, :t, :now, '用户回复回滚')
+                INSERT INTO param_switch(book, kind, variant, from_json, to_json, created_at, note, update_id)
+                VALUES (:b, 'ROLLBACK', :v, :f, :t, :now, '用户回复回滚', :u)
                 """).param("b", ShadowBook.BOOK).param("v", s.variant()).param("f", current().inline()).param("t", s.from())
-                .param("now", now.toString()).update();
+                .param("now", now.toString()).param("u", updateId).update();
         state.put(KEY, s.from());
         log.info("V2 参数集已回滚：撤销 {} 的转正，恢复为 {}", s.variant(), s.from().isBlank() ? "基准" : s.from());
         return last;

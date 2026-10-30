@@ -125,6 +125,22 @@ class AutoPromoterTest {
     }
 
     @Test
+    void sameTelegramMessageRollsBackOnlyOnce() {
+        paramSets.promote("V6", VariantOverrides.parseInline("max-volume-accel=4"), NOW.minus(Duration.ofDays(30)), "A");
+        paramSets.promote("V7", VariantOverrides.parseInline("max-volume-accel=5"), NOW, "B");
+        // 同一条"回滚"消息被处理两次（回复没发出去重试、或重启后 Telegram 重新投递）：只撤销一次
+        var first = paramSets.rollback(NOW.plusSeconds(60), 777L);
+        var again = paramSets.rollback(NOW.plusSeconds(120), 777L);
+        assertThat(first).map(ParamSets.Switch::variant).contains("V7");
+        assertThat(again).map(ParamSets.Switch::variant).contains("V7");
+        assertThat(paramSets.current()).isEqualTo(VariantOverrides.parseInline("max-volume-accel=4"));
+        assertThat(paramSets.history(10)).extracting(ParamSets.Switch::kind).containsExactly("ROLLBACK", "PROMOTE", "PROMOTE");
+        // 新的一条"回滚"消息照常再撤一次
+        assertThat(paramSets.rollback(NOW.plusSeconds(180), 778L)).map(ParamSets.Switch::variant).contains("V6");
+        assertThat(paramSets.current().isEmpty()).isTrue();
+    }
+
+    @Test
     void doesNotPromoteBeforeThirtyDaysWithFewTradesOrWithoutBacktest() {
         Instant from = NOW.minus(Duration.ofDays(20));
         start("V6", from);
