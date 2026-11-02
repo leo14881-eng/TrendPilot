@@ -53,4 +53,25 @@ class ChaseCapTest {
         assertThat(CandidateStudy.chase()).extracting(CandidateStudy.Candidate::id).containsExactly(
                 "O1_V5基准", "O1_V6基准", "O1_V5_4h≥15%不开", "O1_V6_4h≥15%不开", "O1_V5_4h≥20%不开", "O1_V6_4h≥20%不开");
     }
+
+    @Test
+    void v6ExitGridKeepsTheV6BuyRuleAndComparesAgainstIt() throws Exception {
+        List<CandidateStudy.Candidate> g = CandidateStudy.v6Exit();
+        assertThat(g).hasSize(7);
+        assertThat(g).allMatch(c -> c.overrides().isMomentum() && c.overrides().momentumTop() == 3 && c.overrides().maxOpen() == 17);
+        assertThat(g.subList(1, 7)).allMatch(c -> c.baseId().equals("O3_V6现行卖法") && !c.liveCapable());
+        StrategyParams params = BacktestMain.loadParams();
+        MarketData data = BacktestSmokeTest.synthetic(30, 30, 11);
+        Regimes regimes = new Regimes(data);
+        SignalTape tape = new SignalTape(data, new EarlySignalCalculator(params));
+        for (CandidateStudy.Candidate c : g) {
+            B0Sim sim = c.apply(EntryStudy.live(c.id(), data, regimes, tape, params, 10 * 96, data.size));
+            sim.run();
+            assertThat(sim.trades()).as(c.id()).isNotEmpty();
+            if (c.id().contains("12h")) {
+                assertThat(sim.trades()).anyMatch(t -> t.reason().startsWith("L1_STALE"));
+            }
+        }
+        assertThat(CandidateStudy.payoffTable(List.of(), 0, 0)).contains("盈亏比");
+    }
 }

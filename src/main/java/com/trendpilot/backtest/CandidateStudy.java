@@ -64,6 +64,7 @@ public final class CandidateStudy {
             if (sim.containsKey("stop-fixed")) b.stop(StopRule.fixed("固定" + sim.get("stop-fixed") + "%", Double.parseDouble(sim.get("stop-fixed")), "HOUR"));
             if (sim.containsKey("trail-atr")) b.trailAtr(Double.parseDouble(sim.get("trail-atr")));
             if (sim.containsKey("max-ret4h-pct")) b.chaseCap(Double.parseDouble(sim.get("max-ret4h-pct")));
+            if (sim.containsKey("stale-hours")) b.staleExit(Integer.parseInt(sim.get("stale-hours")), false, 0);
             return b;
         }
 
@@ -196,6 +197,26 @@ public final class CandidateStudy {
         return c;
     }
 
+    /**
+     * V6 买点重新测卖法（用户 2026-11-02，优化 O3，看结果之前定好）：V6 买入规则（24h 涨幅前 3，最多 17 个）不变，只换卖法，共 6 组：
+     * 固定止损 4% / 6%（替代 ATR×1.5 止损，1h 收盘确认，利润保护照旧）；浮盈达本金 5% 后改为从最高净利回撤本金 3% / 5% 卖
+     * （替代 60% 锁定和 1% 回吐，止损照旧）；固定止损 5% + 浮盈 5% 后回撤 4%；持有 12h 仍浮亏按 1h 收盘卖（替代 72h 等反弹）。
+     * 发布前检查对 V6 现行卖法（O3_V6现行卖法，和 O1_V6基准同一规则）。
+     */
+    static List<Candidate> v6Exit() {
+        String v6 = "momentum-top=3,momentum-hours=24,max-open=17";
+        String base = ",sim.base=O3_V6现行卖法";
+        List<Candidate> c = new ArrayList<>();
+        c.add(parse("O3_V6现行卖法", "O3", v6));
+        c.add(parse("O3_止损4%", "O3", v6 + ",sim.stop-fixed=4" + base));
+        c.add(parse("O3_止损6%", "O3", v6 + ",sim.stop-fixed=6" + base));
+        c.add(parse("O3_浮盈5%后回撤3%", "O3", v6 + ",runner-arm-pct=5,runner-giveback-pct=3" + base));
+        c.add(parse("O3_浮盈5%后回撤5%", "O3", v6 + ",runner-arm-pct=5,runner-giveback-pct=5" + base));
+        c.add(parse("O3_止损5%+浮盈5%后回撤4%", "O3", v6 + ",sim.stop-fixed=5,runner-arm-pct=5,runner-giveback-pct=4" + base));
+        c.add(parse("O3_12h仍浮亏就卖", "O3", v6 + ",sim.stale-hours=12" + base));
+        return c;
+    }
+
     /** 每周自动回测的小格子（H1/H2/H4 的代表档、两条退出规则 + rel1h 与每笔金额邻域），共 13 组。 */
     static List<Candidate> weeklyGrid() {
         List<Candidate> c = new ArrayList<>();
@@ -244,6 +265,11 @@ public final class CandidateStudy {
             if (args[a].equals("exitrules")) {
                 cands.addAll(exitRules());
                 gridName = "exitrules";
+                continue;
+            }
+            if (args[a].equals("v6exit")) {
+                cands.addAll(v6Exit());
+                gridName = "v6exit";
                 continue;
             }
             if (args[a].equals("chase")) {
@@ -384,6 +410,7 @@ public final class CandidateStudy {
                     .append(String.join(" | ", java.util.Arrays.asList(Regimes.NAMES).subList(1, 7))).append("（候选 / 基准，U） |\n")
                     .append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n").append(vsBase);
             md.append("\n").append(chaseBuckets(sims.stream().filter(x -> !x.name().contains("随机")).toList(), data, fromQ, splitQ));
+            md.append("\n").append(payoffTable(sims.stream().filter(x -> !x.name().contains("随机")).toList(), fromQ, splitQ));
             md.append("\n").append(captureTable(sims.stream().filter(x -> !x.name().contains("随机")).toList(), params));
         }
         md.append("\n结论：PASS = 全部检查通过（先作为影子变体跑满 30 天，再按自动转正条件决定）；PROMISING = 有希望但没全部通过（作为影子变体观察）；")
@@ -484,6 +511,27 @@ public final class CandidateStudy {
         return b.toString();
     }
 
+    /** 盈亏比和每笔期望（全期 / 验证期）：胜率、平均盈利、平均亏损、盈亏比 = 平均盈利 / |平均亏损|、每笔 U ±95%。 */
+    static String payoffTable(List<Sim> sims, int fromQ, int splitQ) {
+        StringBuilder b = new StringBuilder("### 盈亏比和每笔期望\n\n| 方案 | 期间 | 笔数 | 胜率 | 平均盈利 U | 平均亏损 U | 盈亏比 | 每笔 U ±95% |\n|---|---|---:|---:|---:|---:|---:|---:|\n");
+        for (Sim s : sims) {
+            for (int part = 0; part < 2; part++) {
+                int from = part == 0 ? fromQ : splitQ;
+                List<Double> x = s.trades().stream().filter(t -> t.entryQ() >= from).map(Trade::pnl).toList();
+                if (x.isEmpty()) continue;
+                double win = x.stream().filter(v -> v > 0).mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
+                double loss = x.stream().filter(v -> v <= 0).mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
+                long wins = x.stream().filter(v -> v > 0).count();
+                double m = x.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
+                double var = x.stream().mapToDouble(v -> (v - m) * (v - m)).sum() / Math.max(1, x.size() - 1);
+                b.append(String.format(Locale.ROOT, "| %s | %s | %d | %.1f%% | %+.2f | %+.2f | %.2f | %+.2f ±%.2f |%n", s.name(),
+                        part == 0 ? "全期" : "验证期", x.size(), 100.0 * wins / x.size(), win, loss, win / Math.abs(loss), m,
+                        1.96 * Math.sqrt(var / x.size())));
+            }
+        }
+        return b.toString();
+    }
+
     private static double protectFloor(StrategyParams params, double cost, double peak) {
         return com.trendpilot.monitor.ExitPolicy.protectionFloor(java.math.BigDecimal.valueOf(cost), java.math.BigDecimal.valueOf(peak),
                 java.math.BigDecimal.ZERO, params.exit()).doubleValue();
@@ -505,6 +553,7 @@ public final class CandidateStudy {
         if (c.sim().containsKey("stop-fixed")) p.add("固定止损 " + c.sim().get("stop-fixed") + "%");
         if (c.sim().containsKey("trail-atr")) p.add("跟踪止损 ATR×" + c.sim().get("trail-atr"));
         if (c.sim().containsKey("max-ret4h-pct")) p.add("买入前 4h 涨幅 ≥ " + c.sim().get("max-ret4h-pct") + "% 不开");
+        if (c.sim().containsKey("stale-hours")) p.add("持有 " + c.sim().get("stale-hours") + "h 仍浮亏按 1h 收盘卖（替代 72h 等反弹）");
         if (c.sim().containsKey("base")) p.add("对照基准 " + c.sim().get("base"));
         return String.join("；", p);
     }
