@@ -126,6 +126,15 @@ class ResearchTest {
     }
 
     @Test
+    void tokenizedCoinIdsAreExcludedEvenWhenCategoryMissesThem() {
+        research.saveIdentity(Venue.BYBIT, List.of(
+                new CoinGeckoClient.ExchangeTicker("NEWETFB", "USDT", "some-new-2x-etf-bstocks-tokenized-stock"),
+                new CoinGeckoClient.ExchangeTicker("INIT", "USDT", "initia")), now);
+        assertThat(research.tokenizedSymbols(Venue.BYBIT)).containsExactly("NEWETFBUSDT");
+        research.saveIdentity(Venue.BYBIT, List.of(), now);
+    }
+
+    @Test
     void rateLimitHonoursRetryAfterThenGivesUpWithoutHammering() {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();

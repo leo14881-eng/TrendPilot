@@ -83,11 +83,11 @@ class HealthJobTest {
     void reportsWhenRestHasNoValidQuoteOrIsUnavailableOrNotTrading() {
         var rest = java.util.Map.of(
                 "AAAUSDT", new com.trendpilot.market.BookTicker("AAAUSDT", 0, 0.5),       // 没有买价
-                "BBBUSDT", new com.trendpilot.market.BookTicker("BBBUSDT", 0.6, 0.5),     // 买价高于卖价
+                "BBXUSDT", new com.trendpilot.market.BookTicker("BBXUSDT", 0.6, 0.5),     // 买价高于卖价
                 "CCCUSDT", new com.trendpilot.market.BookTicker("CCCUSDT", 1.0, 1.01));   // 有价但不在交易
-        var issues = HealthJob.quoteIssues(List.of(pos("AAAUSDT"), pos("BBBUSDT"), pos("CCCUSDT"), pos("DDDUSDT")), v -> rest,
+        var issues = HealthJob.quoteIssues(List.of(pos("AAAUSDT"), pos("BBXUSDT"), pos("CCCUSDT"), pos("DDDUSDT")), v -> rest,
                 (v, s) -> new com.trendpilot.market.SymbolInfo(s, s, "USDT", !s.equals("CCCUSDT"), ""));
-        assertThat(issues).containsOnlyKeys("AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT");
+        assertThat(issues).containsOnlyKeys("AAAUSDT", "BBXUSDT", "CCCUSDT", "DDDUSDT");
         assertThat(issues.get("AAAUSDT")).contains("没有有效买卖价");
         assertThat(issues.get("DDDUSDT")).contains("没有有效买卖价");
         assertThat(issues.get("CCCUSDT")).contains("不在交易");

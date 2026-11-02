@@ -14,7 +14,7 @@ import com.trendpilot.market.SymbolInfo;
 import com.trendpilot.market.Ticker24h;
 
 /**
- * 标的全集：正在交易、允许现货、USDT 计价；排除稳定币、法币、黄金代币、官方代币化股票和人工黑名单。
+ * 标的全集：正在交易、允许现货、USDT 计价；排除稳定币、法币、黄金代币、官方代币化股票 / ETF（{@link TokenizedAssets}）和人工黑名单。
  * 不设最低市值、成交额或数量门槛，但价格和成交额必须有效。
  */
 @Component
@@ -57,6 +57,17 @@ public class UniverseFilter {
 
     private boolean isTokenizedStock(SymbolInfo s) {
         return params.universe().tokenizedStockBaseAssets().contains(s.baseAsset())
+                || TokenizedAssets.knownSymbol(s.symbol())
                 || s.tags().toLowerCase(Locale.ROOT).contains("stock");
+    }
+
+    /**
+     * 回测用的同一套排除规则（回测没有交易所标签和 CoinGecko 资料）：稳定币 / 法币 / 黄金、静态代币化股票名单、
+     * 已知代币化股票 / ETF 名单（{@link TokenizedAssets}）、人工黑名单。
+     */
+    public static boolean excludedOffline(StrategyParams.Universe u, String symbol) {
+        String base = symbol.endsWith(u.quoteAsset()) ? symbol.substring(0, symbol.length() - u.quoteAsset().length()) : symbol;
+        return u.excludedBaseAssets().contains(base) || u.tokenizedStockBaseAssets().contains(base)
+                || TokenizedAssets.knownSymbol(symbol) || u.blocklist().contains(symbol);
     }
 }

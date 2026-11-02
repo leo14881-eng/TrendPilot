@@ -87,14 +87,14 @@ class VariantRiskTest {
         }
         jdbc.sql("DELETE FROM app_state WHERE key LIKE 'risk:%'").update();
         Instant fresh = Instant.parse("2026-12-31T00:00:00Z");
-        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "AAA", "BBB", "CCC", "STKX")
+        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "AAA", "BBX", "CCC", "STKX")
                 .map(b -> new CoinGeckoClient.ExchangeTicker(b, "USDT", b.toLowerCase() + "-coin")).toList();
         research.saveIdentity(Venue.BINANCE, listed, fresh);
         research.saveIdentity(Venue.BYBIT, listed, fresh);
         research.saveCategory("tokenized-stock", List.of("stkx-coin"), fresh);
         market.put("BTCUSDT", 1.0, TestData.flatQuarters(T0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, T0));
         market.put("ABCUSDT", 5.0, TestData.strongQuarters(T0), TestData.book("ABCUSDT", 104, 2, 100, T0));
-        for (String s : new String[]{"AAAUSDT", "BBBUSDT", "CCCUSDT"}) market.put(s, 2.0, TestData.flatQuarters(T0, 10), null);
+        for (String s : new String[]{"AAAUSDT", "BBXUSDT", "CCCUSDT"}) market.put(s, 2.0, TestData.flatQuarters(T0, 10), null);
     }
 
     /** 某本账在 T0 前几小时有 n 笔亏损卖出。 */

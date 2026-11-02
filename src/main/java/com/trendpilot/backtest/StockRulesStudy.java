@@ -583,8 +583,7 @@ public final class StockRulesStudy {
         List<String> symbols = new ArrayList<>();
         for (String s : archive.usdtSymbols()) {
             String base = s.substring(0, s.length() - 4);
-            if (params.universe().excludedBaseAssets().contains(base) || params.universe().tokenizedStockBaseAssets().contains(base)
-                    || params.universe().blocklist().contains(s) || excludedDerivative(base)) continue;
+            if (com.trendpilot.universe.UniverseFilter.excludedOffline(params.universe(), s) || excludedDerivative(base)) continue;
             symbols.add(s);
         }
         System.out.println("候选 USDT 交易对 " + symbols.size() + " 个");

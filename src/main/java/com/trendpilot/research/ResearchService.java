@@ -179,6 +179,16 @@ public class ResearchService {
                 """).param("v", venue.name()).query(String.class).list().stream().collect(Collectors.toSet());
     }
 
+    /**
+     * coin_id 看起来是代币化股票 / ETF 的交易对（{@link com.trendpilot.universe.TokenizedAssets}），
+     * 补 CoinGecko 分类收录不全的部分（周复盘 2026-11-01 R1：17 个 Binance bStocks ETF 不在 tokenized-stock 分类里）。
+     */
+    public Set<String> tokenizedSymbols(Venue venue) {
+        return jdbc.sql("SELECT symbol, coin_id FROM coin_identity WHERE venue = :v").param("v", venue.name())
+                .query((rs, n) -> com.trendpilot.universe.TokenizedAssets.coinIdLooksTokenized(rs.getString(2)) ? rs.getString(1) : null)
+                .list().stream().filter(java.util.Objects::nonNull).collect(Collectors.toSet());
+    }
+
     @Transactional
     public void saveMarkets(List<CoinGeckoClient.Market> markets, Instant now) {
         for (var m : markets) {

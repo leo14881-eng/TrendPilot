@@ -84,7 +84,7 @@ class StrongVariantFlowTest {
             jdbc.sql("DELETE FROM " + t).update();
         }
         Instant fresh = Instant.parse("2026-12-31T00:00:00Z");
-        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "AAA", "BBB", "CCC", "STKX")
+        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "AAA", "BBX", "CCC", "STKX")
                 .map(b -> new CoinGeckoClient.ExchangeTicker(b, "USDT", b.toLowerCase() + "-coin")).toList();
         research.saveIdentity(Venue.BINANCE, listed, fresh);
         research.saveIdentity(Venue.BYBIT, listed, fresh);
@@ -96,7 +96,7 @@ class StrongVariantFlowTest {
         Instant t0 = Instant.parse("2026-10-14T10:17:00Z");
         market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
         market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
-        for (String s : new String[]{"AAAUSDT", "BBBUSDT", "CCCUSDT"}) {
+        for (String s : new String[]{"AAAUSDT", "BBXUSDT", "CCCUSDT"}) {
             market.put(s, 2.0, TestData.flatQuarters(t0, 10), null);
         }
 

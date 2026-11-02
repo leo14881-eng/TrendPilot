@@ -74,7 +74,7 @@ class MomentumVariantTest {
         bybit.reset();
         markets.invalidate();
         Instant fresh = Instant.parse("2026-12-31T00:00:00Z");
-        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "AAA", "BBB", "CCC", "STKX")
+        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "AAA", "BBX", "CCC", "STKX")
                 .map(b -> new CoinGeckoClient.ExchangeTicker(b, "USDT", b.toLowerCase() + "-coin")).toList();
         research.saveIdentity(Venue.BINANCE, listed, fresh);
         research.saveIdentity(Venue.BYBIT, listed, fresh);
@@ -86,7 +86,7 @@ class MomentumVariantTest {
         Instant t0 = Instant.parse("2026-10-14T10:17:00Z");
         market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
         market.put("AAAUSDT", 12.0, TestData.flatQuarters(t0, 10), TestData.book("AAAUSDT", 10, 2, 5000, t0)); // 第 1 名，盘口够
-        market.put("BBBUSDT", 9.0, TestData.flatQuarters(t0, 10), null);                                       // 第 2 名，没盘口
+        market.put("BBXUSDT", 9.0, TestData.flatQuarters(t0, 10), null);                                       // 第 2 名，没盘口
         market.put("CCCUSDT", 1.0, TestData.flatQuarters(t0, 10), TestData.book("CCCUSDT", 10, 2, 5000, t0)); // 不在前 2
         market.put("ABCUSDT", 0.5, TestData.flatQuarters(t0, 104), TestData.book("ABCUSDT", 104, 2, 100, t0));
 

@@ -102,7 +102,7 @@ class ShadowFlowTest {
         }
         // 身份资料：测试标的在 CoinGecko 上唯一对应一个项目（资料时间放在测试截面之后，不算过期）
         Instant fresh = Instant.parse("2026-12-31T00:00:00Z");
-        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "XYZ", "BYO", "WEAK", "AAA", "BBB", "CCC", "STKX")
+        List<CoinGeckoClient.ExchangeTicker> listed = java.util.stream.Stream.of("ABC", "XYZ", "BYO", "WEAK", "AAA", "BBX", "CCC", "STKX")
                 .map(b -> new CoinGeckoClient.ExchangeTicker(b, "USDT", b.toLowerCase() + "-coin")).toList();
         research.saveIdentity(Venue.BINANCE, listed, fresh);
         research.saveIdentity(Venue.BYBIT, listed, fresh);
@@ -115,7 +115,7 @@ class ShadowFlowTest {
         Instant t0 = Instant.parse("2026-10-14T10:17:00Z");
         market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
         market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
-        for (String s : new String[]{"AAAUSDT", "BBBUSDT", "CCCUSDT"}) {
+        for (String s : new String[]{"AAAUSDT", "BBXUSDT", "CCCUSDT"}) {
             market.put(s, 2.0, TestData.flatQuarters(t0, 10), null);
         }
         assertThat(discovery.runOnce(t0).entries()).containsExactly("BUY:ABCUSDT");
@@ -192,7 +192,7 @@ class ShadowFlowTest {
         Instant t0 = Instant.parse("2026-10-14T10:17:00Z");
         market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
         market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
-        for (String s : new String[]{"AAAUSDT", "BBBUSDT", "CCCUSDT"}) {
+        for (String s : new String[]{"AAAUSDT", "BBXUSDT", "CCCUSDT"}) {
             market.put(s, 2.0, TestData.flatQuarters(t0, 10), null);
         }
         // V2 按原买入规则买入（1h 相对 BTC 约 3%）；V5 门槛 5.855%，同一个信号不买
@@ -208,7 +208,7 @@ class ShadowFlowTest {
         Instant t0 = Instant.parse("2026-10-14T10:17:00Z");
         market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
         market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
-        for (String s : new String[]{"AAAUSDT", "BBBUSDT", "CCCUSDT"}) {
+        for (String s : new String[]{"AAAUSDT", "BBXUSDT", "CCCUSDT"}) {
             market.put(s, 2.0, TestData.flatQuarters(t0, 10), null);
         }
         DiscoveryJob.Report d = discovery.runOnce(t0);
@@ -223,7 +223,7 @@ class ShadowFlowTest {
         Instant t0 = Instant.parse("2026-10-14T10:17:00Z");
         market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
         market.put("ABCUSDT", 5.0, TestData.strongQuarters(t0), TestData.book("ABCUSDT", 104, 2, 100, t0));
-        for (String s : new String[]{"AAAUSDT", "BBBUSDT", "CCCUSDT"}) {
+        for (String s : new String[]{"AAAUSDT", "BBXUSDT", "CCCUSDT"}) {
             market.put(s, 2.0, TestData.flatQuarters(t0, 10), null);
         }
         market.put("USDCUSDT", 0.0, TestData.flatQuarters(t0, 1), null); // 稳定币应被排除

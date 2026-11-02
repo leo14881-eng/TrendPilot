@@ -60,8 +60,7 @@ public final class BacktestMain {
         List<String> symbols = new ArrayList<>();
         for (String s : all) {
             String base = s.substring(0, s.length() - 4);
-            if (params.universe().excludedBaseAssets().contains(base) || params.universe().tokenizedStockBaseAssets().contains(base)
-                    || params.universe().blocklist().contains(s)) {
+            if (com.trendpilot.universe.UniverseFilter.excludedOffline(params.universe(), s)) {
                 excluded.add(s);
                 continue;
             }

@@ -522,7 +522,11 @@ public class DiscoveryJob {
     private Pool loadPool(VenueMarket m, Set<String> alreadyCovered, Instant now) {
         List<Ticker24h> tickers = m.tickers().tickers24h();
         Set<String> excluded = research.excludedSymbols(m.venue());
-        List<Ticker24h> universe = universeFilter.select(m.directory().all(), tickers, alreadyCovered, excluded);
+        // 分类资料是否已加载只看 CoinGecko 分类；coin_id 规则只是补漏（代币化 ETF 不全在分类里）
+        boolean categoriesLoaded = !excluded.isEmpty();
+        Set<String> blocked = new java.util.HashSet<>(excluded);
+        blocked.addAll(research.tokenizedSymbols(m.venue()));
+        List<Ticker24h> universe = universeFilter.select(m.directory().all(), tickers, alreadyCovered, blocked);
         List<String> names = new ArrayList<>(universe.stream().map(Ticker24h::symbol).toList());
         if (!names.contains(UniverseFilter.BTC)) {
             names.add(UniverseFilter.BTC);
@@ -541,7 +545,6 @@ public class DiscoveryJob {
         SymbolBars btc = bars.bars().get(UniverseFilter.BTC);
         double missingRatio = bars.missing().size() / (double) names.size();
         // 分类资料（稳定币、代币化股票）还没加载时不放行：交易所本身不标股票类，只靠名单会漏掉
-        boolean categoriesLoaded = !excluded.isEmpty();
         if (!categoriesLoaded) log.warn("{} 分类资料缺失（CATEGORY_DATA_MISSING），本轮不做新买入", m.venue());
         boolean complete = btc != null && missingRatio <= params.universe().maxMissingRatio() && categoriesLoaded;
         return new Pool(m, tickers, universe, bars, btc, complete, categoriesLoaded ? null : "CATEGORY_DATA_MISSING");
