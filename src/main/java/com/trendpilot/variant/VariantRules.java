@@ -81,6 +81,12 @@ public final class VariantRules {
         return new StrategyParams(p.version(), p.universe(), p.early(), p.review(), p.capital(), p.add(), x, p.risk(), p.feeRate());
     }
 
+    /** FastWatch 看到的持续最高净利比账上的高时，按它算保护底线（与 V2 快速确认同一做法）；否则原样返回。 */
+    public static Position withPeakHint(Position p, java.math.BigDecimal hint) {
+        return hint != null && p.protectArmed() && hint.compareTo(p.peakNet()) > 0
+                ? p.withProtection(true, p.protectFloor(), hint) : p;
+    }
+
     /** 进入"让赢家跑"阶段的持仓：底线清零后交给宽回吐的 ExitPolicy 重新算（底线之后照常只上调）。 */
     public static Position runnerView(Position p) {
         return p.withProtection(true, java.math.BigDecimal.ZERO, p.peakNet());

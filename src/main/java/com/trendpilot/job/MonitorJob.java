@@ -173,6 +173,34 @@ public class MonitorJob {
         }
     }
 
+    /**
+     * 其他账本（V2D15、配置化影子变体）的快速确认：FastWatch 发现这本账的持仓可能跌破保护底线时调用，
+     * 只抓这些持仓的新鲜全数量盘口，按这本账自己的退出规则判断（和 5 分钟检查同一份代码），确认就卖。出错只记 warn。
+     */
+    public List<String> confirmNow(String bookName, java.util.Set<String> symbols, Instant now,
+                                   Map<String, java.math.BigDecimal> peakHints) {
+        if (ShadowBook.BOOK.equals(bookName)) return confirmNow(symbols, now, peakHints).exits();
+        String gen = Generations.of("F", now);
+        try {
+            List<String> exits;
+            if (com.trendpilot.portfolio.DepthVariantBook.BOOK.equals(bookName)) {
+                var in = depthVariant.fetch(now, symbols);
+                List<String> out = new ArrayList<>();
+                lock.run(() -> out.addAll(depthVariant.manage(gen, now, in, peakHints)));
+                exits = out;
+            } else {
+                exits = variants.confirmNow(bookName, symbols, gen, now, peakHints, lock);
+            }
+            runs.record(FAST_JOB, gen, now, Instant.now(), "SUCCESS", "N/A",
+                    "book=" + bookName + " symbols=" + symbols + " exits=" + exits);
+            return exits;
+        } catch (RuntimeException e) {
+            log.warn("{} 快速确认失败（不影响 V2）{}：{}", bookName, gen, e.toString());
+            runs.record(FAST_JOB, gen, now, Instant.now(), "FAILED", "N/A", "book=" + bookName + " " + e.getMessage());
+            return List.of();
+        }
+    }
+
     private final java.util.Map<String, ExitPolicy> runnerPolicies = new java.util.concurrent.ConcurrentHashMap<>();
     private final com.trendpilot.config.StrategyParams params;
 

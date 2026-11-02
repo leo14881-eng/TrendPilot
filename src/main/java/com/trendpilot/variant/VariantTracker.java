@@ -501,8 +501,14 @@ public class VariantTracker {
 
     /** 抓取一个变体全部持仓的盘口、交易状态和 K 线（联网，在组合锁外调用）。缺数据的持仓不放进结果，本轮不判断。 */
     public Map<String, Inputs> fetch(VariantRegistry.Variant v, Instant now) {
+        return fetch(v, now, null);
+    }
+
+    /** only = 只抓这些标的（FastWatch 快速确认，先丢掉盘口缓存重新取）；null = 全部持仓。 */
+    public Map<String, Inputs> fetch(VariantRegistry.Variant v, Instant now, java.util.Set<String> only) {
         Map<String, Inputs> out = new java.util.HashMap<>();
-        Map<Venue, List<Position>> byVenue = v.book().positions().stream().collect(Collectors.groupingBy(Position::venue,
+        Map<Venue, List<Position>> byVenue = v.book().positions().stream()
+                .filter(p -> only == null || only.contains(p.symbol())).collect(Collectors.groupingBy(Position::venue,
                 () -> new EnumMap<>(Venue.class), Collectors.toList()));
         for (var e : byVenue.entrySet()) {
             VenueMarket m = markets.get(e.getKey());
@@ -521,6 +527,7 @@ public class VariantTracker {
             }
             for (Position pos : e.getValue()) {
                 try {
+                    if (only != null) m.depth().invalidate(pos.symbol());
                     OrderBook ob = m.depth().getCovering(pos.symbol(), com.trendpilot.job.DiscoveryJob.DEPTH_SPAN_PCT,
                             pos.costBasis().doubleValue() * 1.5);
                     if (ob == null || !ob.sane()) continue; // 盘口缺失或异常：本轮不判断
@@ -536,9 +543,16 @@ public class VariantTracker {
 
     /** 只用已抓好的输入做判断和记账（不联网，在组合锁内调用）。@return 本轮退出的 "原因:标的" */
     public List<String> manage(VariantRegistry.Variant v, String gen, Instant now, Map<String, Inputs> inputs) {
+        return manage(v, gen, now, inputs, Map.of());
+    }
+
+    /** peakHints：FastWatch 在两次检查之间看到的持续最高净利（同 V2 的快速确认）。 */
+    public List<String> manage(VariantRegistry.Variant v, String gen, Instant now, Map<String, Inputs> inputs,
+                               Map<String, java.math.BigDecimal> peakHints) {
         List<String> exits = new ArrayList<>();
         Ledger book = v.book();
-        for (Position pos : book.positions()) {
+        for (Position current : book.positions()) {
+            Position pos = VariantRules.withPeakHint(current, peakHints.get(current.symbol()));
             Inputs in = inputs.get(pos.symbol());
             if (in == null) continue;
             try {
@@ -574,6 +588,20 @@ public class VariantTracker {
             }
         }
         if (!exits.isEmpty()) log.info("{} 影子变体卖出 {} 个 {}：{}", v.name(), exits.size(), gen, exits);
+        return exits;
+    }
+
+    /**
+     * FastWatch 快速确认（用户 2026-11-02 批准）：只针对这个变体的这些持仓，重新取全数量盘口，按变体自己的同一套退出规则判断，
+     * 确认就卖。和 5 分钟检查一样锁外抓、锁内判断：先进锁的那一次卖掉，另一次看不到这个持仓，不会重复卖出。
+     */
+    public List<String> confirmNow(String name, java.util.Set<String> symbols, String gen, Instant now,
+                                   Map<String, java.math.BigDecimal> peakHints, PortfolioLock lock) {
+        VariantRegistry.Variant v = registry.managed().stream().filter(x -> x.name().equals(name)).findFirst().orElse(null);
+        if (v == null) return List.of();
+        Map<String, Inputs> in = fetch(v, now, symbols);
+        List<String> exits = new ArrayList<>();
+        lock.run(() -> exits.addAll(manage(v, gen, now, in, peakHints)));
         return exits;
     }
 

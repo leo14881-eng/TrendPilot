@@ -58,6 +58,12 @@ public class HealthJob {
     static final int API_ERRORS_PER_HOUR = 5;
 
     private final com.trendpilot.market.stream.StreamHub hub;
+    private FastWatchBooks fastWatchBooks;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setFastWatchBooks(FastWatchBooks books) {
+        this.fastWatchBooks = books;
+    }
     private final boolean streamEnabled;
     private final boolean btcEnabled;
 
@@ -187,7 +193,17 @@ public class HealthJob {
         // FastWatch 靠 WebSocket 最优价：持仓超过 3 分钟没有新推送时，先用批量 bookTicker（有缓存）核对。
         // 冷门币最优价不变就没有推送，批量报价有效就不算异常；批量报价也拿不到或不在交易才提醒
         if (streamEnabled && startup != null && Duration.between(startup, now).toMinutes() >= 5) {
-            List<Position> quiet = book.positions().stream()
+            // V2D15 和影子变体也接了 FastWatch（2026-11-02）：同一个币多本账都持有时只核对一次
+            java.util.Map<String, Position> watched = new java.util.LinkedHashMap<>();
+            book.positions().forEach(p -> watched.putIfAbsent(p.venue() + ":" + p.symbol(), p));
+            if (fastWatchBooks != null) {
+                try {
+                    fastWatchBooks.positions().values().forEach(l -> l.forEach(p -> watched.putIfAbsent(p.venue() + ":" + p.symbol(), p)));
+                } catch (RuntimeException e) {
+                    log.warn("健康检查读取影子账本持仓失败：{}", e.toString());
+                }
+            }
+            List<Position> quiet = watched.values().stream()
                     .filter(p -> hub.quote(p.venue(), p.symbol(), 180) == null).toList();
             if (!quiet.isEmpty()) {
                 Map<String, String> issues = quoteIssues(quiet, this::restQuotes, this::symbolInfo);
