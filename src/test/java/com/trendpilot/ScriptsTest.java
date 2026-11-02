@@ -89,4 +89,30 @@ class ScriptsTest {
         assertThat(sh).contains("day_start=$(date -u -d \"$(TZ=Asia/Ho_Chi_Minh date +%F) 00:00 +07:00\" +%Y-%m-%dT%H:%M:%S)");
         assertThat(sh).contains("今天（越南时间）开仓").contains("今天（越南时间）成交笔数");
     }
+
+    @Test
+    void exportCoversLaunchLpReportsVariantLogsAndLogCountsOnly() throws Exception {
+        String sh = Files.readString(Path.of("scripts/linux/export.sh"), StandardCharsets.UTF_8);
+        assertThat(sh).contains("tbl launch_event \"WHERE at >= '$SINCE'\"")
+                .contains("tbl variant_decision \"WHERE created_at >= '$RECENT'\"")
+                .contains("tbl risk_state_log")
+                .contains("lp_snapshot_daily").contains("tbl lp_pool_snapshot \"WHERE ts >= $LP_RAW_SINCE\"")
+                .contains("lp-daily-").contains("lp-weekly-")
+                .contains("log-counts.sh");
+        for (String t : new String[]{"lp_pool", "lp_pool_tvl", "lp_position", "lp_event", "lp_state", "lp_daily", "lp_day_close"}) {
+            assertThat(sh).contains(t);
+        }
+        // log counts: only hour, level, logger name and a count leave the server, never message text
+        String lc = Files.readString(Path.of("scripts/linux/log-counts.sh"), StandardCharsets.UTF_8);
+        assertThat(lc).doesNotContain("\r").contains("WARN|ERROR").contains("print hour \",\" lvl \",\" logger \",\" n");
+        assertThat(lc.lines().filter(l -> !l.trim().startsWith("#"))).noneMatch(l -> l.contains("config/") || l.contains("$CONFIG"));
+    }
+
+    @Test
+    void statusHistoryKeepsOneSnapshotPerDayForFourteenDaysWithoutForcePush() throws Exception {
+        String sh = Files.readString(Path.of("scripts/linux/status-push.sh"), StandardCharsets.UTF_8);
+        String hist = sh.substring(sh.indexOf("# ---------- 每日历史"));
+        assertThat(hist).contains("server-status-history").contains("history/$today.md").contains("KEEP_DAYS=14")
+                .doesNotContain("push -q -f").doesNotContain("--force");
+    }
 }

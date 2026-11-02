@@ -2,7 +2,8 @@
 # 每 5 分钟（systemd 定时器 trendpilot-status.timer）把固定格式的状态摘要推到公开仓库的 server-status 分支
 # （用户 2026-10-22 同意公开，并选定"只推摘要"）。摘要字段事先固定，只有数字、时间和状态词：
 # 不含日志原文、配置、进程列表或任何密钥。用服务器自己生成的 deploy key（ssh/status_ed25519，私钥不离开服务器）。
-# 分支只保留最新一次提交（强制推送）。推送失败只记日志，不影响服务。
+# server-status 分支只保留最新一次提交（强制推送）；另外每天一份快照推到 server-status-history 分支（保留 14 天，普通推送）。
+# 推送失败只记日志，不影响服务。
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=common.sh
@@ -106,3 +107,45 @@ else
 fi
 as_user timeout 60 git -C "$REPO_DIR" push -q -f origin server-status 2>>"$APP_DIR/logs/status-push.log" \
     || log "状态摘要推送失败（见 logs/status-push.log）"
+
+# ---------- 每日历史（server-status-history 分支，周复盘 2026-11-01 R4）
+# 每个越南日第一次运行时把上面同一份固定字段摘要另存为 history/<日期>.md，保留最近 14 天（更早的删掉）。
+# 每天一个提交，普通推送（不覆盖历史）；推送失败下次运行再推。只有摘要里的固定字段，不含密钥或日志原文。
+KEEP_DAYS=14
+HIST_DIR="$APP_DIR/status-history-repo"
+HIST_BRANCH=server-status-history
+today=$(TZ=Asia/Ho_Chi_Minh date +%F)
+if [ ! -d "$HIST_DIR/.git" ]; then
+    mkdir -p "$HIST_DIR" && chown "$RUN_USER:$RUN_USER" "$HIST_DIR"
+    as_user git -C "$HIST_DIR" init -q
+    as_user git -C "$HIST_DIR" remote add origin git@github.com:leo14881-eng/TrendPilot.git
+    as_user git -C "$HIST_DIR" config user.name "TrendPilot server"
+    as_user git -C "$HIST_DIR" config user.email "server@trendpilot.invalid"
+    # 远端已有这个分支就接着它写，没有就新建一个独立分支
+    if as_user timeout 60 git -C "$HIST_DIR" fetch -q origin "$HIST_BRANCH" 2>>"$APP_DIR/logs/status-push.log"; then
+        as_user git -C "$HIST_DIR" checkout -q -B "$HIST_BRANCH" FETCH_HEAD
+    else
+        as_user git -C "$HIST_DIR" checkout -q --orphan "$HIST_BRANCH"
+    fi
+fi
+if [ ! -f "$HIST_DIR/history/$today.md" ]; then
+    mkdir -p "$HIST_DIR/history"
+    cp "$REPO_DIR/status.md" "$HIST_DIR/history/$today.md"
+    chown -R "$RUN_USER:$RUN_USER" "$HIST_DIR/history"
+    cutoff=$(TZ=Asia/Ho_Chi_Minh date -d "-$KEEP_DAYS days" +%F)
+    for f in "$HIST_DIR"/history/*.md; do
+        [ -e "$f" ] || continue
+        d=$(basename "$f" .md)
+        if [[ "$d" < "$cutoff" ]]; then as_user git -C "$HIST_DIR" rm -q --cached --ignore-unmatch "history/$d.md"; rm -f "$f"; fi
+    done
+    as_user git -C "$HIST_DIR" add -A history
+    as_user git -C "$HIST_DIR" commit -q -m "status history $today" || true
+fi
+head_sha=$(as_user git -C "$HIST_DIR" rev-parse -q --verify HEAD 2>/dev/null)
+if [ -n "$head_sha" ] && [ "$(cat "$HIST_DIR/.git/last-pushed" 2>/dev/null)" != "$head_sha" ]; then
+    if as_user timeout 60 git -C "$HIST_DIR" push -q origin "$HIST_BRANCH" 2>>"$APP_DIR/logs/status-push.log"; then
+        echo "$head_sha" > "$HIST_DIR/.git/last-pushed"
+    else
+        log "状态历史推送失败（见 logs/status-push.log），下次再推"
+    fi
+fi

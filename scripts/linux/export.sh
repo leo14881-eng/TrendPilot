@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 只读数据导出（周复盘用）：用 sqlite3 -readonly 把业务表导成 CSV，打包到 /opt/trendpilot/export/trendpilot-export.tar.gz。
-# 只导业务数据：不碰 config/，不导日志，不导 notification_outbox（Telegram 消息原文），app_state 只导 regime 和 risk:* 风控状态。
+# 只导业务数据：不碰 config/，不导日志原文（只有 log-counts.sh 的 WARN / ERROR 计数），不导 notification_outbox（Telegram 消息原文），app_state 只导 regime 和 risk:* 风控状态。
 # 体积控制在约 10 MB 以内（服务器到电脑的下载较慢）：交易、持仓、账本取最近 16 天；信号、决策取最近 9 天；
 # K 线不导 15m 原始数据，改导两份汇总：所有币每个 UTC 日的开高低收（涨幅榜复盘用），
 # 以及 BTC、V2 / V2D15 / V5 / V3 交易过的币、每天涨幅前 30 的币的 1h K 线（由 15m 合成）。
@@ -79,6 +79,38 @@ if has_table signal_episode; then
     tbl signal_outcome "WHERE episode_id IN $EP"
     tbl signal_pullback "WHERE episode_id IN $EP"
 fi
+# 影子变体的审核 / 成交记录和风控状态变化（R2 / R3）；秒级启动探测
+tbl variant_decision "WHERE created_at >= '$RECENT'"
+tbl risk_state_log "WHERE at >= '$SINCE'"
+tbl launch_event "WHERE at >= '$SINCE'"
+# LP 影子盘：小表全导；分钟快照只导最近 2 天原始数据 + 每个池子每个 UTC 日的汇总（控制体积）
+for t in lp_pool lp_position lp_state lp_daily lp_day_close; do
+    tbl "$t"
+done
+LP_SINCE=$(( $(date -u +%s) - 16 * 86400 ))
+LP_RAW_SINCE=$(( $(date -u +%s) - 2 * 86400 ))
+tbl lp_event "WHERE ts >= $LP_SINCE"
+tbl lp_pool_tvl "WHERE ts >= $LP_SINCE"
+tbl lp_pool_snapshot "WHERE ts >= $LP_RAW_SINCE"
+if has_table lp_pool_snapshot; then
+    exp lp_snapshot_daily "SELECT pool, date(ts, 'unixepoch') AS day, COUNT(*) AS minutes, SUM(status = 'OK') AS ok,
+            SUM(status = 'OK' AND perp_mark IS NOT NULL) AS with_perp, MIN(ts) AS first_ts, MAX(ts) AS last_ts,
+            ROUND(AVG(CASE WHEN status = 'OK' THEN CAST(gas_price_wei AS REAL) END), 0) AS avg_gas_wei,
+            ROUND(AVG(CASE WHEN status = 'OK' THEN CAST(l1_fee_wei AS REAL) END), 0) AS avg_l1_fee_wei,
+            ROUND(AVG(perp_mark), 2) AS avg_perp_mark, ROUND(AVG(funding_rate), 8) AS avg_funding
+        FROM lp_pool_snapshot WHERE ts >= $LP_SINCE GROUP BY pool, day ORDER BY pool, day;"
+fi
+# LP 日报 / 周报（服务器生成的 Markdown，只含数字和策略名）：最近 16 天
+REPORTS="$APP_DIR/data/reports"
+if [ -d "$REPORTS" ]; then
+    mkdir -p "$WORK/reports"
+    find "$REPORTS" -maxdepth 1 -type f \( -name 'lp-daily-*.md' -o -name 'lp-weekly-*.md' \) -mtime -16 -exec cp -p {} "$WORK/reports/" \;
+    echo "reports $(find "$WORK/reports" -type f | wc -l)" >> "$MANIFEST"
+fi
+# 最近 7 天 WARN / ERROR 按小时、级别、logger 计数（只有计数，不导日志原文）
+bash "$HERE/log-counts.sh" "$APP_DIR/logs" 7 > "$WORK/log_counts.csv" 2>/dev/null \
+    && echo "log_counts $(($(wc -l < "$WORK/log_counts.csv") - 1))" >> "$MANIFEST"
+
 # 风控状态：只导 regime 和 risk:*（不含 Telegram 偏移、运行权等）
 has_table app_state && exp app_state "SELECT key, value FROM app_state WHERE key = 'regime' OR key LIKE 'risk:%';"
 
