@@ -1,0 +1,15 @@
+# One-off reachability probe for Bybit public market data from GitHub Actions (research only).
+name: Bybit probe
+on:
+  push:
+    branches: [research/bybit-probe]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for u in "https://api.bybit.com/v5/market/kline?category=spot&symbol=BTCUSDT&interval=15&limit=2&start=1664582400000" \
+                   "https://api.bytick.com/v5/market/kline?category=spot&symbol=BTCUSDT&interval=15&limit=2" \
+                   "https://public.bybit.com/spot/" "https://public.bybit.com/spot/BTCUSDT/"; do
+            echo "== $u"; curl -sS -m 20 -w "\nHTTP %{http_code}\n" "$u" | head -c 600; echo
+          done
