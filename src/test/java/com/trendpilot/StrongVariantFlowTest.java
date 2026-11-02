@@ -80,7 +80,7 @@ class StrongVariantFlowTest {
         bybit.reset();
         markets.invalidate();
         for (String t : new String[]{"position", "v5_position", "shadow_event", "early_seen", "notification_outbox",
-                "kline_15m", "equity_curve", "decision_log"}) {
+                "kline_15m", "equity_curve", "decision_log", "variant_decision"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
         Instant fresh = Instant.parse("2026-12-31T00:00:00Z");
@@ -150,5 +150,17 @@ class StrongVariantFlowTest {
         assertThat(jdbc.sql("SELECT reason_code FROM shadow_event WHERE book = 'V5' AND type = 'SELL'")
                 .query(String.class).single()).isEqualTo("PROFIT_PROTECTION");
         assertThat(v5.realizedPnl()).isGreaterThan(v2.realizedPnl());
+
+        // V5 review and fills are recorded: an approved review, a buy fill, a sell fill with slippage
+        var rows = jdbc.sql("SELECT kind, outcome, reasons, slippage_bps, expected_price, ref_close FROM variant_decision "
+                + "WHERE book = 'V5' ORDER BY id").query().listOfRows();
+        assertThat(rows).extracting(r -> r.get("kind") + ":" + r.get("outcome"))
+                .containsSubsequence("REVIEW:BUY", "FILL_BUY:FILLED", "FILL_SELL:FILLED");
+        var sell = rows.stream().filter(r -> "FILL_SELL".equals(r.get("kind"))).findFirst().orElseThrow();
+        assertThat((String) sell.get("reasons")).isEqualTo("PROFIT_PROTECTION");
+        assertThat(sell.get("slippage_bps")).isNotNull();
+        assertThat(((Number) sell.get("expected_price")).doubleValue()).isBetween(104.0, 105.0);
+        // second round: V5 already holds ABC, and that is recorded too
+        assertThat(rows).extracting(r -> r.get("kind") + ":" + r.get("outcome") + ":" + r.get("reasons")).contains("REVIEW:REJECT:HELD");
     }
 }

@@ -59,6 +59,8 @@ public class VariantTracker {
     private final ExitPolicy exitPolicy;
     private final LossGuard guard;
     private final VariantRules rules = new VariantRules();
+    /** 审核和成交记录（variant_decision）；只记录，不参与判断。 */
+    private final VariantDecisionLog decisions;
 
     private final org.springframework.jdbc.core.simple.JdbcClient jdbc;
     private final com.trendpilot.risk.SystemRiskAssessor assessor;
@@ -72,6 +74,7 @@ public class VariantTracker {
                           org.springframework.jdbc.core.simple.JdbcClient jdbc, com.trendpilot.risk.SystemRiskAssessor assessor,
                           com.trendpilot.job.AppState state, com.trendpilot.capital.CapitalAllocator allocator) {
         this.jdbc = jdbc;
+        this.decisions = new VariantDecisionLog(jdbc);
         this.assessor = assessor;
         this.state = state;
         this.allocator = allocator;
@@ -209,6 +212,11 @@ public class VariantTracker {
         private final List<VariantRegistry.Variant> active;
         private final Map<String, List<ReviewResult>> pending = new LinkedHashMap<>();
         private final Map<String, com.trendpilot.risk.RiskState> risks = new LinkedHashMap<>();
+        /** 审核时用的盘口和上一根已收盘 1h 收盘价（key = 变体名:标的），写审核记录用。 */
+        private final Map<String, OrderBook> reviewBooks = new LinkedHashMap<>();
+        private final Map<String, Double> refClose = new LinkedHashMap<>();
+        /** 没进审核就跳过的候选（已持有、风控没算出来），变体名 → [标的, 原因]。 */
+        private final Map<String, List<String[]>> skipped = new LinkedHashMap<>();
 
         Round(List<VariantRegistry.Variant> active) {
             this.active = active;
@@ -244,11 +252,20 @@ public class VariantTracker {
             for (VariantRegistry.Variant v : active) {
                 if (v.overrides().isMomentum()) continue; // 涨幅榜动量不走 EARLY 审核，见 momentumEnter
                 com.trendpilot.risk.RiskState r0 = risks.get(v.name());
-                if (r0 == null) continue;
+                if (r0 == null) {
+                    skipped.computeIfAbsent(v.name(), k -> new ArrayList<>()).add(new String[]{symbol, "RISK_UNAVAILABLE"});
+                    continue;
+                }
                 try {
-                    if (v.book().position(symbol).isPresent()) continue;
+                    if (v.book().position(symbol).isPresent()) {
+                        skipped.computeIfAbsent(v.name(), k -> new ArrayList<>()).add(new String[]{symbol, "HELD"});
+                        continue;
+                    }
                     if (v.overrides().tradeUsdtOr(params.capital().tradeSize()) <= 0) continue;
-                    ReviewResult r = VariantRules.review(reviewer, params, inputFor.apply(v.book(), r0), v.overrides());
+                    ReviewInput in = inputFor.apply(v.book(), r0);
+                    ReviewResult r = VariantRules.review(reviewer, params, in, v.overrides());
+                    reviewBooks.put(v.name() + ":" + symbol, in.book());
+                    if (in.signal() != null) refClose.put(v.name() + ":" + symbol, in.signal().price());
                     pending.computeIfAbsent(v.name(), k -> new ArrayList<>()).add(r);
                 } catch (RuntimeException e) {
                     log.warn("{} {} 本轮审核出错，跳过：{}", v.name(), symbol, e.toString());
@@ -270,6 +287,10 @@ public class VariantTracker {
                     List<String> top = rank(universe, bars, v.overrides().momentumHoursOr24()).stream()
                             .limit(v.overrides().momentumTop()).toList();
                     momentumTop.put(v.name(), top);
+                    for (String sym : top) {
+                        SymbolBars b = bars.get(sym);
+                        if (b != null && !b.hourly().isEmpty()) refClose.put(v.name() + ":" + sym, b.hourly().getLast().close());
+                    }
                     out.addAll(top);
                 } catch (RuntimeException e) {
                     log.warn("{} 涨幅榜排名出错，本轮不买：{}", v.name(), e.toString());
@@ -287,41 +308,84 @@ public class VariantTracker {
         public Map<String, List<String>> momentumEnter(String gen, Instant now, boolean scanComplete,
                                                        Map<String, OrderBook> books, Venue venue) {
             Map<String, List<String>> out = new LinkedHashMap<>();
-            if (!scanComplete) return out;
             StrategyParams.Review rv = params.review();
             for (VariantRegistry.Variant v : active) {
                 List<String> top = momentumTop.get(v.name());
+                if (top == null) continue;
                 com.trendpilot.risk.RiskState risk = risks.get(v.name());
-                if (top == null || risk == null || !risk.newRiskAllowed()) continue;
+                String blocked = !scanComplete ? "SCAN_INCOMPLETE" : risk == null ? "RISK_UNAVAILABLE"
+                        : !risk.newRiskAllowed() ? "RISK:" + String.join("+", risk.reasons()) : null;
+                if (blocked != null) {
+                    for (String sym : top) {
+                        decisions.write(new VariantDecisionLog.Row(v.name(), gen, venue, sym, VariantDecisionLog.REVIEW, "REJECT",
+                                List.of(blocked), Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, books.get(sym), null,
+                                refClose.getOrDefault(v.name() + ":" + sym, Double.NaN)), now);
+                    }
+                    continue;
+                }
                 try {
                     List<String> entered = new ArrayList<>();
                     List<ReviewResult> picks = new ArrayList<>();
+                    // 审核记录按排名顺序：标的 → [结论, 原因, 盘口, 成交]
+                    Map<String, Object[]> rows = new LinkedHashMap<>();
                     int open = v.book().positions().size();
                     for (String sym : top) {
-                        if (v.overrides().maxOpen() != null && open >= v.overrides().maxOpen()) break;
-                        if (v.book().position(sym).isPresent()) continue;
-                        Instant last = v.book().lastExit(sym).orElse(null);
-                        if (last != null && java.time.Duration.between(last, now).toMinutes() < rv.reentryCooldownMinutes()) continue;
                         OrderBook ob = books.get(sym);
+                        if (v.overrides().maxOpen() != null && open >= v.overrides().maxOpen()) {
+                            rows.put(sym, new Object[]{"REJECT", List.of("MAX_OPEN"), ob, null, null});
+                            continue;
+                        }
+                        if (v.book().position(sym).isPresent()) {
+                            rows.put(sym, new Object[]{"REJECT", List.of("HELD"), ob, null, null});
+                            continue;
+                        }
+                        Instant last = v.book().lastExit(sym).orElse(null);
+                        if (last != null && java.time.Duration.between(last, now).toMinutes() < rv.reentryCooldownMinutes()) {
+                            rows.put(sym, new Object[]{"REJECT", List.of("REENTRY_COOLDOWN"), ob, null, null});
+                            continue;
+                        }
                         if (ob == null || !ob.usable() || java.time.Duration.between(ob.fetchedAt(), now).toSeconds() > rv.maxSignalAgeMinutes() * 60) {
+                            rows.put(sym, new Object[]{"REJECT", List.of(ob == null || !ob.usable() ? "BOOK_MISSING" : "BOOK_STALE"), ob, null, null});
                             continue;
                         }
                         double depth = Math.min(ob.bidDepthWithin(rv.depthBandPct()), ob.askDepthWithin(rv.depthBandPct()));
                         var fill = com.trendpilot.market.ExecutionSimulator.buy(ob,
                                 java.math.BigDecimal.valueOf(v.overrides().tradeUsdtOr(params.capital().tradeSize())), params.feeRate());
-                        if (depth < v.overrides().minDepthUsdtOr(rv.minDepthUsdt()) || ob.spreadBps() > rv.maxSpreadBps()
-                                || !fill.complete() || fill.slippageBps() > rv.maxSlippageBps()) {
-                            continue;
-                        }
-                        picks.add(new ReviewResult(sym, Action.BUY, com.trendpilot.capital.Decision.BUY, List.of(), List.of(),
-                                picks.size() == 0 ? 10 : 10 - picks.size() * 0.01, Double.NaN, ob.spreadBps(), fill.slippageBps(),
-                                depth, depth, fill));
+                        List<String> why = new ArrayList<>();
+                        if (depth < v.overrides().minDepthUsdtOr(rv.minDepthUsdt())) why.add("DEPTH");
+                        if (ob.spreadBps() > rv.maxSpreadBps()) why.add("SPREAD");
+                        if (fill == null || !fill.complete()) why.add("FILL_INCOMPLETE");
+                        else if (fill.slippageBps() > rv.maxSlippageBps()) why.add("SLIPPAGE");
+                        ReviewResult r = new ReviewResult(sym, Action.BUY,
+                                why.isEmpty() ? com.trendpilot.capital.Decision.BUY : com.trendpilot.capital.Decision.REJECT, why, List.of(),
+                                picks.size() == 0 ? 10 : 10 - picks.size() * 0.01, Double.NaN, ob.spreadBps(),
+                                fill == null ? Double.NaN : fill.slippageBps(), depth, depth, fill);
+                        rows.put(sym, new Object[]{why.isEmpty() ? "BUDGET_WAIT" : "REJECT", why, ob, r, fill});
+                        if (!why.isEmpty()) continue;
+                        picks.add(r);
                         open++;
                     }
                     // 按变体自己的额度（同 V2 的分配规则），排名靠前的先分到
+                    List<ReviewResult> opened = new ArrayList<>();
                     for (ReviewResult r : funded(v, picks)) {
                         v.book().open(venue, r.symbol(), r.fill(), gen, now);
                         entered.add(r.symbol());
+                        opened.add(r);
+                        rows.get(r.symbol())[0] = "BUY";
+                    }
+                    for (var e : rows.entrySet()) {
+                        Object[] x = e.getValue();
+                        ReviewResult r = (ReviewResult) x[3];
+                        @SuppressWarnings("unchecked") List<String> why = (List<String>) x[1];
+                        decisions.write(new VariantDecisionLog.Row(v.name(), gen, venue, e.getKey(), VariantDecisionLog.REVIEW,
+                                (String) x[0], why, r == null ? Double.NaN : r.score(), r == null ? Double.NaN : r.spreadBps(),
+                                r == null ? Double.NaN : r.slippageBps(), r == null ? Double.NaN : r.bidDepth(),
+                                r == null ? Double.NaN : r.askDepth(), (OrderBook) x[2],
+                                (com.trendpilot.market.ExecutionSimulator.Fill) x[4],
+                                refClose.getOrDefault(v.name() + ":" + e.getKey(), Double.NaN)), now);
+                    }
+                    for (ReviewResult r : opened) {
+                        logFill(v.name(), gen, venue, r, books.get(r.symbol()), now);
                     }
                     if (!entered.isEmpty()) {
                         log.info("{} 涨幅榜动量买入 {} 个 {}：{}", v.name(), entered.size(), gen, entered);
@@ -332,6 +396,12 @@ public class VariantTracker {
                 }
             }
             return out;
+        }
+
+        private void logFill(String book, String gen, Venue venue, ReviewResult r, OrderBook ob, Instant now) {
+            decisions.write(new VariantDecisionLog.Row(book, gen, venue, r.symbol(), VariantDecisionLog.FILL_BUY, "FILLED", List.of(),
+                    r.score(), r.spreadBps(), r.fill() == null ? Double.NaN : r.fill().slippageBps(), r.bidDepth(), r.askDepth(), ob,
+                    r.fill(), refClose.getOrDefault(book + ":" + r.symbol(), Double.NaN)), now);
         }
 
         /** 按买入审核同一套"已收盘"数据排名：24h 用 24h 行情涨跌，4h 用最近 4 根已收盘 1h K 线。数据缺的币不参加排名。 */
@@ -363,12 +433,33 @@ public class VariantTracker {
             for (VariantRegistry.Variant v : active) {
                 try {
                     List<String> entered = new ArrayList<>();
-                    List<ReviewResult> approved = pending.getOrDefault(v.name(), List.of()).stream()
+                    List<ReviewResult> all = pending.getOrDefault(v.name(), List.of());
+                    List<ReviewResult> approved = all.stream()
                             .filter(r -> r.approved() && r.action() == Action.BUY && r.fill() != null).toList();
+                    List<ReviewResult> opened = new ArrayList<>();
                     for (ReviewResult r : funded(v, approved)) {
                         if (v.book().position(r.symbol()).isPresent() || venueOf.get(r.symbol()) == null) continue;
                         v.book().open(venueOf.get(r.symbol()), r.symbol(), r.fill(), gen, now);
                         entered.add(r.symbol());
+                        opened.add(r);
+                    }
+                    for (ReviewResult r : all) {
+                        String outcome = opened.contains(r) ? "BUY" : r.approved() ? "BUDGET_WAIT" : "REJECT";
+                        List<String> why = new ArrayList<>(r.reasons());
+                        if (r.approved() && !opened.contains(r) && approved.contains(r)) why.add("BUDGET_WAIT");
+                        String key = v.name() + ":" + r.symbol();
+                        decisions.write(new VariantDecisionLog.Row(v.name(), gen, venueOf.get(r.symbol()), r.symbol(),
+                                VariantDecisionLog.REVIEW, outcome, why, r.score(), r.spreadBps(), r.slippageBps(), r.bidDepth(),
+                                r.askDepth(), reviewBooks.get(key), r.fill(), refClose.getOrDefault(key, Double.NaN)), now);
+                    }
+                    for (String[] x : skipped.getOrDefault(v.name(), List.of())) {
+                        decisions.write(new VariantDecisionLog.Row(v.name(), gen, venueOf.get(x[0]), x[0], VariantDecisionLog.REVIEW,
+                                "REJECT", List.of(x[1]), Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, null, null,
+                                Double.NaN), now);
+                    }
+                    for (ReviewResult r : opened) {
+                        String key = v.name() + ":" + r.symbol();
+                        logFill(v.name(), gen, venueOf.get(r.symbol()), r, reviewBooks.get(key), now);
                     }
                     if (!entered.isEmpty()) {
                         log.info("{} 影子变体买入 {} 个 {}：{}", v.name(), entered.size(), gen, entered);
@@ -457,6 +548,10 @@ public class VariantTracker {
                 }
                 if (d.sell()) {
                     book.close(pos, d.fill(), d.netPnl(), d.reason(), gen, now);
+                    decisions.write(new VariantDecisionLog.Row(v.name(), gen, pos.venue(), pos.symbol(), VariantDecisionLog.FILL_SELL,
+                            "FILLED", List.of(d.reason()), Double.NaN, in.book().usable() ? in.book().spreadBps() : Double.NaN,
+                            d.fill() == null ? Double.NaN : d.fill().slippageBps(), Double.NaN, Double.NaN, in.book(), d.fill(),
+                            lastHour == null ? Double.NaN : lastHour.close()), now);
                     rules.forget(v.name(), pos);
                     exits.add(d.reason() + ":" + pos.symbol());
                 } else {

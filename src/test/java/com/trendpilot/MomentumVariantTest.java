@@ -101,4 +101,30 @@ class MomentumVariantTest {
         discovery.runOnce(t0);
         assertThat(book.positions()).hasSize(1);
     }
+
+    @Test
+    void everyMomentumPickGetsADecisionRowWithBookPriceAndSlippage() {
+        for (String t : new String[]{"variant_decision", "v6_position", "shadow_event", "equity_curve"}) jdbc.sql("DELETE FROM " + t).update();
+        Instant t0 = Instant.parse("2026-10-14T11:17:00Z");
+        market.put("BTCUSDT", 1.0, TestData.flatQuarters(t0, 60000), TestData.book("BTCUSDT", 60000, 1, 100, t0));
+        market.put("AAAUSDT", 12.0, TestData.flatQuarters(t0, 10), TestData.book("AAAUSDT", 10.05, 2, 5000, t0)); // top 1, fine book
+        market.put("BBXUSDT", 9.0, TestData.flatQuarters(t0, 10), TestData.book("BBXUSDT", 10, 2, 50, t0));      // top 2, thin book
+        market.put("CCCUSDT", 1.0, TestData.flatQuarters(t0, 10), TestData.book("CCCUSDT", 10, 2, 5000, t0));
+        market.put("ABCUSDT", 0.5, TestData.flatQuarters(t0, 104), TestData.book("ABCUSDT", 104, 2, 100, t0));
+        String gen = discovery.runOnce(t0).generation();
+
+        var rows = jdbc.sql("SELECT book, symbol, kind, outcome, reasons, expected_price, ref_close, dev_bps, slippage_bps, best_bid, "
+                + "best_ask, book_at FROM variant_decision WHERE generation = :g ORDER BY id").param("g", gen).query().listOfRows();
+        assertThat(rows).extracting(r -> r.get("book") + ":" + r.get("symbol") + ":" + r.get("kind") + ":" + r.get("outcome"))
+                .containsExactly("V6:AAAUSDT:REVIEW:BUY", "V6:BBXUSDT:REVIEW:REJECT", "V6:AAAUSDT:FILL_BUY:FILLED");
+        var buy = rows.get(0);
+        assertThat(((Number) buy.get("ref_close")).doubleValue()).isEqualTo(10.0);
+        assertThat(((Number) buy.get("expected_price")).doubleValue()).isGreaterThan(10.05);
+        // expected fill vs last 1h close: +50 bps (mid 10.05) plus half spread
+        assertThat(((Number) buy.get("dev_bps")).doubleValue()).isBetween(50.0, 60.0);
+        assertThat(buy.get("slippage_bps")).isNotNull();
+        assertThat(buy.get("best_ask")).isNotNull();
+        assertThat(buy.get("book_at")).isEqualTo(t0.toString());
+        assertThat((String) rows.get(1).get("reasons")).contains("DEPTH");
+    }
 }
