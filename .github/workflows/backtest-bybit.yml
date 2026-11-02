@@ -10,6 +10,10 @@ on:
         description: CandidateStudy 参数（起始月 结束月 最后一天 开始交易 验证期开始 线程数 [候选...]）
         required: true
         default: '2022-11 2026-10 - 2022-12-01 2025-07-02 4 V6_Bybit:momentum-top=3,momentum-hours=24,max-open=17'
+      main:
+        description: 入口类（CandidateStudy，或 ConvexStudy = 大赚小亏方案研究）
+        required: false
+        default: CandidateStudy
       months:
         description: 聚合的月份范围（起始月 结束月）
         required: true
@@ -45,7 +49,7 @@ jobs:
       - name: 回测与发布前检查
         run: |
           du -sh bybit-data
-          java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.CandidateStudy bybit-data backtest-out ${{ inputs.args }}
+          java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.${{ inputs.main || 'CandidateStudy' }} bybit-data backtest-out ${{ inputs.args }}
       - name: 结果推到 backtest-results 分支
         run: |
           RUN=results/$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}-bybit
