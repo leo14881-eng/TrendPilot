@@ -49,6 +49,12 @@ public class HoldingsReport {
     private final StrategyParams params;
     private final AppState state;
     private final JdbcClient jdbc;
+    private com.trendpilot.altseason.AltSeasonJob altSeason;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setAltSeason(com.trendpilot.altseason.AltSeasonJob altSeason) {
+        this.altSeason = altSeason;
+    }
     private final ZoneId zone;
     private final Path dir;
     private final com.trendpilot.notify.Notifier notifier;
@@ -330,6 +336,17 @@ public class HoldingsReport {
         double v3net = v3rows.stream().mapToDouble(Row::net).sum();
         List<Sell> v3sells = sells(com.trendpilot.portfolio.TrendBook.BOOK, dayStart, dayEnd);
         out.add("## 八、V3 趋势跟踪（影子，大赚小亏试验）");
+        if (altSeason != null) {
+            try {
+                altSeason.latestLine().ifPresent(l -> {
+                    out.add("");
+                    out.add("- 山寨季指标（只提醒，不交易）：" + l);
+                });
+            } catch (RuntimeException e) {
+                out.add("");
+                out.add("- 山寨季指标：暂时取不到");
+            }
+        }
         out.add("");
         out.add(String.format(Locale.ROOT, "**合计（已实现 + 浮动）%s U**%s。持仓 %d 个，占用 %s U，浮动 %s U；已实现累计 %s U，当天卖出 %d 笔 %s U。"
                         + "规则：大盘多头时买创 20 日新高的山寨，ATR 止损 + 跟踪止损，不设过早的利润保护；独立资金 20,000 U。",

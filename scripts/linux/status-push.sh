@@ -59,6 +59,7 @@ summary() {
     book V3 v3_position
     echo
     echo "- 影子变体风控（各自的亏损冻结 / 减半 / 恢复期）：$(q "SELECT GROUP_CONCAT(r.name || ' ' || IFNULL((SELECT value FROM app_state WHERE key = 'risk:' || r.name || ':status'), 'NORMAL'), ', ') FROM variant_registry r WHERE r.status != 'ARCHIVED';" | tr -cd 'A-Z0-9_ ,' | head -c 300)"
+    echo "- 山寨季指标（日期 状态 宽度50% 宽度200% 山寨30日% 比BTC点 连续跑赢天数 ETH/BTC比50日线%）：$(q "SELECT day, state, ROUND(breadth50_pct), ROUND(breadth200_pct), ROUND(alt30_median_pct,1), ROUND(alt_vs_btc30_pct,1), outperform_days, ROUND(ethbtc_vs50_pct,1) FROM alt_season_daily ORDER BY day DESC LIMIT 1;" | tr -cd 'A-Z_0-9 .-' | head -c 120)"
     echo "- V2 参数集（自动转正）：$(q "SELECT IFNULL((SELECT value FROM app_state WHERE key = 'params:V2'), '基准');" | tr -cd 'a-z0-9=.,_-' | head -c 200 | sed 's/^$/基准/')"
     echo "- BTC 短线计划（日期 开盘 不开新一轮 金额倍数）：$plan；第 1 档挂单价：$level0"
     echo "- BTC 短线持仓数量（BTC）：$(num "$(q "SELECT qty FROM btc_daily_state WHERE id = 1;")")，成本 U：$(num "$(q "SELECT ROUND(cost,2) FROM btc_daily_state WHERE id = 1;")")，未实现 U：$(num "$(q "SELECT ROUND(s.qty * (SELECT close FROM kline_15m WHERE venue='BINANCE' AND symbol='BTCUSDT' ORDER BY open_time DESC LIMIT 1) - s.cost, 2) FROM btc_daily_state s WHERE s.id = 1;")")，累计已实现 U：$(num "$(q "SELECT ROUND(realized,2) FROM btc_daily_state WHERE id = 1;")")，今天（越南时间）成交笔数：$(num "$(q "SELECT COUNT(*) FROM btc_daily_trade WHERE voided = 0 AND created_at >= '$day_start';")")"
