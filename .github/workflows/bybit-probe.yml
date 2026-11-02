@@ -8,8 +8,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          for u in "https://api.bybit.com/v5/market/kline?category=spot&symbol=BTCUSDT&interval=15&limit=2&start=1664582400000" \
-                   "https://api.bytick.com/v5/market/kline?category=spot&symbol=BTCUSDT&interval=15&limit=2" \
-                   "https://public.bybit.com/spot/" "https://public.bybit.com/spot/BTCUSDT/"; do
-            echo "== $u"; curl -sS -m 20 -w "\nHTTP %{http_code}\n" "$u" | head -c 600; echo
+          for s in BTCUSDT ETHUSDT SOLUSDT PEPEUSDT ARBUSDT; do
+            l=$(curl -sS -m 30 "https://public.bybit.com/spot/$s/" | grep -o 'href="[^"]*"' | sed 's/href="//;s/"//')
+            echo "== $s files=$(echo "$l" | wc -l) first=$(echo "$l" | head -1) last=$(echo "$l" | tail -1)"
+            for f in $(echo "$l" | head -1) $(echo "$l" | tail -1); do
+              echo "$f $(curl -sSI -m 20 "https://public.bybit.com/spot/$s/$f" | grep -i content-length)"
+            done
           done
+          echo "symbols=$(curl -sS -m 30 https://public.bybit.com/spot/ | grep -c 'USDT/')"
+          f=$(curl -sS "https://public.bybit.com/spot/SOLUSDT/" | grep -o 'href="[^"]*"' | sed 's/href="//;s/"//' | tail -1)
+          curl -sS "https://public.bybit.com/spot/SOLUSDT/$f" | zcat | head -3
