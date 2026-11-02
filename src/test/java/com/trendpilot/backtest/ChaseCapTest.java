@@ -74,4 +74,25 @@ class ChaseCapTest {
         }
         assertThat(CandidateStudy.payoffTable(List.of(), 0, 0)).contains("盈亏比");
     }
+
+    @Test
+    void strongRegimeExitGridRunsAndReportsBigWinsWindowsAndAltMarket() throws Exception {
+        List<CandidateStudy.Candidate> g = CandidateStudy.strongExit();
+        assertThat(g).hasSize(6);
+        assertThat(g.subList(1, 6)).allMatch(c -> c.sim().get("runner-regimes").equals("1+2") && c.overrides().hasRunner());
+        StrategyParams params = BacktestMain.loadParams();
+        MarketData data = BacktestSmokeTest.synthetic(30, 30, 13);
+        Regimes regimes = new Regimes(data);
+        SignalTape tape = new SignalTape(data, new EarlySignalCalculator(params));
+        List<Sim> sims = new java.util.ArrayList<>();
+        for (CandidateStudy.Candidate c : g) {
+            B0Sim sim = c.apply(EntryStudy.live(c.id(), data, regimes, tape, params, 10 * 96, data.size));
+            sim.run();
+            assertThat(sim.trades()).as(c.id()).isNotEmpty();
+            sims.add(sim);
+        }
+        assertThat(CandidateStudy.bigWins(sims, regimes, 10 * 96)).contains("≥ 100%");
+        assertThat(CandidateStudy.windows(sims, data)).contains("2024-11-01");
+        assertThat(CandidateStudy.altMarket(data, 10 * 96)).contains("50 日线上方");
+    }
 }

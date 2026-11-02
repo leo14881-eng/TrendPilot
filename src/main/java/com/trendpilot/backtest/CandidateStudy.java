@@ -65,6 +65,10 @@ public final class CandidateStudy {
             if (sim.containsKey("trail-atr")) b.trailAtr(Double.parseDouble(sim.get("trail-atr")));
             if (sim.containsKey("max-ret4h-pct")) b.chaseCap(Double.parseDouble(sim.get("max-ret4h-pct")));
             if (sim.containsKey("stale-hours")) b.staleExit(Integer.parseInt(sim.get("stale-hours")), false, 0);
+            if (sim.containsKey("runner-regimes")) {
+                b.runnerRegimes(java.util.Arrays.stream(sim.get("runner-regimes").split("\\+")).map(Integer::valueOf)
+                        .collect(java.util.stream.Collectors.toSet()));
+            }
             return b;
         }
 
@@ -217,6 +221,26 @@ public final class CandidateStudy {
         return c;
     }
 
+    /**
+     * 按行情切换止盈（用户 2026-11-02 "不要止盈太早"，优化 O4，看结果之前定好）：V6 买入规则不变，只在"普涨""山寨强于 BTC"行情
+     * （Regimes 1、2，每个整点只用当时已知的数据）下改用宽跟踪，其他行情照旧，共 5 组：浮盈达本金 5% / 10% 后从最高净利回撤
+     * 本金 8% / 12% 才卖（4 组），以及浮盈 5% 后只保本（底线 0.35%）+ 1h 收盘低于最高价 3×日线 ATR 卖（1 组）。
+     */
+    static List<Candidate> strongExit() {
+        String v6 = "momentum-top=3,momentum-hours=24,max-open=17";
+        String gate = ",sim.runner-regimes=1+2,sim.base=O4_V6现行卖法";
+        List<Candidate> c = new ArrayList<>();
+        c.add(parse("O4_V6现行卖法", "O4", v6));
+        for (int arm : new int[]{5, 10}) {
+            for (int give : new int[]{8, 12}) {
+                c.add(parse("O4_强势时浮盈" + arm + "%后回撤" + give + "%", "O4",
+                        v6 + ",runner-arm-pct=" + arm + ",runner-giveback-pct=" + give + gate));
+            }
+        }
+        c.add(parse("O4_强势时浮盈5%后ATR×3跟踪", "O4", v6 + ",runner-arm-pct=5,runner-giveback-pct=100,sim.trail-atr=3" + gate));
+        return c;
+    }
+
     /** 每周自动回测的小格子（H1/H2/H4 的代表档、两条退出规则 + rel1h 与每笔金额邻域），共 13 组。 */
     static List<Candidate> weeklyGrid() {
         List<Candidate> c = new ArrayList<>();
@@ -265,6 +289,11 @@ public final class CandidateStudy {
             if (args[a].equals("exitrules")) {
                 cands.addAll(exitRules());
                 gridName = "exitrules";
+                continue;
+            }
+            if (args[a].equals("strongexit")) {
+                cands.addAll(strongExit());
+                gridName = "strongexit";
                 continue;
             }
             if (args[a].equals("v6exit")) {
@@ -411,6 +440,9 @@ public final class CandidateStudy {
                     .append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n").append(vsBase);
             md.append("\n").append(chaseBuckets(sims.stream().filter(x -> !x.name().contains("随机")).toList(), data, fromQ, splitQ));
             md.append("\n").append(payoffTable(sims.stream().filter(x -> !x.name().contains("随机")).toList(), fromQ, splitQ));
+            md.append("\n").append(bigWins(sims.stream().filter(x -> !x.name().contains("随机")).toList(), regimes, fromQ));
+            md.append("\n").append(windows(sims.stream().filter(x -> !x.name().contains("随机")).toList(), data));
+            md.append("\n").append(altMarket(data, fromQ));
             md.append("\n").append(captureTable(sims.stream().filter(x -> !x.name().contains("随机")).toList(), params));
         }
         md.append("\n结论：PASS = 全部检查通过（先作为影子变体跑满 30 天，再按自动转正条件决定）；PROMISING = 有希望但没全部通过（作为影子变体观察）；")
@@ -532,6 +564,102 @@ public final class CandidateStudy {
         return b.toString();
     }
 
+    /** 单笔最大盈利分布：≥ 20% / 50% / 100% 的笔数、最大一笔，全部和"普涨 + 山寨强于 BTC"行情里买入的。 */
+    static String bigWins(List<Sim> sims, Regimes regimes, int fromQ) {
+        StringBuilder b = new StringBuilder("### 单笔大赚（每笔收益 %，按买入时行情）\n\n| 方案 | 范围 | 笔数 | ≥ 20% | ≥ 50% | ≥ 100% | 最大一笔 % | 强势行情合计 U |\n|---|---|---:|---:|---:|---:|---:|---:|\n");
+        for (Sim s : sims) {
+            for (boolean strongOnly : new boolean[]{false, true}) {
+                List<Trade> ts = s.trades().stream().filter(t -> t.entryQ() >= fromQ)
+                        .filter(t -> !strongOnly || t.regime() == 1 || t.regime() == 2).toList();
+                b.append(String.format(Locale.ROOT, "| %s | %s | %d | %d | %d | %d | %.1f | %s |%n", s.name(), strongOnly ? "强势行情买入" : "全部",
+                        ts.size(), ts.stream().filter(t -> t.pct() >= 20).count(), ts.stream().filter(t -> t.pct() >= 50).count(),
+                        ts.stream().filter(t -> t.pct() >= 100).count(), ts.stream().mapToDouble(Trade::pct).max().orElse(Double.NaN),
+                        strongOnly ? String.format(Locale.ROOT, "%,.0f", ts.stream().mapToDouble(Trade::pnl).sum()) : "—"));
+            }
+        }
+        return b.toString();
+    }
+
+    /** 用户指定的山寨行情段（2026-11-02）：按买入时间落在段内的笔数、合计、每笔、最大一笔。段的起止见报告正文的数据确认。 */
+    static final String[][] WINDOWS = {{"2023-10-15", "2024-03-31"}, {"2024-02-15", "2024-03-31"}, {"2024-11-01", "2024-12-31"},
+            {"2025-04-20", "2025-05-31"}};
+
+    static String windows(List<Sim> sims, MarketData data) {
+        StringBuilder b = new StringBuilder("### 山寨行情段（按买入日期，U）\n\n| 方案 |");
+        for (String[] w : WINDOWS) b.append(" ").append(w[0]).append(" ～ ").append(w[1]).append("（笔数 / 合计 / 每笔 / 最大一笔%） |");
+        b.append("\n|---|").append("---:|".repeat(WINDOWS.length)).append('\n');
+        for (Sim s : sims) {
+            b.append("| ").append(s.name()).append(" |");
+            for (String[] w : WINDOWS) {
+                long a = LocalDate.parse(w[0]).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
+                long z = LocalDate.parse(w[1]).plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
+                List<Trade> ts = s.trades().stream().filter(t -> data.time(t.entryQ()) >= a && data.time(t.entryQ()) < z).toList();
+                double sum = ts.stream().mapToDouble(Trade::pnl).sum();
+                b.append(String.format(Locale.ROOT, " %d / %,.0f / %+.2f / %.1f |", ts.size(), sum, ts.isEmpty() ? 0 : sum / ts.size(),
+                        ts.stream().mapToDouble(Trade::pct).max().orElse(Double.NaN)));
+            }
+            b.append('\n');
+        }
+        return b.toString();
+    }
+
+    /**
+     * 每周一行的山寨行情指标（只用当时已收盘的数据）：池内（当天标的池）30 日收益中位数、减 BTC 30 日收益、价格在 50 日 / 200 日均线
+     * 上方的比例、ETH/BTC 相对其 50 日均线。用来确认山寨行情段的起止。日线收盘取每天最后一根 15m 收盘。
+     */
+    static String altMarket(MarketData data, int fromQ) {
+        StringBuilder b = new StringBuilder("### 山寨行情指标（每周一 00:00 UTC）\n\n| 日期 | 池内 30 日收益中位 % | 减 BTC 30 日 % | 50 日线上方 % | 200 日线上方 % | ETH/BTC 比 50 日均线 % |\n|---|---:|---:|---:|---:|---:|\n");
+        int day = MarketData.DAY;
+        for (int q = fromQ - fromQ % day + day - 1; q < data.size; q += day) {
+            long t = data.time(q) + Series.Q;
+            if (java.time.Instant.ofEpochMilli(t).atZone(ZoneOffset.UTC).getDayOfWeek() != java.time.DayOfWeek.MONDAY) continue;
+            List<Double> r30 = new ArrayList<>();
+            int above50 = 0, above200 = 0, n50 = 0, n200 = 0;
+            for (String sym : data.universe(q)) {
+                Series x = data.get(sym);
+                if (x == null || !x.has(q)) continue;
+                double c = x.close[q];
+                double c30 = close(x, q - 30 * day);
+                if (c30 > 0) r30.add((c / c30 - 1) * 100);
+                double m50 = sma(x, q, 50, day), m200 = sma(x, q, 200, day);
+                if (!Double.isNaN(m50)) { n50++; if (c > m50) above50++; }
+                if (!Double.isNaN(m200)) { n200++; if (c > m200) above200++; }
+            }
+            Series btc = data.get(MarketData.BTC), eth = data.get(MarketData.ETH);
+            double b30 = btc == null || !btc.has(q) ? Double.NaN : (btc.close[q] / close(btc, q - 30 * day) - 1) * 100;
+            double eb = Double.NaN;
+            if (eth != null && btc != null && eth.has(q) && btc.has(q)) {
+                double sum = 0;
+                int k = 0;
+                for (int i = 0; i < 50; i++) {
+                    double e = close(eth, q - i * day), bb = close(btc, q - i * day);
+                    if (e > 0 && bb > 0) { sum += e / bb; k++; }
+                }
+                if (k == 50) eb = (eth.close[q] / btc.close[q] / (sum / k) - 1) * 100;
+            }
+            java.util.Collections.sort(r30);
+            double med = r30.isEmpty() ? Double.NaN : r30.get(r30.size() / 2);
+            b.append(String.format(Locale.ROOT, "| %s | %+.1f | %+.1f | %.0f | %.0f | %+.1f |%n",
+                    java.time.Instant.ofEpochMilli(t).atZone(ZoneOffset.UTC).toLocalDate(), med, med - b30,
+                    n50 == 0 ? Double.NaN : above50 * 100.0 / n50, n200 == 0 ? Double.NaN : above200 * 100.0 / n200, eb));
+        }
+        return b.toString();
+    }
+
+    private static double close(Series x, int q) {
+        return q < 0 || !x.has(q) ? Double.NaN : x.close[q];
+    }
+
+    private static double sma(Series x, int q, int days, int day) {
+        double sum = 0;
+        for (int i = 0; i < days; i++) {
+            double c = close(x, q - i * day);
+            if (!(c > 0)) return Double.NaN;
+            sum += c;
+        }
+        return sum / days;
+    }
+
     private static double protectFloor(StrategyParams params, double cost, double peak) {
         return com.trendpilot.monitor.ExitPolicy.protectionFloor(java.math.BigDecimal.valueOf(cost), java.math.BigDecimal.valueOf(peak),
                 java.math.BigDecimal.ZERO, params.exit()).doubleValue();
@@ -554,6 +682,7 @@ public final class CandidateStudy {
         if (c.sim().containsKey("trail-atr")) p.add("跟踪止损 ATR×" + c.sim().get("trail-atr"));
         if (c.sim().containsKey("max-ret4h-pct")) p.add("买入前 4h 涨幅 ≥ " + c.sim().get("max-ret4h-pct") + "% 不开");
         if (c.sim().containsKey("stale-hours")) p.add("持有 " + c.sim().get("stale-hours") + "h 仍浮亏按 1h 收盘卖（替代 72h 等反弹）");
+        if (c.sim().containsKey("runner-regimes")) p.add("宽跟踪只在行情 " + c.sim().get("runner-regimes") + "（1 普涨、2 山寨强于BTC）时生效");
         if (c.sim().containsKey("base")) p.add("对照基准 " + c.sim().get("base"));
         return String.join("；", p);
     }

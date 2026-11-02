@@ -121,6 +121,21 @@ public final class B0Sim extends Sim {
     /** "让赢家跑"阶段用的宽回吐 ExitPolicy；null = 不用。 */
     private ExitPolicy runnerPolicy;
 
+    /**
+     * 按行情切换止盈（优化 O4，只在回测里）：只在这些行情（{@link Regimes} 编号，每个整点只用当时已知的数据判定）下，
+     * "让赢家跑"的宽回吐和 ATR 跟踪止损才生效；其他行情用现行利润保护。null = 不按行情（和以前一样）。
+     */
+    private java.util.Set<Integer> runnerRegimes;
+
+    B0Sim runnerRegimes(java.util.Set<Integer> regimeIds) {
+        this.runnerRegimes = regimeIds;
+        return this;
+    }
+
+    private boolean strongNow(int q) {
+        return runnerRegimes == null || runnerRegimes.contains(regimes.at(q));
+    }
+
     /** 买入审核的频率（15m 根数）：默认 4 = 每小时一次（线上 :17）；1 = 每 15 分钟（买入延迟研究，只在回测里）。 */
     B0Sim discoverEvery(int quarters) {
         this.discoverEvery = quarters;
@@ -266,7 +281,9 @@ public final class B0Sim extends Sim {
                     continue;
                 }
             }
-            if (trailAtrK > 0 && pos.costBasis().signum() > 0 && q % 4 == 3) {
+            boolean trailOn = runnerRegimes == null || (overrides != null && overrides.runnerActive(pos.protectArmed(),
+                    pos.peakNet().doubleValue(), pos.costBasis().doubleValue()) && strongNow(q));
+            if (trailAtrK > 0 && trailOn && pos.costBasis().signum() > 0 && q % 4 == 3) {
                 double atr = atrDaily(s, entryQ.get(pos.symbol()));
                 double dist = Double.isNaN(atr) ? 0.10 : trailAtrK * atr / 100;
                 if (s.close[q] <= path.peakHigh * (1 - dist)) {
@@ -310,7 +327,8 @@ public final class B0Sim extends Sim {
                     if (c < prev && c > x) x = c * (1 - 1e-9);
                 }
                 boolean runner = runnerPolicy != null
-                        && overrides.runnerActive(cur.protectArmed(), cur.peakNet().doubleValue(), cur.costBasis().doubleValue());
+                        && overrides.runnerActive(cur.protectArmed(), cur.peakNet().doubleValue(), cur.costBasis().doubleValue())
+                        && strongNow(q);
                 ExitDecision d = (runner ? runnerPolicy : exitPolicy).evaluate(
                         runner ? com.trendpilot.variant.VariantRules.runnerView(cur) : cur, info(cur.symbol()),
                         Costs.book(cur.symbol(), x, vol, now(q)), sig, fresh && k == 0);

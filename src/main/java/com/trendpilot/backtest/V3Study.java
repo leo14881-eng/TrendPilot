@@ -249,6 +249,12 @@ public final class V3Study {
             periods.get(yr)[1] = Math.max(periods.get(yr)[1], d);
         }
         Map<String, int[]> rows = new LinkedHashMap<>(periods);
+        // 用户指定的山寨行情段（2026-11-02，和 CandidateStudy.WINDOWS 相同），按卖出日期统计
+        for (String[] w : CandidateStudy.WINDOWS) {
+            int a = (int) (LocalDate.parse(w[0]).toEpochDay() - day0.toEpochDay());
+            int z = (int) (LocalDate.parse(w[1]).toEpochDay() - day0.toEpochDay());
+            if (a >= fromDay && z < days) rows.put(w[0] + "～" + w[1], new int[]{a, z});
+        }
         rows.put("全部", new int[]{fromDay, days - 1});
         for (var e : rows.entrySet()) {
             int a = e.getValue()[0], z = e.getValue()[1];
