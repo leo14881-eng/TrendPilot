@@ -241,6 +241,23 @@ public final class CandidateStudy {
         return c;
     }
 
+    /**
+     * 过拟合检查（用户 2026-11-02）：参数邻域。V6 = 涨幅榜前 2/3/4/5 × 回看 12/24/48h（12 组，回测专用写法 sim.momentum-*）；
+     * V5 = rel1h ≥ 4 / 4.5 / 5 / 5.855 / 6.5 / 7.5（6 组，每笔 1,000U）。共 18 组；随机对照的逐笔明细也输出，供滚动前推检验用。
+     */
+    static List<Candidate> robust() {
+        List<Candidate> c = new ArrayList<>();
+        for (int h : new int[]{12, 24, 48}) {
+            for (int n : new int[]{2, 3, 4, 5}) {
+                c.add(parse("R_V6_前" + n + "_" + h + "h", "robust", "sim.momentum-top=" + n + ",sim.momentum-hours=" + h));
+            }
+        }
+        for (String r : new String[]{"4", "4.5", "5", "5.855", "6.5", "7.5"}) {
+            c.add(parse("R_V5_rel1h≥" + r, "robust", "min-buy-rel1h=" + r));
+        }
+        return c;
+    }
+
     /** 每周自动回测的小格子（H1/H2/H4 的代表档、两条退出规则 + rel1h 与每笔金额邻域），共 13 组。 */
     static List<Candidate> weeklyGrid() {
         List<Candidate> c = new ArrayList<>();
@@ -289,6 +306,11 @@ public final class CandidateStudy {
             if (args[a].equals("exitrules")) {
                 cands.addAll(exitRules());
                 gridName = "exitrules";
+                continue;
+            }
+            if (args[a].equals("robust")) {
+                cands.addAll(robust());
+                gridName = "robust";
                 continue;
             }
             if (args[a].equals("strongexit")) {
@@ -468,7 +490,7 @@ public final class CandidateStudy {
         root.put("candidates", out);
         new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT).writeValue(outDir.resolve("candidates.json").toFile(), root);
         for (Sim s : sims) {
-            if (s.name().contains("随机")) continue;
+            if (s.name().contains("随机") && !gridName.equals("robust")) continue;
             Files.writeString(outDir.resolve("trades-" + s.name().replaceAll("[^\\p{L}\\p{N}]+", "_") + ".csv"), BacktestMain.tradesCsv(s, data));
         }
         System.out.println(md);
