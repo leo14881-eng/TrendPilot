@@ -63,7 +63,13 @@ public final class CandidateStudy {
             }
             if (sim.containsKey("stop-fixed")) b.stop(StopRule.fixed("固定" + sim.get("stop-fixed") + "%", Double.parseDouble(sim.get("stop-fixed")), "HOUR"));
             if (sim.containsKey("trail-atr")) b.trailAtr(Double.parseDouble(sim.get("trail-atr")));
+            if (sim.containsKey("max-ret4h-pct")) b.chaseCap(Double.parseDouble(sim.get("max-ret4h-pct")));
             return b;
+        }
+
+        /** 发布前检查用哪个候选当基准（sim.base），没写就是"现行"。 */
+        String baseId() {
+            return sim.getOrDefault("base", "现行");
         }
     }
 
@@ -172,6 +178,24 @@ public final class CandidateStudy {
         return c;
     }
 
+    /**
+     * 极端追高上限（周复盘 2026-11-01 优化 O1，看结果之前定好）：V5 规则（rel1h ≥ 5.855，每笔 1,000U）和
+     * V6 规则（24h 涨幅前 3，最多 17 个）各一个基准，各叠加"买入前 4h 涨幅 ≥ 15% / ≥ 20% 不开"，共 4 组 + 2 个基准。
+     * 4 组的发布前检查以各自的基准为准（sim.base），随机对照挑币时也套同一个上限。只回测，不会被服务器自动上线（带 sim.*）。
+     */
+    static List<Candidate> chase() {
+        String v5 = "min-buy-rel1h=5.855";
+        String v6 = "momentum-top=3,momentum-hours=24,max-open=17";
+        List<Candidate> c = new ArrayList<>();
+        c.add(parse("O1_V5基准", "O1", v5));
+        c.add(parse("O1_V6基准", "O1", v6));
+        for (int cap : new int[]{15, 20}) {
+            c.add(parse("O1_V5_4h≥" + cap + "%不开", "O1", v5 + ",sim.max-ret4h-pct=" + cap + ",sim.base=O1_V5基准"));
+            c.add(parse("O1_V6_4h≥" + cap + "%不开", "O1", v6 + ",sim.max-ret4h-pct=" + cap + ",sim.base=O1_V6基准"));
+        }
+        return c;
+    }
+
     /** 每周自动回测的小格子（H1/H2/H4 的代表档、两条退出规则 + rel1h 与每笔金额邻域），共 13 组。 */
     static List<Candidate> weeklyGrid() {
         List<Candidate> c = new ArrayList<>();
@@ -220,6 +244,11 @@ public final class CandidateStudy {
             if (args[a].equals("exitrules")) {
                 cands.addAll(exitRules());
                 gridName = "exitrules";
+                continue;
+            }
+            if (args[a].equals("chase")) {
+                cands.addAll(chase());
+                gridName = "chase";
                 continue;
             }
             if (args[a].equals("h124")) {
@@ -314,12 +343,19 @@ public final class CandidateStudy {
         md.append("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|\n");
         md.append(String.format(Locale.ROOT, "| 现行 | — | 基准 | %,.0f / %,.0f | %,.0f / %,.0f | %.1f%% | %.1f | %d | — | — | — |%n",
                 bV.equity(), bV.maxDd(), bF.equity(), bF.maxDd(), bF.navDd() * 100, bF.calmar(), bF.trades()));
+        StringBuilder vsBase = new StringBuilder();
         for (Candidate c : cands) {
             Sim s = byName.get(c.id());
             ReleaseCheck.Period f = ReleaseCheck.Period.of(s, regimes, fromQ, size, params.capital().hardCap());
             ReleaseCheck.Period v = ReleaseCheck.Period.of(s, regimes, splitQ, size);
             ReleaseCheck.Period rnd = ReleaseCheck.Period.of(byName.get(c.id() + " 随机"), regimes, fromQ, size);
-            ReleaseCheck.Result r = ReleaseCheck.evaluate(f, v, bF, bV, Metrics.of(s, regimes, fromQ, size).regimeEquity(), bReg, rnd);
+            Sim cb = byName.getOrDefault(c.baseId(), base);
+            ReleaseCheck.Period cbF = cb == base ? bF : ReleaseCheck.Period.of(cb, regimes, fromQ, size, params.capital().hardCap());
+            ReleaseCheck.Period cbV = cb == base ? bV : ReleaseCheck.Period.of(cb, regimes, splitQ, size);
+            double[] cbReg = cb == base ? bReg : Metrics.of(cb, regimes, fromQ, size).regimeEquity();
+            double[] cReg = Metrics.of(s, regimes, fromQ, size).regimeEquity();
+            ReleaseCheck.Result r = ReleaseCheck.evaluate(f, v, cbF, cbV, cReg, cbReg, rnd);
+            if (cb != base) vsBase.append(baseRow(c.id(), cb.name(), f, v, cbF, cbV, cReg, cbReg));
             List<String> failed = r.checks().entrySet().stream().filter(e -> !e.getValue()).map(Map.Entry::getKey).toList();
             List<String> why = new ArrayList<>(failed);
             why.addAll(r.notes());
@@ -341,6 +377,14 @@ public final class CandidateStudy {
             j.put("validation", Map.of("equity", round(v.equity()), "maxDrawdown", round(v.maxDd()), "trades", v.trades(), "perTrade", round(v.meanPnl())));
             j.put("evidence", evidence.isBlank() ? "" : evidence + "/report.md");
             out.add(j);
+        }
+        if (vsBase.length() > 0) {
+            md.append("\n### 对各自基准（不是现行 V2）\n\n")
+                    .append("| 候选 | 基准 | 全期 权益 候选 / 基准 | 验证期 权益 候选 / 基准 | 全期回撤 候选 / 基准 | 验证期回撤 候选 / 基准 | 净值回撤 | ")
+                    .append(String.join(" | ", java.util.Arrays.asList(Regimes.NAMES).subList(1, 7))).append("（候选 / 基准，U） |\n")
+                    .append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n").append(vsBase);
+            md.append("\n").append(chaseBuckets(sims.stream().filter(x -> !x.name().contains("随机")).toList(), data, fromQ, splitQ));
+            md.append("\n").append(captureTable(sims.stream().filter(x -> !x.name().contains("随机")).toList(), params));
         }
         md.append("\n结论：PASS = 全部检查通过（先作为影子变体跑满 30 天，再按自动转正条件决定）；PROMISING = 有希望但没全部通过（作为影子变体观察）；")
                 .append("WORSE = 明显更差（只存档）。检查项见 ReleaseCheck。\n\n");
@@ -371,6 +415,87 @@ public final class CandidateStudy {
         System.out.println(md);
     }
 
+    private static String baseRow(String id, String baseName, ReleaseCheck.Period f, ReleaseCheck.Period v,
+                                  ReleaseCheck.Period bf, ReleaseCheck.Period bv, double[] reg, double[] breg) {
+        StringBuilder b = new StringBuilder(String.format(Locale.ROOT, "| %s | %s | %,.0f / %,.0f | %,.0f / %,.0f | %,.0f / %,.0f | %,.0f / %,.0f | %.1f%% |",
+                id, baseName, f.equity(), bf.equity(), v.equity(), bv.equity(), f.maxDd(), bf.maxDd(), v.maxDd(), bv.maxDd(), f.navDd() * 100));
+        for (int r = 1; r <= 6; r++) b.append(String.format(Locale.ROOT, " %,.0f / %,.0f |", reg[r], breg[r]));
+        return b.append('\n').toString();
+    }
+
+    /** 买入前 4h 涨幅分档（同一口径 {@link B0Sim#ret4hPct}）的每笔期望：全期和验证期，每笔 U ±95%。 */
+    static String chaseBuckets(List<Sim> sims, MarketData data, int fromQ, int splitQ) {
+        double[] edges = {Double.NEGATIVE_INFINITY, 5, 10, 15, 20, Double.POSITIVE_INFINITY};
+        String[] names = {"< 5%", "5%～10%", "10%～15%", "15%～20%", "≥ 20%", "缺数据"};
+        StringBuilder b = new StringBuilder("### 按买入前 4h 涨幅分档的每笔期望（U，±95%；括号里是笔数）\n\n| 方案 | 期间 | ")
+                .append(String.join(" | ", names)).append(" |\n|---|---|").append("---:|".repeat(names.length)).append('\n');
+        for (Sim s : sims) {
+            for (int part = 0; part < 2; part++) {
+                List<List<Double>> bins = new ArrayList<>();
+                for (int i = 0; i < names.length; i++) bins.add(new ArrayList<>());
+                for (Trade t : s.trades()) {
+                    if (t.entryQ() < (part == 0 ? fromQ : splitQ)) continue;
+                    double r = B0Sim.ret4hPct(data.get(t.symbol()), t.entryQ());
+                    int k = names.length - 1;
+                    if (!Double.isNaN(r)) for (k = 0; k < edges.length - 1 && !(r >= edges[k] && r < edges[k + 1]); k++) ;
+                    bins.get(k).add(t.pnl());
+                }
+                b.append("| ").append(s.name()).append(" | ").append(part == 0 ? "全期" : "验证期").append(" |");
+                for (List<Double> x : bins) {
+                    if (x.isEmpty()) {
+                        b.append(" — |");
+                        continue;
+                    }
+                    double m = x.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
+                    double v = x.stream().mapToDouble(y -> (y - m) * (y - m)).sum() / Math.max(1, x.size() - 1);
+                    b.append(String.format(Locale.ROOT, " %+.2f ±%.2f (%d) |", m, 1.96 * Math.sqrt(v / x.size()), x.size()));
+                }
+                b.append('\n');
+            }
+        }
+        return b.toString();
+    }
+
+    /**
+     * 盈利单卖出时拿到最大浮盈的比例（卖出净利 / 持仓期间最大可退出净利），按卖出原因分；利润保护卖出另算
+     * "卖出净利 / 卖出时的保护底线"（底线 = max(本金 × floor%, 最大净利 − 本金 × giveback%, 最大净利 × keep%)），
+     * 用来和线上的 52%～57% 对照：回测按底线价成交（FastWatch 口径），线上要等下一次检查、按真实买盘成交。
+     */
+    static String captureTable(List<Sim> sims, StrategyParams params) {
+        StringBuilder b = new StringBuilder("### 盈利单拿到最大浮盈的比例（中位数 / 均值）\n\n")
+                .append("| 方案 | 盈利单 | 卖出 / 最大浮盈 中位 | 均值 | 其中利润保护卖出 | 利润保护：卖出 / 最大浮盈 中位 | 利润保护：卖出 / 保护底线 中位 | 最大浮盈中位（本金 %） |\n")
+                .append("|---|---:|---:|---:|---:|---:|---:|---:|\n");
+        for (Sim s : sims) {
+            List<Double> all = new ArrayList<>(), pp = new ArrayList<>(), floor = new ArrayList<>(), peak = new ArrayList<>();
+            for (Trade t : s.trades()) {
+                if (t.pnl() <= 0 || t.maxNet() <= 0) continue;
+                all.add(t.pnl() / t.maxNet());
+                peak.add(t.maxNet() / t.cost() * 100);
+                if (t.reason().contains("PROTECT")) {
+                    pp.add(t.pnl() / t.maxNet());
+                    double fl = protectFloor(params, t.cost(), t.maxNet());
+                    if (fl > 0) floor.add(t.pnl() / fl);
+                }
+            }
+            b.append(String.format(Locale.ROOT, "| %s | %d | %.0f%% | %.0f%% | %d | %.0f%% | %.0f%% | %.2f%% |%n", s.name(), all.size(),
+                    median(all) * 100, all.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN) * 100,
+                    pp.size(), median(pp) * 100, median(floor) * 100, median(peak)));
+        }
+        return b.toString();
+    }
+
+    private static double protectFloor(StrategyParams params, double cost, double peak) {
+        return com.trendpilot.monitor.ExitPolicy.protectionFloor(java.math.BigDecimal.valueOf(cost), java.math.BigDecimal.valueOf(peak),
+                java.math.BigDecimal.ZERO, params.exit()).doubleValue();
+    }
+
+    private static double median(List<Double> x) {
+        if (x.isEmpty()) return Double.NaN;
+        List<Double> y = new ArrayList<>(x);
+        java.util.Collections.sort(y);
+        return y.size() % 2 == 1 ? y.get(y.size() / 2) : (y.get(y.size() / 2 - 1) + y.get(y.size() / 2)) / 2;
+    }
+
     private static String describe(Candidate c) {
         List<String> p = new ArrayList<>();
         if (!c.overrides().isEmpty()) p.add(c.overrides().describe());
@@ -379,6 +504,8 @@ public final class CandidateStudy {
         if (c.sim().containsKey("momentum-top")) p.add("涨幅榜动量：滚动 " + c.sim().getOrDefault("momentum-hours", "24") + "h 涨幅前 " + c.sim().get("momentum-top") + " 名");
         if (c.sim().containsKey("stop-fixed")) p.add("固定止损 " + c.sim().get("stop-fixed") + "%");
         if (c.sim().containsKey("trail-atr")) p.add("跟踪止损 ATR×" + c.sim().get("trail-atr"));
+        if (c.sim().containsKey("max-ret4h-pct")) p.add("买入前 4h 涨幅 ≥ " + c.sim().get("max-ret4h-pct") + "% 不开");
+        if (c.sim().containsKey("base")) p.add("对照基准 " + c.sim().get("base"));
         return String.join("；", p);
     }
 

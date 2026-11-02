@@ -135,6 +135,31 @@ public final class B0Sim extends Sim {
         return this;
     }
 
+    /**
+     * 极端追高上限（周复盘 2026-11-01 优化 O1，只在回测里）：买入时最近 4h 涨幅（已收盘 15m 收盘价，close[q] / close[q-16] − 1）
+     * ≥ 这个百分比就不开新仓；随机对照挑币时也套同一个上限。缺数据 = 不开。NaN = 不用。
+     */
+    private double maxRet4hPct = Double.NaN;
+
+    B0Sim chaseCap(double pct) {
+        this.maxRet4hPct = pct;
+        return this;
+    }
+
+    /** 买入前 4h 涨幅（%），只用 q 及之前已收盘的 15m K 线；缺数据为 NaN。 */
+    static double ret4hPct(Series x, int q) {
+        if (x == null || q - 16 < 0 || !x.has(q)) return Double.NaN;
+        double a = x.close[q - 16];
+        double c = x.close[q];
+        return Double.isNaN(a) || a <= 0 || Double.isNaN(c) ? Double.NaN : (c / a - 1) * 100;
+    }
+
+    private boolean chaseOk(String sym, int q) {
+        if (Double.isNaN(maxRet4hPct)) return true;
+        double r = ret4hPct(data.get(sym), q);
+        return !Double.isNaN(r) && r < maxRet4hPct;
+    }
+
     B0Sim randomEntry(long seed) {
         this.random = new java.util.Random(seed);
         return this;
@@ -435,6 +460,7 @@ public final class B0Sim extends Sim {
                     if (!r.approved()) continue;
                 }
             }
+            if (r.approved() && r.action() == Action.BUY && !chaseOk(sym, q)) continue;
             if (r.approved() && entryFilter != null && r.action() == Action.BUY
                     && !entryFilter.test(feat(sym, q, s, t.quoteVolume(), risk))) continue;
             if (r.approved() && (buyRegimes == null || r.action() != Action.BUY || buyRegimes.contains(risk.regime()))) approved.add(r);
@@ -519,6 +545,7 @@ public final class B0Sim extends Sim {
             if (positions.containsKey(sym)) continue;
             Integer exitQ = lastExitQ.get(sym);
             if (exitQ != null && q - exitQ < 4) continue; // 卖出后 1 小时内不买回
+            if (!chaseOk(sym, q)) continue;
             Ticker24h t = data.ticker(sym, q);
             if (t == null) continue;
             OrderBook book = Costs.book(sym, data.get(sym).close[q], t.quoteVolume(), now);
@@ -536,7 +563,7 @@ public final class B0Sim extends Sim {
         for (String sym : universe) {
             if (sym.equals(MarketData.BTC) || positions.containsKey(sym)) continue;
             Series x = data.get(sym);
-            if (x == null || !x.has(q) || data.ticker(sym, q) == null) continue;
+            if (x == null || !x.has(q) || data.ticker(sym, q) == null || !chaseOk(sym, q)) continue;
             pool.add(sym);
         }
         return pool.isEmpty() ? null : pool.get(random.nextInt(pool.size()));
