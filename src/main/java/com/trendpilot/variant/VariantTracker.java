@@ -203,8 +203,20 @@ public class VariantTracker {
                 : r.reasons().stream().anyMatch(x -> x.startsWith("RISK_RECOVERY")) ? "RECOVERING"
                 : r.reasons().contains("LOSS_HALF_BUDGET") ? "LOSS_HALF_BUDGET"
                 : !r.newRiskAllowed() ? "MARKET_BLOCKED" : "NORMAL";
+        String old = state.get(statusKey(v.name())).orElse("");
         state.put(statusKey(v.name()), status);
+        if (!status.equals(old)) logRiskChange(v.name(), old, status, m.generation(), m.now());
         return r;
+    }
+
+    /** 风控状态变化写一条 risk_state_log（只记录；写失败只记 warn）。 */
+    private void logRiskChange(String book, String old, String status, String gen, Instant now) {
+        try {
+            jdbc.sql("INSERT INTO risk_state_log(book, old_status, new_status, generation, at) VALUES (:b, :o, :n, :g, :t)")
+                    .param("b", book).param("o", old).param("n", status).param("g", gen).param("t", now.toString()).update();
+        } catch (RuntimeException e) {
+            log.warn("{} 风控状态变化记录写入失败（不影响买卖）：{}", book, e.toString());
+        }
     }
 
     /** 一轮 Discovery 里各变体的待买清单。 */

@@ -82,7 +82,7 @@ class VariantRiskTest {
         markets.invalidate();
         registry.all(); // 先建好变体持仓表
         for (String t : new String[]{"position", "v5_position", "v6_position", "shadow_event", "early_seen", "notification_outbox",
-                "equity_curve", "decision_log"}) {
+                "equity_curve", "decision_log", "risk_state_log"}) {
             jdbc.sql("DELETE FROM " + t).update();
         }
         jdbc.sql("DELETE FROM app_state WHERE key LIKE 'risk:%'").update();
@@ -135,6 +135,26 @@ class VariantRiskTest {
         assertThat(state.get(VariantTracker.statusKey("V6"))).contains("LOSS_FREEZE");
         assertThat(state.get(VariantTracker.statusKey("V5"))).contains("NORMAL");
         assertThat(VariantTracker.statusLabel("LOSS_FREEZE")).isEqualTo("亏损冻结");
+    }
+
+    @Test
+    void everyVariantRiskStateChangeIsLoggedOnce() {
+        losses("V6", 2);
+        discovery.runOnce(T0);
+        discovery.runOnce(T0); // same state again: no new row
+        var rows = jdbc.sql("SELECT book, old_status, new_status, generation, at FROM risk_state_log ORDER BY id").query().listOfRows();
+        assertThat(rows).extracting(r -> r.get("book") + ":" + r.get("old_status") + "->" + r.get("new_status"))
+                .contains("V6:->LOSS_HALF_BUDGET", "V5:->NORMAL")
+                .doesNotHaveDuplicates();
+        assertThat(rows).allMatch(r -> r.get("generation") != null && r.get("at") != null);
+        // a third loss: V6 goes from half budget to freeze, logged with its old state
+        jdbc.sql("""
+                INSERT INTO shadow_event(event_id, book, venue, symbol, type, pnl_usdt, reason_code, generation, params_version, created_at)
+                VALUES ('extra-loss', 'V6', 'BINANCE', 'L9USDT', 'SELL', '-50', 'STOP_LOSS', 'g', 'v', :t)
+                """).param("t", T0.minusSeconds(1800).toString()).update();
+        discovery.runOnce(T0);
+        assertThat(jdbc.sql("SELECT old_status || '->' || new_status FROM risk_state_log WHERE book = 'V6' ORDER BY id")
+                .query(String.class).list()).containsExactly("->LOSS_HALF_BUDGET", "LOSS_HALF_BUDGET->LOSS_FREEZE");
     }
 
     @Test
