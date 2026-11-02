@@ -291,10 +291,21 @@ public class VariantTracker {
          */
         public java.util.Set<String> momentumSymbols(List<com.trendpilot.market.Ticker24h> universe,
                                                      Map<String, SymbolBars> bars) {
+            return momentumSymbols(Venue.BINANCE, universe, bars);
+        }
+
+        /** 有没有在这个交易所选币的涨幅榜动量变体（V6B 用 Bybit）。 */
+        public boolean needsMomentum(Venue venue) {
+            return active.stream().anyMatch(v -> v.overrides().isMomentum() && v.overrides().momentumVenueOr() == venue);
+        }
+
+        /** 某个交易所的涨幅榜动量变体本轮想看的币：universe / bars 是这个交易所的标的池。 */
+        public java.util.Set<String> momentumSymbols(Venue venue, List<com.trendpilot.market.Ticker24h> universe,
+                                                     Map<String, SymbolBars> bars) {
             java.util.Set<String> out = new java.util.LinkedHashSet<>();
-            momentumTop.clear();
             for (VariantRegistry.Variant v : active) {
-                if (!v.overrides().isMomentum()) continue;
+                if (!v.overrides().isMomentum() || v.overrides().momentumVenueOr() != venue) continue;
+                momentumTop.remove(v.name());
                 try {
                     List<String> top = rank(universe, bars, v.overrides().momentumHoursOr24()).stream()
                             .limit(v.overrides().momentumTop()).toList();
@@ -322,6 +333,7 @@ public class VariantTracker {
             Map<String, List<String>> out = new LinkedHashMap<>();
             StrategyParams.Review rv = params.review();
             for (VariantRegistry.Variant v : active) {
+                if (!v.overrides().isMomentum() || v.overrides().momentumVenueOr() != venue) continue;
                 List<String> top = momentumTop.get(v.name());
                 if (top == null) continue;
                 com.trendpilot.risk.RiskState risk = risks.get(v.name());

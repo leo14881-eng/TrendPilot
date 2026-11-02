@@ -311,6 +311,30 @@ public class DiscoveryJob {
             log.warn("涨幅榜动量本轮准备出错，变体不买：{}", e.toString());
         }
         final Map<String, OrderBook> booksForRound = fetchedBooks;
+        // V6B 等在 Bybit 选币的涨幅榜动量变体：用 Bybit 完整标的池（含 Binance 也有的币）和 Bybit 盘口；出错只影响这些变体
+        Map<String, OrderBook> bybitMomentumBooks = new LinkedHashMap<>();
+        boolean bybitMomentumOk = false;
+        if (bybit != null && variantRound.needsMomentum(Venue.BYBIT)) {
+            try {
+                Set<String> categories = research.excludedSymbols(Venue.BYBIT);
+                Set<String> blocked = new java.util.HashSet<>(categories);
+                blocked.addAll(research.tokenizedSymbols(Venue.BYBIT));
+                List<Ticker24h> bybitUniverse = universeFilter.select(bybit.directory().all(), bybit.tickers().tickers24h(),
+                        Set.of(), blocked);
+                bybitMomentumOk = !categories.isEmpty() && !bybitUniverse.isEmpty(); // 分类资料缺失：不买（同 V2）
+                for (String sym : variantRound.momentumSymbols(Venue.BYBIT, bybitUniverse, Map.of())) {
+                    try {
+                        OrderBook ob = bybit.depth().getCovering(sym, DEPTH_SPAN_PCT, 0);
+                        if (ob != null) bybitMomentumBooks.put(sym, ob);
+                    } catch (RuntimeException e) {
+                        log.debug("Bybit 涨幅榜动量 {} 盘口获取失败，本轮不买：{}", sym, e.getMessage());
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.warn("Bybit 涨幅榜动量本轮准备出错，V6B 等变体不买：{}", e.toString());
+            }
+        }
+        final boolean bybitMomentumComplete = bybitMomentumOk;
         long booksFetchedNanos = System.nanoTime();
 
         // 研究：轮转 + 前 N 个 EARLY + 前 N 个价格异动；所有 EARLY 和候选都要有身份结论（只读本地资料）
@@ -422,6 +446,8 @@ public class DiscoveryJob {
             try {
                 variantRound.enter(gen, now, venueOf);
                 variantRound.momentumEnter(gen, now, main.complete(), books, Venue.BINANCE);
+                variantRound.momentumEnter(gen, now, main.complete() && bybitMomentumComplete,
+                        System.nanoTime() - booksFetchedNanos > MAX_BOOK_AGE.toNanos() ? Map.of() : bybitMomentumBooks, Venue.BYBIT);
             } catch (RuntimeException e) {
                 log.warn("影子变体本轮买入出错，跳过：{}", e.toString());
             }

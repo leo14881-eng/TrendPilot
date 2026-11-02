@@ -24,10 +24,10 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
                                Double maxVolumeAccel,
                                Double earlyExitHours, Double earlyExitMaxMfePct, Double earlyExitLossPct,
                                String exitRule, Double runnerArmPct, Double runnerGivebackPct, Double runnerLockRatio,
-                               Integer momentumTop, Integer momentumHours, Integer maxOpen) {
+                               Integer momentumTop, Integer momentumHours, Integer maxOpen, String momentumVenue) {
 
     public static final String EARLY_EXIT = "EARLY_EXIT";
-    public static final VariantOverrides NONE = new VariantOverrides(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+    public static final VariantOverrides NONE = new VariantOverrides(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     /** 可以叠加的离线退出规则族（tracking.ExitRule，只用净收益和持有时间的几种）。 */
     static final java.util.Set<String> EXIT_RULE_FAMILIES = java.util.Set.of("S1", "C1", "T1", "T2");
     public static final String RULE_EXIT_PREFIX = "RULE_";
@@ -66,6 +66,10 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         if (momentumHours != null && momentumHours != 24 && momentumHours != 4) throw new IllegalArgumentException("momentum-hours 只支持 24 或 4");
         if (momentumHours != null && momentumTop == null) throw new IllegalArgumentException("momentum-hours 需要 momentum-top");
         if (maxOpen != null && !(maxOpen >= 1 && maxOpen <= 50)) throw new IllegalArgumentException("max-open 要在 1～50");
+        if (momentumVenue != null && !momentumVenue.equals("BINANCE") && !momentumVenue.equals("BYBIT")) {
+            throw new IllegalArgumentException("momentum-venue 只支持 BINANCE 或 BYBIT");
+        }
+        if (momentumVenue != null && momentumTop == null) throw new IllegalArgumentException("momentum-venue 需要 momentum-top");
         if (tradeUsdt != null && tradeUsdt > 5000) throw new IllegalArgumentException("trade-usdt 影子变体每笔最多 5000");
     }
 
@@ -82,6 +86,7 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         String rule = null;
         Double rArm = null, rGive = null, rLock = null;
         Integer mTop = null, mHours = null, mOpen = null;
+        String mVenue = null;
         for (var e : raw.entrySet()) {
             String k = e.getKey().trim().toLowerCase(Locale.ROOT).replace('_', '-');
             String v = String.valueOf(e.getValue()).trim();
@@ -108,11 +113,13 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
                 case "momentum-top" -> mTop = (int) Math.round(num(k, v));
                 case "momentum-hours" -> mHours = (int) Math.round(num(k, v));
                 case "max-open" -> mOpen = (int) Math.round(num(k, v));
+                case "momentum-venue" -> mVenue = v.toUpperCase(Locale.ROOT);
                 default -> throw new IllegalArgumentException("不认识的变体参数 " + e.getKey());
             }
         }
         if (hot != null && btc == null && cMin == null) throw new IllegalArgumentException("hot-entry 需要 btc24h-above-pct 或 coin24h-band-pct");
-        return new VariantOverrides(rel, depth, trade, btc, cMin, cMax, hot, vol, h, mfe, loss, rule, rArm, rGive, rLock, mTop, mHours, mOpen);
+        return new VariantOverrides(rel, depth, trade, btc, cMin, cMax, hot, vol, h, mfe, loss, rule, rArm, rGive, rLock, mTop, mHours, mOpen,
+                "BINANCE".equals(mVenue) ? null : mVenue);
     }
 
     /** 命令行写法 "key=v,key=v"（回测入口和 candidates.json 用）。 */
@@ -162,6 +169,7 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         if (momentumTop != null) m.put("momentum-top", String.valueOf(momentumTop));
         if (momentumHours != null) m.put("momentum-hours", String.valueOf(momentumHours));
         if (maxOpen != null) m.put("max-open", String.valueOf(maxOpen));
+        if (momentumVenue != null) m.put("momentum-venue", momentumVenue);
         return m;
     }
 
@@ -197,6 +205,11 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
     /** 涨幅榜动量入场（不走 EARLY 审核，每轮按滚动涨幅取前 N 名）。 */
     public boolean isMomentum() {
         return momentumTop != null;
+    }
+
+    /** 涨幅榜动量的标的池和盘口所在交易所（默认 Binance；V6B 用 Bybit）。 */
+    public com.trendpilot.market.Venue momentumVenueOr() {
+        return momentumVenue == null ? com.trendpilot.market.Venue.BINANCE : com.trendpilot.market.Venue.valueOf(momentumVenue);
     }
 
     public int momentumHoursOr24() {
@@ -310,7 +323,8 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
             p.add("持有 " + fmt(earlyExitHours) + "h 最大浮盈 < " + fmt(earlyExitMaxMfePct) + "% 且亏 > " + fmt(earlyExitLossPct) + "% 离场");
         }
         if (exitRule != null) p.add("附加卖出 " + exitRule + ruleLabel(exitRule));
-        if (momentumTop != null) p.add("涨幅榜动量：滚动 " + momentumHoursOr24() + "h 涨幅前 " + momentumTop + " 名（不看 EARLY 信号）");
+        if (momentumTop != null) p.add("涨幅榜动量：滚动 " + momentumHoursOr24() + "h 涨幅前 " + momentumTop + " 名（不看 EARLY 信号）"
+                + (momentumVenue == null ? "" : "，标的池和盘口用 " + momentumVenue));
         if (maxOpen != null) p.add("最多同时持有 " + maxOpen + " 个");
         if (runnerArmPct != null) {
             p.add("浮盈到 " + fmt(runnerArmPct) + "% 后保护改为回吐 " + fmt(runnerGivebackPct) + "%"

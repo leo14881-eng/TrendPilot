@@ -48,6 +48,11 @@ trendpilot:
       #      4 年回测 +48,871 U / 回撤 2,951 U，净值回撤 7.5%，卡玛 4.7（本次所有候选里最高）；比 V5 收益少 9%、回撤少 41%
       - { name: V7, base: V2, trade-usdt: 1000, overrides: { min-buy-rel1h: 5.855, early-exit-hours: 12, early-exit-max-mfe-pct: 1, early-exit-loss-pct: 4 },
           backtest-passed: false, evidence: "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261025-1817-382bf63/report.md" }
+      # V6B = V6 同规则（成交额前 150 里 24h 涨幅前 3、最多 17 个、每笔 1,000U、退出同 V2），但标的池和盘口用 Bybit
+      #       （用户只有 Bybit 账号，2026-11-02 授权上线影子，不要求回测通过）。backtest-passed: false，不会自动转正；
+      #       Bybit 数据回测见 evidence
+      - { name: V6B, base: V2, trade-usdt: 1000, overrides: { momentum-top: 3, momentum-hours: 24, max-open: 17, momentum-venue: BYBIT },
+          backtest-passed: false, evidence: "docs/策略对比记录/2026-11-02-V6-Bybit.md" }
   # 自动优化：变体满 30 天按同期表现自动转正 / 停开新仓，每周读取回测候选（见 com.trendpilot.variant.AutoPromoter）
   optimize:
     auto-promote: true              # 已批准自动转正：只对影子账本 V2 生效（用户 2026-10-26 授权）
@@ -58,7 +63,7 @@ trendpilot:
     min-closed: 20
     promote-dd-ratio: 1.1
     retire-dd-ratio: 1.3
-    max-active: 3
+    max-active: 4                   # 用户 2026-11-02 授权由 3 个增加到 4 个（"你决定就行"），新增 V6B
     formal-change-days: 14          # 正式规则最多每 2 周换一次
     last-formal-change: "2026-10-23"  # V2 上次正式改动（恢复基准）
     candidates-url: https://raw.githubusercontent.com/leo14881-eng/TrendPilot/backtest-results/candidates/candidates.json

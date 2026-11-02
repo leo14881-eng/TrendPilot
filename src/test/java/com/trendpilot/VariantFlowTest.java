@@ -47,6 +47,7 @@ class VariantFlowTest {
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry r) {
         r.add("trendpilot.data-dir", () -> dataDir.toString());
+        r.add("trendpilot.optimize.max-active", () -> "3"); // this test checks the slot limit with 3 slots
         r.add("trendpilot.telegram.bot-token", () -> "");
         r.add("trendpilot.telegram.chat-id", () -> "");
         r.add("trendpilot.variants.list[0].name", () -> "V5");
