@@ -1,0 +1,290 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-11-02T01:30:21.314321191Z",
+  "grid" : "v6exit",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-10-01",
+  "dataTo" : "2026-11-01",
+  "validationFrom" : "2025-07-02",
+  "evidence" : "",
+  "baseline" : {
+    "validation" : {
+      "maxDrawdown" : 14309.81,
+      "equity" : -1716.97,
+      "trades" : 4574
+    },
+    "full" : {
+      "maxDrawdown" : 14538.46,
+      "equity" : 22216.57,
+      "trades" : 15433
+    }
+  },
+  "candidates" : [ {
+    "id" : "O3_V6现行卖法",
+    "group" : "O3",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "maxDrawdown" : 4101.24,
+      "trades" : 14977,
+      "perTrade" : 4.58,
+      "navDrawdownPct" : 10.46,
+      "calmar" : 16.72,
+      "equity" : 68567.51
+    },
+    "validation" : {
+      "trades" : 4899,
+      "perTrade" : 4.97,
+      "maxDrawdown" : 2508.2,
+      "equity" : 24381.93
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O3_止损4%",
+    "group" : "O3",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : {
+      "stop-fixed" : "4",
+      "base" : "O3_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "maxDrawdown" : 2574.57,
+      "trades" : 15117,
+      "perTrade" : 3.21,
+      "navDrawdownPct" : 7.71,
+      "calmar" : 18.87,
+      "equity" : 48587.36
+    },
+    "validation" : {
+      "trades" : 4795,
+      "perTrade" : 4.91,
+      "maxDrawdown" : 1277.86,
+      "equity" : 23559.15
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O3_止损6%",
+    "group" : "O3",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : {
+      "stop-fixed" : "6",
+      "base" : "O3_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "maxDrawdown" : 2468.14,
+      "trades" : 16546,
+      "perTrade" : 3.94,
+      "navDrawdownPct" : 7.21,
+      "calmar" : 26.39,
+      "equity" : 65137.53
+    },
+    "validation" : {
+      "trades" : 5383,
+      "perTrade" : 5.54,
+      "maxDrawdown" : 1967.23,
+      "equity" : 29845.75
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O3_浮盈5%后回撤3%",
+    "group" : "O3",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3",
+      "runner-arm-pct" : "5",
+      "runner-giveback-pct" : "3"
+    },
+    "config" : { },
+    "sim" : {
+      "base" : "O3_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "maxDrawdown" : 4654.29,
+      "trades" : 14900,
+      "perTrade" : 2.66,
+      "navDrawdownPct" : 15.03,
+      "calmar" : 8.52,
+      "equity" : 39633.51
+    },
+    "validation" : {
+      "trades" : 5007,
+      "perTrade" : 3.97,
+      "maxDrawdown" : 2515.42,
+      "equity" : 19918.09
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O3_浮盈5%后回撤5%",
+    "group" : "O3",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3",
+      "runner-arm-pct" : "5",
+      "runner-giveback-pct" : "5"
+    },
+    "config" : { },
+    "sim" : {
+      "base" : "O3_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "maxDrawdown" : 4738.73,
+      "trades" : 14946,
+      "perTrade" : 2.9,
+      "navDrawdownPct" : 13.69,
+      "calmar" : 9.14,
+      "equity" : 43317.68
+    },
+    "validation" : {
+      "trades" : 4973,
+      "perTrade" : 3.81,
+      "maxDrawdown" : 3448.0,
+      "equity" : 18954.81
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O3_止损5%+浮盈5%后回撤4%",
+    "group" : "O3",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3",
+      "runner-arm-pct" : "5",
+      "runner-giveback-pct" : "4"
+    },
+    "config" : { },
+    "sim" : {
+      "stop-fixed" : "5",
+      "base" : "O3_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "maxDrawdown" : 4873.37,
+      "trades" : 16024,
+      "perTrade" : 1.72,
+      "navDrawdownPct" : 21.73,
+      "calmar" : 5.67,
+      "equity" : 27609.65
+    },
+    "validation" : {
+      "trades" : 5210,
+      "perTrade" : 3.63,
+      "maxDrawdown" : 2358.77,
+      "equity" : 18924.2
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O3_12h仍浮亏就卖",
+    "group" : "O3",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : {
+      "stale-hours" : "12",
+      "base" : "O3_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "maxDrawdown" : 2535.56,
+      "trades" : 15280,
+      "perTrade" : 4.25,
+      "navDrawdownPct" : 8.3,
+      "calmar" : 25.6,
+      "equity" : 64911.66
+    },
+    "validation" : {
+      "trades" : 4975,
+      "perTrade" : 5.33,
+      "maxDrawdown" : 1811.58,
+      "equity" : 26520.73
+    },
+    "evidence" : ""
+  } ]
+}
