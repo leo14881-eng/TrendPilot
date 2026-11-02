@@ -63,8 +63,22 @@ ensure_status_key() {
     chmod 600 "$dir/status_ed25519"
 }
 
+# 数据仓库推送用的 deploy key（用户 2026-11-02 同意：每天把只读导出推到用户自己的私有仓库 leo14881-eng/trendpilot-data）。
+# 只在服务器上生成，私钥不离开服务器；公钥由状态摘要显示，再加到该仓库的 Deploy keys（允许写入）。
+ensure_data_key() {
+    local dir="$APP_DIR/ssh"
+    mkdir -p "$dir"
+    if [ ! -f "$dir/data_ed25519" ]; then
+        ssh-keygen -q -t ed25519 -N "" -C "trendpilot-server-data" -f "$dir/data_ed25519"
+    fi
+    chown -R "$RUN_USER:$RUN_USER" "$dir"
+    chmod 700 "$dir"
+    chmod 600 "$dir/data_ed25519"
+}
+
 write_units() {
     ensure_status_key
+    ensure_data_key
     cat > /etc/systemd/system/trendpilot.service <<EOF
 [Unit]
 Description=TrendPilot shadow trading service
@@ -130,9 +144,31 @@ OnUnitInactiveSec=5min
 [Install]
 WantedBy=timers.target
 EOF
+    cat > /etc/systemd/system/trendpilot-data.service <<EOF
+[Unit]
+Description=Push TrendPilot read-only data export to private repo trendpilot-data
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash $APP_DIR/scripts/linux/data-push.sh
+TimeoutStartSec=3600
+EOF
+    cat > /etc/systemd/system/trendpilot-data.timer <<EOF
+[Unit]
+Description=Push TrendPilot data export daily at 06:13 Vietnam time
+
+[Timer]
+OnCalendar=*-*-* 06:13:00 Asia/Ho_Chi_Minh
+OnBootSec=10min
+OnActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
     systemctl daemon-reload
-    systemctl enable trendpilot.service trendpilot-update.timer trendpilot-status.timer >/dev/null 2>&1
-    systemctl start trendpilot-update.timer trendpilot-status.timer
+    systemctl enable trendpilot.service trendpilot-update.timer trendpilot-status.timer trendpilot-data.timer >/dev/null 2>&1
+    systemctl start trendpilot-update.timer trendpilot-status.timer trendpilot-data.timer
 }
 
 case "${1:-}" in

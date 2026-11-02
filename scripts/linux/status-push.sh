@@ -86,6 +86,12 @@ summary() {
     echo "- 一次调仓链上成本 U（最新一分钟：60 万 gas × gasPrice + L1 数据费，按永续标记价）：$(q "SELECT GROUP_CONCAT(pool || ' ' || c || ' ' || src, '，') FROM (SELECT s.pool AS pool, printf('%.4f', (CAST(s.gas_price_wei AS REAL) * 600000 + CAST(s.l1_fee_wei AS REAL)) / 1e18 * s.perp_mark) AS c, IFNULL(s.l1_source, 'noL1') AS src FROM lp_pool_snapshot s WHERE s.ts = (SELECT MAX(ts) FROM lp_pool_snapshot t WHERE t.pool = s.pool AND t.status = 'OK') AND s.status = 'OK' ORDER BY s.pool);" | tr -cd 'a-zA-Z0-9_ .，-' | head -c 200)"
     echo "- 60 天起点（UTC）：$(q "SELECT IFNULL(datetime(MIN(json_extract(state_json, '\$.startTs')), 'unixepoch'), '-') FROM lp_state;" | tr -cd '0-9 :-' | head -c 30)"
     echo "- 第一条 / 最新快照（UTC）：$(q "SELECT IFNULL(datetime(MIN(ts), 'unixepoch'), '-') || ' / ' || IFNULL(datetime(MAX(ts), 'unixepoch'), '-') FROM lp_pool_snapshot;" | tr -cd '0-9 :/-' | head -c 60)"
+    echo
+    echo "## 私有数据仓库（trendpilot-data）"
+    echo
+    # 只显示公钥（公开无妨）和最近一次推送的固定格式结果；私钥不读
+    echo "- 数据仓库公钥：$(head -c 200 "$APP_DIR/ssh/data_ed25519.pub" 2>/dev/null | tr -cd 'a-zA-Z0-9 +/=@._-' || echo '-')"
+    echo "- 数据仓库最近推送：$(head -c 120 "$APP_DIR/logs/data-push.status" 2>/dev/null | tr -cd 'a-zA-Z0-9 :+./_-' || echo '-')"
 }
 
 as_user() { sudo -u "$RUN_USER" -H env GIT_SSH_COMMAND="ssh -i $KEY -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$APP_DIR/ssh/known_hosts" "$@"; }

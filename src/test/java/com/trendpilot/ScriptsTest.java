@@ -115,4 +115,29 @@ class ScriptsTest {
         assertThat(hist).contains("server-status-history").contains("history/$today.md").contains("KEEP_DAYS=14")
                 .doesNotContain("push -q -f").doesNotContain("--force");
     }
+
+    @Test
+    void dataPushSendsOnlyTheReadOnlyExportToThePrivateDataRepo() throws Exception {
+        String sh = Files.readString(Path.of("scripts/linux/data-push.sh"), StandardCharsets.UTF_8);
+        assertThat(sh).doesNotContain("\r")
+                .contains("KEY=\"$APP_DIR/ssh/data_ed25519\"")
+                .contains("REMOTE=git@github.com:leo14881-eng/trendpilot-data.git")
+                .contains("bash \"$HERE/export.sh\"")
+                .contains("KEEP_DAYS=30");
+        // 只推 export.sh 的产物：不碰配置、日志原文和通知
+        assertThat(sh.lines().filter(l -> !l.trim().startsWith("#")))
+                .noneMatch(l -> l.contains("config/") || l.contains("$CONFIG") || l.contains("trendpilot.log")
+                        || l.contains("notification_outbox") || l.contains("status_ed25519"));
+        // 只用这一个远端；没有 key 就什么都不做
+        assertThat(sh.lines().filter(l -> l.contains("github.com:"))).hasSize(1);
+        assertThat(sh).contains("[ -f \"$KEY\" ] || exit 0");
+
+        String install = Files.readString(Path.of("scripts/linux/install.sh"), StandardCharsets.UTF_8);
+        assertThat(install).contains("ensure_data_key").contains("trendpilot-data.timer")
+                .contains("OnCalendar=*-*-* 06:13:00 Asia/Ho_Chi_Minh").contains("scripts/linux/data-push.sh");
+
+        String status = Files.readString(Path.of("scripts/linux/status-push.sh"), StandardCharsets.UTF_8);
+        // 摘要只显示公钥，不读私钥
+        assertThat(status).contains("data_ed25519.pub").doesNotContain("cat \"$APP_DIR/ssh/data_ed25519\"");
+    }
 }
