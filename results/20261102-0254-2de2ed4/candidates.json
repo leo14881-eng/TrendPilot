@@ -1,0 +1,259 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-11-02T02:54:05.649796259Z",
+  "grid" : "strongexit",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-10-01",
+  "dataTo" : "2026-10-31",
+  "validationFrom" : "2025-07-02",
+  "evidence" : "",
+  "baseline" : {
+    "full" : {
+      "maxDrawdown" : 14538.46,
+      "equity" : 22216.57,
+      "trades" : 15433
+    },
+    "validation" : {
+      "maxDrawdown" : 14309.81,
+      "equity" : -1716.97,
+      "trades" : 4574
+    }
+  },
+  "candidates" : [ {
+    "id" : "O4_V6现行卖法",
+    "group" : "O4",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "perTrade" : 4.58,
+      "navDrawdownPct" : 10.46,
+      "calmar" : 16.72,
+      "equity" : 68567.51,
+      "maxDrawdown" : 4101.24,
+      "trades" : 14977
+    },
+    "validation" : {
+      "equity" : 24381.93,
+      "trades" : 4899,
+      "perTrade" : 4.97,
+      "maxDrawdown" : 2508.2
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O4_强势时浮盈5%后回撤8%",
+    "group" : "O4",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3",
+      "runner-arm-pct" : "5",
+      "runner-giveback-pct" : "8"
+    },
+    "config" : { },
+    "sim" : {
+      "runner-regimes" : "1+2",
+      "base" : "O4_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "perTrade" : 4.64,
+      "navDrawdownPct" : 12.13,
+      "calmar" : 16.28,
+      "equity" : 69928.78,
+      "maxDrawdown" : 4294.4,
+      "trades" : 15087
+    },
+    "validation" : {
+      "equity" : 27285.54,
+      "trades" : 5008,
+      "perTrade" : 5.44,
+      "maxDrawdown" : 2038.9
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O4_强势时浮盈5%后回撤12%",
+    "group" : "O4",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3",
+      "runner-arm-pct" : "5",
+      "runner-giveback-pct" : "12"
+    },
+    "config" : { },
+    "sim" : {
+      "runner-regimes" : "1+2",
+      "base" : "O4_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "perTrade" : 4.29,
+      "navDrawdownPct" : 12.77,
+      "calmar" : 15.29,
+      "equity" : 64310.16,
+      "maxDrawdown" : 4205.11,
+      "trades" : 15004
+    },
+    "validation" : {
+      "equity" : 24442.3,
+      "trades" : 4959,
+      "perTrade" : 4.92,
+      "maxDrawdown" : 2059.11
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O4_强势时浮盈10%后回撤8%",
+    "group" : "O4",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3",
+      "runner-arm-pct" : "10",
+      "runner-giveback-pct" : "8"
+    },
+    "config" : { },
+    "sim" : {
+      "runner-regimes" : "1+2",
+      "base" : "O4_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : true,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "perTrade" : 4.3,
+      "navDrawdownPct" : 11.75,
+      "calmar" : 15.32,
+      "equity" : 64350.92,
+      "maxDrawdown" : 4200.63,
+      "trades" : 14974
+    },
+    "validation" : {
+      "equity" : 22658.63,
+      "trades" : 4884,
+      "perTrade" : 4.64,
+      "maxDrawdown" : 2262.16
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O4_强势时浮盈10%后回撤12%",
+    "group" : "O4",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3",
+      "runner-arm-pct" : "10",
+      "runner-giveback-pct" : "12"
+    },
+    "config" : { },
+    "sim" : {
+      "runner-regimes" : "1+2",
+      "base" : "O4_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : true,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "perTrade" : 4.25,
+      "navDrawdownPct" : 11.97,
+      "calmar" : 15.14,
+      "equity" : 63749.16,
+      "maxDrawdown" : 4211.35,
+      "trades" : 14986
+    },
+    "validation" : {
+      "equity" : 22348.45,
+      "trades" : 4883,
+      "perTrade" : 4.57,
+      "maxDrawdown" : 2262.16
+    },
+    "evidence" : ""
+  }, {
+    "id" : "O4_强势时浮盈5%后ATR×3跟踪",
+    "group" : "O4",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3",
+      "runner-arm-pct" : "5",
+      "runner-giveback-pct" : "100"
+    },
+    "config" : { },
+    "sim" : {
+      "trail-atr" : "3",
+      "runner-regimes" : "1+2",
+      "base" : "O4_V6现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "perTrade" : 4.29,
+      "navDrawdownPct" : 12.61,
+      "calmar" : 15.02,
+      "equity" : 64419.82,
+      "maxDrawdown" : 4287.73,
+      "trades" : 15021
+    },
+    "validation" : {
+      "equity" : 25108.61,
+      "trades" : 4967,
+      "perTrade" : 5.05,
+      "maxDrawdown" : 2059.11
+    },
+    "evidence" : ""
+  } ]
+}
