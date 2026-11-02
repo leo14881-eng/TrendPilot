@@ -125,6 +125,21 @@ class TrendJobTest {
         market.daily.put("BTCUSDT", daily(62, 70_000, -0.003, 55_000, 1e9));
         assertThat(job.runDaily(NOW)).isEmpty();
         assertThat(book.positions()).isEmpty();
+        assertThat(lastDailyNote()).contains("no_entry=REGIME_OFF").contains("btc_above_sma50=false");
+    }
+
+    /** Weekly review R6: the daily job always says why nothing was opened. */
+    @Test
+    void noEntryReasonWhenNothingBreaksOut() {
+        bullMarket();
+        coin("ABCUSDT", daily(62, 1.0, 0.005, 1.36, 1_000_000)); // no breakout any more
+        assertThat(job.runDaily(NOW)).isEmpty();
+        assertThat(lastDailyNote()).contains("no_entry=NO_BREAKOUT").contains("checked=2");
+    }
+
+    private String lastDailyNote() {
+        return jdbc.sql("SELECT note FROM job_run WHERE job = :j ORDER BY id DESC LIMIT 1").param("j", TrendJob.JOB_DAILY)
+                .query(String.class).single();
     }
 
     @Test
@@ -133,5 +148,6 @@ class TrendJobTest {
         market.daily.remove("BTCUSDT");
         assertThat(job.runDaily(NOW)).isEmpty();
         assertThat(book.positions()).isEmpty();
+        assertThat(lastDailyNote()).contains("no_entry=DATA_PARTIAL");
     }
 }

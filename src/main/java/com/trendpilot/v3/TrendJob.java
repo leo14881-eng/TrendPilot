@@ -96,6 +96,7 @@ public class TrendJob {
         Instant started = Instant.now();
         List<String> done = new ArrayList<>();
         String status = "COMPLETE";
+        String noEntry = null;
         try {
             VenueMarket m = markets.get(Venue.BINANCE);
             if (m == null) return done;
@@ -155,7 +156,9 @@ public class TrendJob {
             boolean regime = btcUp && counted > 0 && above >= TrendRules.BREADTH_MIN * counted;
             log.info("V3 日线：标的 {} 个（缺 {}），BTC 在 50 日线上方 {}，池子 {}/{} 在 20 日线上方，大盘过滤 {}",
                     pool.size(), missing, btcUp, above, counted, regime ? "打开" : "关闭");
-            // 3. 买入
+            // 3. 买入（没开仓时记下原因，周复盘 2026-11-01 R6）
+            int checked = 0, breakouts = 0, failed = 0;
+            boolean full = false;
             if (regime && dataOk) {
                 Set<String> held = new HashSet<>();
                 book.positions().forEach(p -> held.add(p.symbol()));
@@ -163,17 +166,32 @@ public class TrendJob {
                     List<Kline> k = daily.get(t.symbol());
                     if (k == null || held.contains(t.symbol())) continue;
                     List<Position> open = book.positions();
-                    if (open.size() >= TrendRules.MAX_POSITIONS) break;
+                    if (open.size() >= TrendRules.MAX_POSITIONS) {
+                        full = true;
+                        break;
+                    }
                     Arrays a = Arrays.of(k);
                     int end = a.c.length - 1;
+                    checked++;
                     if (!TrendRules.breakout(a.h, a.c, a.v, end)) continue;
+                    breakouts++;
                     double used = open.stream().mapToDouble(p -> p.costBasis().doubleValue()).sum();
                     String r = buy(m, t, a, used, gen, now);
                     if (r != null) {
                         done.add(r);
                         held.add(t.symbol());
+                    } else {
+                        failed++;
                     }
                 }
+            }
+            boolean bought = done.stream().anyMatch(x -> x.contains("买入"));
+            if (!bought) {
+                noEntry = !dataOk ? String.format(java.util.Locale.ROOT, "DATA_PARTIAL missing=%d btc=%s", missing, btc != null)
+                        : !regime ? String.format(java.util.Locale.ROOT, "REGIME_OFF btc_above_sma50=%b breadth=%d/%d", btcUp, above, counted)
+                        : full ? "MAX_POSITIONS open=" + book.positions().size()
+                        : breakouts == 0 ? "NO_BREAKOUT checked=" + checked
+                        : "BUY_NOT_FILLED breakouts=" + breakouts + " failed=" + failed;
             }
             return done;
         } catch (RuntimeException e) {
@@ -181,8 +199,10 @@ public class TrendJob {
             log.error("V3 日线任务出错", e);
             return done;
         } finally {
+            List<String> note = new ArrayList<>(done);
+            if (noEntry != null) note.add("no_entry=" + noEntry);
             runs.record(JOB_DAILY, gen, started, Instant.now(), status.equals("FAILED") ? "FAILED" : "SUCCESS", status,
-                    String.join("; ", done));
+                    String.join("; ", note));
         }
     }
 
