@@ -1,0 +1,58 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-11-02T02:27:57.925094740Z",
+  "grid" : "custom",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-12-01",
+  "dataTo" : "2026-10-31",
+  "validationFrom" : "2025-07-02",
+  "evidence" : "",
+  "baseline" : {
+    "validation" : {
+      "maxDrawdown" : 14309.81,
+      "equity" : -1716.97,
+      "trades" : 4574
+    },
+    "full" : {
+      "maxDrawdown" : 14538.46,
+      "equity" : 15229.38,
+      "trades" : 14743
+    }
+  },
+  "candidates" : [ {
+    "id" : "V6_Binance",
+    "group" : "custom",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "maxDrawdown" : 4101.24,
+      "trades" : 14389,
+      "perTrade" : 4.37,
+      "navDrawdownPct" : 12.58,
+      "calmar" : 15.32,
+      "equity" : 62834.45
+    },
+    "validation" : {
+      "maxDrawdown" : 2508.2,
+      "equity" : 24381.93,
+      "trades" : 4899,
+      "perTrade" : 4.97
+    },
+    "evidence" : ""
+  } ]
+}
