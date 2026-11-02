@@ -1,0 +1,68 @@
+# Bybit 现货回测（2026-11-02，V6 Bybit 版）：Bybit 公开数据站 public.bybit.com 只有逐笔成交，先聚合成 15m K 线
+# （BybitArchive，结果缓存），再用和 Binance 回测同一套代码跑候选和发布前检查。v5 kline 接口在 Actions 所在地区返回 403，不用它。
+# 手动触发，不影响线上服务。结果推到 backtest-results 分支。
+name: Backtest Bybit
+
+on:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: CandidateStudy 参数（起始月 结束月 最后一天 开始交易 验证期开始 线程数 [候选...]）
+        required: true
+        default: '2022-11 2026-10 - 2022-12-01 2025-07-02 4 V6_Bybit:momentum-top=3,momentum-hours=24,max-open=17'
+      months:
+        description: 聚合的月份范围（起始月 结束月）
+        required: true
+        default: '2022-11 2026-10'
+
+permissions:
+  contents: write
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Bybit K 线缓存
+        uses: actions/cache@v4
+        with:
+          path: bybit-data
+          key: bybit-15m-v1-${{ github.run_id }}
+          restore-keys: |
+            bybit-15m-v1-
+      - name: 编译
+        run: |
+          sh ./mvnw -B -q -DskipTests package
+          sh ./mvnw -B -q dependency:build-classpath -Dmdep.outputFile=cp.txt
+      - name: 逐笔成交聚合成 15m K 线
+        run: java -Xmx6g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.BybitArchive bybit-data ${{ inputs.months }} 12
+      - name: 回测与发布前检查
+        run: |
+          du -sh bybit-data
+          java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.CandidateStudy bybit-data backtest-out ${{ inputs.args }}
+      - name: 结果推到 backtest-results 分支
+        run: |
+          RUN=results/$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}-bybit
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          if git fetch -q origin backtest-results; then
+            git worktree add -q /tmp/res FETCH_HEAD
+            cd /tmp/res && git checkout -q -B backtest-results
+          else
+            git worktree add -q --detach /tmp/res
+            cd /tmp/res && git checkout -q --orphan backtest-results && git rm -rqf .
+          fi
+          mkdir -p "$RUN" && cp "$GITHUB_WORKSPACE"/backtest-out/* "$RUN"/
+          git add -A && git commit -qm "Bybit 回测结果 $RUN" && git push -q origin backtest-results
+          echo "结果目录：$RUN"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backtest-bybit-out
+          path: backtest-out/
