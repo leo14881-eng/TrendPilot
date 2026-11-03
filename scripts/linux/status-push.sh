@@ -79,7 +79,7 @@ summary() {
     echo "## LP 影子盘（只读影子）"
     echo
     lp_since=$(( $(date -u +%s) - 86400 ))
-    echo "- 池子状态（池子 资产 状态 TVL万U 24h成交万U）：$(q "SELECT GROUP_CONCAT(pool || ' ' || IFNULL(asset, 'ETH') || ' ' || status || ' ' || IFNULL(printf('%.1f', tvl_usd / 10000), '-') || ' ' || IFNULL(printf('%.1f', volume24h_usd / 10000), '-'), '，') FROM (SELECT * FROM lp_pool ORDER BY pool);" | tr -cd 'a-zA-Z0-9_ .，-' | head -c 400)"
+    echo "- 池子状态（池子 资产 状态 上线检查时的 TVL万U 24h成交万U，原有 ETH 池没做检查记 -）：$(q "SELECT GROUP_CONCAT(pool || ' ' || IFNULL(asset, 'ETH') || ' ' || status || ' ' || CASE WHEN tvl_usd IS NULL THEN '-' ELSE printf('%.1f', tvl_usd / 10000) END || ' ' || CASE WHEN volume24h_usd IS NULL THEN '-' ELSE printf('%.1f', volume24h_usd / 10000) END, '，') FROM (SELECT * FROM lp_pool ORDER BY pool);" | tr -cd 'a-zA-Z0-9_ .，-' | head -c 400)"
     # 停用 / 暂不运行的原因（程序生成的固定说明文字，不含密钥；去掉控制字符和表格符号）
     echo "- 未运行池子的原因：$(q "SELECT IFNULL(GROUP_CONCAT(pool || ' ' || status || '：' || IFNULL(note, '-'), '；'), '无') FROM lp_pool WHERE status IN ('INACTIVE', 'REJECTED', 'PENDING');" | tr -d '\000-\037|<>' | head -c 600)"
     echo "- 池子地址：$(q "SELECT IFNULL(GROUP_CONCAT(pool || ' ' || address, '，'), '-') FROM (SELECT pool, address FROM lp_pool WHERE address IS NOT NULL ORDER BY pool);" | tr -cd 'a-zA-Z0-9_ ，-' | head -c 600)"
