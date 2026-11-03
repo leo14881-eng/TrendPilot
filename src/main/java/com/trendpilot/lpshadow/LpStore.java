@@ -25,28 +25,42 @@ public class LpStore {
     // ---------- 池子 ----------
 
     public void savePool(String key, String chain, int fee, PoolInfo info, String status, String note, Instant now) {
+        savePool(key, chain, fee, info, status, note, now, null, null, null);
+    }
+
+    /** asset 为空时沿用 info 的（再没有就 ETH）；tvl / volume 只在规模检查时写，其他时候保留原值。 */
+    public void savePool(String key, String chain, int fee, PoolInfo info, String status, String note, Instant now, String asset,
+                         Double tvlUsd, Double volume24hUsd) {
+        String a = asset != null ? asset : info != null ? info.asset() : LpShadowProperties.Pool.ETH;
         jdbc.sql("""
-                INSERT INTO lp_pool(pool, chain, fee, address, token0, token1, dec0, dec1, weth_is_token0, tick_spacing, status, note, checked_at)
-                VALUES (:k, :c, :f, :a, :t0, :t1, :d0, :d1, :w, :ts, :s, :n, :now)
+                INSERT INTO lp_pool(pool, chain, fee, address, token0, token1, dec0, dec1, weth_is_token0, tick_spacing, status, note, checked_at,
+                    asset, tvl_usd, volume24h_usd)
+                VALUES (:k, :c, :f, :a, :t0, :t1, :d0, :d1, :w, :ts, :s, :n, :now, :asset, :tvl, :vol)
                 ON CONFLICT(pool) DO UPDATE SET chain = excluded.chain, fee = excluded.fee, address = excluded.address,
                     token0 = excluded.token0, token1 = excluded.token1, dec0 = excluded.dec0, dec1 = excluded.dec1,
                     weth_is_token0 = excluded.weth_is_token0, tick_spacing = excluded.tick_spacing, status = excluded.status,
-                    note = excluded.note, checked_at = excluded.checked_at
+                    note = excluded.note, checked_at = excluded.checked_at, asset = excluded.asset,
+                    tvl_usd = COALESCE(excluded.tvl_usd, lp_pool.tvl_usd), volume24h_usd = COALESCE(excluded.volume24h_usd, lp_pool.volume24h_usd)
                 """).param("k", key).param("c", chain).param("f", fee)
                 .param("a", info == null ? null : info.address()).param("t0", info == null ? null : info.token0())
                 .param("t1", info == null ? null : info.token1()).param("d0", info == null ? null : info.dec0())
                 .param("d1", info == null ? null : info.dec1())
                 .param("w", info == null ? null : info.wethIsToken0() ? 1 : 0)
                 .param("ts", info == null ? null : info.tickSpacing()).param("s", status).param("n", note)
-                .param("now", now.toString()).update();
+                .param("now", now.toString()).param("asset", a).param("tvl", tvlUsd).param("vol", volume24hUsd).update();
+    }
+
+    /** 这个池子是否已经有策略状态（已经开始运行；开始后不再做规模检查，60 天计时不受重启影响）。 */
+    public boolean hasStates(String pool) {
+        return jdbc.sql("SELECT COUNT(*) FROM lp_state WHERE pool = :p").param("p", pool).query(Long.class).single() > 0;
     }
 
     public List<PoolInfo> activePools() {
         return jdbc.sql("""
-                SELECT pool, chain, fee, address, token0, token1, dec0, dec1, weth_is_token0, tick_spacing
+                SELECT pool, chain, fee, address, token0, token1, dec0, dec1, weth_is_token0, tick_spacing, asset
                 FROM lp_pool WHERE status = 'ACTIVE' ORDER BY pool
                 """).query((rs, n) -> new PoolInfo(rs.getString(1), rs.getString(2), rs.getInt(3), rs.getString(4),
-                rs.getString(5), rs.getString(6), rs.getInt(7), rs.getInt(8), rs.getInt(9) == 1, rs.getInt(10))).list();
+                rs.getString(5), rs.getString(6), rs.getInt(7), rs.getInt(8), rs.getInt(9) == 1, rs.getInt(10), rs.getString(11))).list();
     }
 
     // ---------- 快照 ----------
@@ -56,11 +70,11 @@ public class LpStore {
         if (rows.isEmpty()) return;
         List<Object[]> args = rows.stream().map(s -> new Object[] {s.ts(), s.pool(), str(s.sqrtPriceX96()), s.tick(),
                 str(s.liquidity()), str(s.fg0()), str(s.fg1()), str(s.gasPriceWei()), s.perpMark(), s.fundingRate(), s.status(),
-                s.note(), str(s.l1FeeWei()), s.l1Source()}).toList();
+                s.note(), str(s.l1FeeWei()), s.l1Source(), s.gasTokenUsd()}).toList();
         template.batchUpdate("""
                 INSERT OR IGNORE INTO lp_pool_snapshot(ts, pool, sqrt_price_x96, tick, liquidity, fg0, fg1, gas_price_wei,
-                    perp_mark, funding_rate, status, note, l1_fee_wei, l1_source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    perp_mark, funding_rate, status, note, l1_fee_wei, l1_source, gas_token_usd)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, args);
     }
 
@@ -68,7 +82,7 @@ public class LpStore {
     public List<Snapshot> snapshots(String pool, long fromTs, long toTs) {
         return jdbc.sql("""
                 SELECT ts, pool, sqrt_price_x96, tick, liquidity, fg0, fg1, gas_price_wei, perp_mark, funding_rate, status, note,
-                    l1_fee_wei, l1_source
+                    l1_fee_wei, l1_source, gas_token_usd
                 FROM lp_pool_snapshot WHERE pool = :p AND ts >= :a AND ts < :b ORDER BY ts
                 """).param("p", pool).param("a", fromTs).param("b", toTs)
                 .query((rs, n) -> {
@@ -76,7 +90,7 @@ public class LpStore {
                     return new Snapshot(rs.getLong(1), rs.getString(2), big(rs.getString(3)),
                             tick == null ? null : ((Number) tick).intValue(), big(rs.getString(5)), big(rs.getString(6)),
                             big(rs.getString(7)), big(rs.getString(8)), dbl(rs.getObject(9)), dbl(rs.getObject(10)),
-                            rs.getString(11), rs.getString(12), big(rs.getString(13)), rs.getString(14));
+                            rs.getString(11), rs.getString(12), big(rs.getString(13)), rs.getString(14), dbl(rs.getObject(15)));
                 })
                 .list();
     }

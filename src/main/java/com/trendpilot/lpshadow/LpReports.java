@@ -35,6 +35,18 @@ final class LpReports {
     static final long KEEP_SNAPSHOT_DAYS = 90;
     static final int BOOTSTRAP = 10_000;
     static final double[] M_ASSUMED = {5, 10, 20};
+    /** 用户 2026-11-03 定的绝对门槛：扣除全部成本和资金费后的年化净收益至少 15%（"年化收益率低于15%不做，免得还损失本金"）。 */
+    static final double MIN_ANNUAL = 0.15;
+    /** 报告分组的顺序和名字。 */
+    static final Map<String, String> GROUPS = new LinkedHashMap<>(Map.of());
+
+    static {
+        GROUPS.put(LpShadowProperties.Pool.ETH, "ETH 组");
+        GROUPS.put(LpShadowProperties.Pool.BTC, "BTC 组");
+        GROUPS.put(LpShadowProperties.Pool.STABLE, "稳定币组");
+    }
+
+    static final java.util.regex.Pattern SHAPE = java.util.regex.Pattern.compile("-([wb]\\d+-[HU]-c\\d+)$");
 
     /** 发 Telegram 文本（eventKey, text）。 */
     private final BiConsumer<String, String> send;
@@ -74,7 +86,11 @@ final class LpReports {
 
     // ---------------- 每日 ----------------
 
-    record Row(Strategy s, PositionState st, double coverage) {
+    record Row(Strategy s, PositionState st, double coverage, String asset) {
+        Row(Strategy s, PositionState st, double coverage) {
+            this(s, st, coverage, LpShadowProperties.Pool.ETH);
+        }
+
         double ret() {
             return st.lastValue / Strategy.CAPITAL - 1;
         }
@@ -109,7 +125,7 @@ final class LpReports {
                 long expected = Math.max(1, (to - Math.max(from, st.startTs)) / 60);
                 long[] c = ok.getOrDefault(s.pool(), new long[2]);
                 double cov = Math.min(1.0, (s.hedged() ? c[1] : c[0]) / (double) expected);
-                rows.add(new Row(s, st, cov));
+                rows.add(new Row(s, st, cov, b.pool.asset()));
             }
         }
         if (rows.isEmpty()) return;
@@ -117,10 +133,35 @@ final class LpReports {
             store.saveDaily(day.toString(), r.s().name(), r.st().lastValue, r.st().fees, r.st().lastIl, r.st().gasCost,
                     r.st().swapCost, r.st().lastHedgePnl, r.st().funding, r.coverage());
         }
-        String md = dailyMarkdown(day, rows, ok, m, events, from, to);
+        Map<String, Double> depeg = new LinkedHashMap<>();
+        for (LpBook b : books.values()) {
+            if (b.pool.isStable()) depeg.put(b.pool.key(), maxDepeg(b.pool, store.snapshots(b.pool.key(), from, to)));
+        }
+        String md = dailyMarkdown(day, rows, ok, m, events, from, to) + depegMarkdown(depeg);
         write("lp-daily-" + day + ".md", md);
         send.accept("lpshadow:daily:" + day, telegramLine(day, rows));
         log.info("LP 影子盘：{} 日报已生成（{} 个策略）", day, rows.size());
+    }
+
+    /** 稳定币池一天里价格偏离 1:1 的最大值（只看 OK 快照）；没有数据为 NaN。 */
+    static double maxDepeg(PoolInfo pool, List<Snapshot> snaps) {
+        double max = Double.NaN;
+        for (Snapshot s : snaps) {
+            if (!s.ok()) continue;
+            double dev = Math.abs(LpMath.ethPriceAtSqrt(pool, LpMath.sqrtRaw(s.sqrtPriceX96())) - 1);
+            if (Double.isFinite(dev)) max = Double.isNaN(max) ? dev : Math.max(max, dev);
+        }
+        return max;
+    }
+
+    static String depegMarkdown(Map<String, Double> depeg) {
+        if (depeg.isEmpty()) return "";
+        StringBuilder b = new StringBuilder("\n## 稳定币脱钩监控（当天最大偏离 1:1）\n\n| 池子 | 最大偏离 | 状态 |\n|---|---:|---|\n");
+        depeg.forEach((k, v) -> b.append(String.format(Locale.ROOT, "| %s | %s | %s |\n", k,
+                Double.isNaN(v) ? "-" : String.format(Locale.ROOT, "%.3f%%", v * 100),
+                Double.isNaN(v) ? "无数据" : v > LpBook.DEPEG_ALERT ? "超过 2%（已提醒）" : v > LpBook.DEPEG_EVENT ? "超过 0.5%（记 DEPEG）" : "正常")));
+        b.append("\n偏离超过 0.5% 记一条 DEPEG 事件，超过 2% 发 Telegram 提醒；只是监控，不改变影子仓位。\n");
+        return b.toString();
     }
 
     static double annualized(PositionState st) {
@@ -133,9 +174,31 @@ final class LpReports {
                          long from, long to) {
         StringBuilder b = new StringBuilder();
         b.append("# LP 影子盘日报 ").append(day).append("（越南时间）\n\n");
-        PositionState any = rows.getFirst().st();
-        b.append("只读影子：每分钟读链上状态模拟做市，不下单、不签名。本金每个策略 10,000 USDC，从 ")
-                .append(Instant.ofEpochSecond(any.startTs).atZone(zone).toLocalDate()).append(" 开始。金额单位 USDC，都是累计值。\n\n");
+        Map<String, Long> starts = new LinkedHashMap<>();
+        rows.forEach(r -> starts.merge(r.s().pool(), r.st().startTs, Math::min));
+        b.append("只读影子：每分钟读链上状态模拟做市，不下单、不签名。本金每个策略 10,000 USDC。金额单位 USDC，都是累计值。"
+                + "每个池子从自己上线那一分钟起单独算 60 天：");
+        List<String> st0 = new ArrayList<>();
+        starts.forEach((k, v) -> st0.add(k + " 从 " + Instant.ofEpochSecond(v).atZone(zone).toLocalDateTime().toString().replace('T', ' ')));
+        b.append(String.join("，", st0)).append("（越南时间）。\n\n");
+        b.append("## 按资产分组：前 3 / 后 3（做市策略按累计收益；年化门槛 15%，用户 2026-11-03 定）\n\n");
+        for (Map.Entry<String, String> g : GROUPS.entrySet()) {
+            List<Row> lp = rows.stream().filter(r -> g.getKey().equals(r.asset()) && !r.s().benchmark())
+                    .sorted(Comparator.comparingDouble(Row::ret).reversed()).toList();
+            if (lp.isEmpty()) continue;
+            b.append("**").append(g.getValue()).append("**\n\n| 排名 | 策略 | 累计 | 年化净收益 | 达到 15% |\n|---|---|---:|---:|---|\n");
+            int n = Math.min(3, lp.size());
+            for (int i = 0; i < n; i++) b.append(groupLine("前 " + (i + 1), lp.get(i)));
+            for (int i = 0; i < n; i++) {
+                int idx = lp.size() - 1 - i;
+                if (idx < n) break;   // 策略不到 6 个时不重复列
+                b.append(groupLine("后 " + (i + 1), lp.get(idx)));
+            }
+            rows.stream().filter(r -> g.getKey().equals(r.asset()) && r.s().benchmark()).collect(java.util.stream.Collectors.groupingBy(
+                    r -> label(r.s()), LinkedHashMap::new, java.util.stream.Collectors.averagingDouble(Row::ret)))
+                    .forEach((k, v) -> b.append(String.format(Locale.ROOT, "| 基准 | %s（各池平均） | %+.2f%% | - | - |\n", k, v * 100)));
+            b.append('\n');
+        }
         b.append("## 数据覆盖率（当天）\n\n| 池子 | 池子数据 | 池子 + 永续报价 |\n|---|---:|---:|\n");
         long minutes = (to - from) / 60;
         for (Map.Entry<String, long[]> e : ok.entrySet()) {
@@ -174,6 +237,12 @@ final class LpReports {
         return b.toString();
     }
 
+    private static String groupLine(String rank, Row r) {
+        double ann = annualized(r.st());
+        return String.format(Locale.ROOT, "| %s | %s | %+.2f%% | %s | %s |\n", rank, r.s().name(), r.ret() * 100, pct(ann),
+                Double.isNaN(ann) ? "不足 1 天" : ann >= MIN_ANNUAL ? "是" : "否");
+    }
+
     static String compareM(double m) {
         if (Double.isNaN(m)) return "-";
         StringBuilder s = new StringBuilder();
@@ -188,7 +257,7 @@ final class LpReports {
         return switch (s.kind()) {
             case HOLD_5050 -> "基准：持有 50/50";
             case HOLD_USDC -> "基准：只持有 USDC";
-            case HOLD_ETH -> "基准：只持有 ETH";
+            case HOLD_ETH -> "基准：只持有 " + s.name().substring(s.name().lastIndexOf('-') + 1).toUpperCase(Locale.ROOT);
             case LP -> s.name().substring(s.pool().length() + 1);
         };
     }
@@ -197,16 +266,30 @@ final class LpReports {
         return Double.isNaN(v) ? "-" : String.format(Locale.ROOT, "%+.1f%%", v * 100);
     }
 
-    /** Telegram 一行：做市策略里累计收益前 3、后 3，以及各池持有 50/50 基准的平均。 */
+    /**
+     * Telegram 一行，按资产分组（ETH 组 / BTC 组 / 稳定币组）：每组做市策略累计收益前 3（旁边标年化和 15% 门槛）、后 3，
+     * 以及该组基准（持有 50/50 的平均；稳定币组是只持有 USDC）。
+     */
     static String telegramLine(LocalDate day, List<Row> rows) {
-        List<Row> lp = rows.stream().filter(r -> !r.s().benchmark()).sorted(Comparator.comparingDouble(Row::ret).reversed()).toList();
-        List<Row> bench = rows.stream().filter(r -> r.s().kind() == Strategy.Kind.HOLD_5050).toList();
-        StringBuilder b = new StringBuilder("【LP】").append(day).append(" 前3 ");
-        for (int i = 0; i < Math.min(3, lp.size()); i++) b.append(i > 0 ? "，" : "").append(shortRet(lp.get(i)));
-        b.append("｜后3 ");
-        for (int i = 0; i < Math.min(3, lp.size()); i++) b.append(i > 0 ? "，" : "").append(shortRet(lp.get(lp.size() - 1 - i)));
-        double avg = bench.stream().mapToDouble(Row::ret).average().orElse(Double.NaN);
-        b.append(String.format(Locale.ROOT, "｜持有50/50 %+.2f%%", avg * 100));
+        StringBuilder b = new StringBuilder("【LP】").append(day);
+        boolean firstGroup = true;
+        for (Map.Entry<String, String> g : GROUPS.entrySet()) {
+            List<Row> lp = rows.stream().filter(r -> g.getKey().equals(r.asset()) && !r.s().benchmark())
+                    .sorted(Comparator.comparingDouble(Row::ret).reversed()).toList();
+            if (lp.isEmpty()) continue;
+            b.append(firstGroup ? " " : "；").append(g.getValue().replace(" ", "")).append(" 前3 ");
+            firstGroup = false;
+            for (int i = 0; i < Math.min(3, lp.size()); i++) {
+                Row r = lp.get(i);
+                b.append(i > 0 ? "，" : "").append(shortRet(r)).append("（年化 ").append(pct(annualized(r.st()))).append("，门槛 15%）");
+            }
+            b.append("｜后3 ");
+            for (int i = 0; i < Math.min(3, lp.size()); i++) b.append(i > 0 ? "，" : "").append(shortRet(lp.get(lp.size() - 1 - i)));
+            Strategy.Kind benchKind = LpShadowProperties.Pool.STABLE.equals(g.getKey()) ? Strategy.Kind.HOLD_USDC : Strategy.Kind.HOLD_5050;
+            double avg = rows.stream().filter(r -> g.getKey().equals(r.asset()) && r.s().kind() == benchKind).mapToDouble(Row::ret)
+                    .average().orElse(Double.NaN);
+            b.append(String.format(Locale.ROOT, "｜%s %+.2f%%", benchKind == Strategy.Kind.HOLD_USDC ? "只持有USDC" : "持有50/50", avg * 100));
+        }
         return b.toString();
     }
 
@@ -257,6 +340,11 @@ final class LpReports {
         return new Stats(mean, lo, hi, maxDd, longest, n);
     }
 
+    /** 单池标准（方案第 8 节 ①②③⑤ + 用户 2026-11-03 加的年化 ≥ 15%）；④"至少 2 个池子"在外面按设置汇总。 */
+    static boolean passes(double ann, Stats s, int risks, double cov) {
+        return ann > 0.05 && ann >= MIN_ANNUAL && s.lo() > 0 && s.maxDd() < 0.10 && risks == 0 && cov > 0.95;
+    }
+
     void weekly(LocalDate lastDay, Instant now) {
         Map<String, double[]> values = store.dailyValues();
         Map<String, double[]> coverage = store.dailyCoverage();
@@ -268,10 +356,10 @@ final class LpReports {
         StringBuilder b = new StringBuilder();
         b.append("# LP 影子盘周报（截至 ").append(lastDay).append("）\n\n");
         b.append("每个策略的日收益（按每天结束时的价值）做 bootstrap（").append(BOOTSTRAP)
-                .append(" 次，固定种子），给出均值和 95% 置信区间；回撤按日末价值。年化超额 = 年化收益 − 只持有 USDC（0%）。\n");
+                .append(" 次，固定种子），给出均值和 95% 置信区间；回撤按日末价值。年化净收益已扣除全部成本和资金费；年化超额 = 年化收益 − 只持有 USDC（0%）。\n");
         b.append("结论只适用于这里测试过的池子、区间宽度和成本假设。\n\n");
-        b.append("| 策略 | 天数 | 日均收益 | 95% 区间 | 年化 | 最大回撤 | 最长回撤（天） | 风险事件 | 平均覆盖率 | 单池标准 |\n");
-        b.append("|---|---:|---:|---|---:|---:|---:|---:|---:|---|\n");
+        b.append("| 策略 | 天数 | 日均收益 | 95% 区间 | 年化净收益 | 年化 ≥ 15% | 最大回撤 | 最长回撤（天） | 风险事件 | 平均覆盖率 | 单池标准 |\n");
+        b.append("|---|---:|---:|---|---:|---|---:|---:|---:|---:|---|\n");
         Map<String, Integer> passByShape = new LinkedHashMap<>();
         List<String> names = new ArrayList<>(values.keySet());
         for (String name : names) {
@@ -280,18 +368,18 @@ final class LpReports {
             double ann = Math.pow(v[v.length - 1] / Strategy.CAPITAL, 365.0 / v.length) - 1;
             double cov = Arrays.stream(coverage.getOrDefault(name, new double[] {0})).average().orElse(0);
             int risks = risk.getOrDefault(name, 0);
-            boolean benchmark = name.endsWith("-hold5050") || name.endsWith("-usdc") || name.endsWith("-eth");
-            boolean pass = !benchmark && ann > 0.05 && s.lo() > 0 && s.maxDd() < 0.10 && risks == 0 && cov > 0.95;
-            if (!benchmark) {
-                String shape = name.substring(name.indexOf("-w"));   // 同一种设置在不同池子
-                passByShape.merge(shape, pass ? 1 : 0, Integer::sum);
-            }
-            b.append(String.format(Locale.ROOT, "| %s | %d | %+.4f%% | %s | %s | %.2f%% | %d | %d | %.1f%% | %s |\n", name, s.days(),
+            java.util.regex.Matcher shapeM = SHAPE.matcher(name);
+            boolean benchmark = !shapeM.find();
+            boolean pass = !benchmark && passes(ann, s, risks, cov);
+            if (!benchmark) passByShape.merge(shapeM.group(1), pass ? 1 : 0, Integer::sum);   // 同一种设置在不同池子
+            b.append(String.format(Locale.ROOT, "| %s | %d | %+.4f%% | %s | %s | %s | %.2f%% | %d | %d | %.1f%% | %s |\n", name, s.days(),
                     s.mean() * 100, Double.isNaN(s.lo()) ? "-" : String.format(Locale.ROOT, "[%+.4f%%, %+.4f%%]", s.lo() * 100, s.hi() * 100),
-                    pct(ann), s.maxDd() * 100, s.longestDdDays(), risks, cov * 100, benchmark ? "基准" : pass ? "达标" : "未达标"));
+                    pct(ann), benchmark ? "-" : ann >= MIN_ANNUAL ? "是" : "否", s.maxDd() * 100, s.longestDdDays(), risks, cov * 100,
+                    benchmark ? "基准" : pass ? "达标" : "未达标"));
         }
         b.append("\n## 第 8 节决策标准（第 60 天正式评估，这里只是进度）\n\n");
-        b.append("单池标准：年化超额 > 5 个百分点、日收益 95% 区间下限 > 0、最大回撤 < 10%、没有爆仓风险事件、覆盖率 > 95%。"
+        b.append("单池标准：年化超额 > 5 个百分点、日收益 95% 区间下限 > 0、最大回撤 < 10%、没有爆仓风险事件、覆盖率 > 95%，"
+                + "并且扣除全部成本和资金费后的年化净收益 ≥ 15%（用户 2026-11-03 定：\"年化收益率低于15%不做，免得还损失本金\"），ETH / BTC / 稳定币组都适用。"
                 + "同一种设置要在至少 2 个池子同时达标才算\"可以小资金实盘\"。是否实盘由用户决定，模块本身永远不下单。\n\n");
         List<String> ready = passByShape.entrySet().stream().filter(e -> e.getValue() >= 2).map(Map.Entry::getKey).toList();
         b.append(ready.isEmpty() ? "目前没有设置在 2 个以上池子同时达标。\n" : "目前在 2 个以上池子同时达标的设置：" + String.join("、", ready) + "\n");

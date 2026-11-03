@@ -65,7 +65,7 @@ class LpBookTest {
     }
 
     /** 记录开仓和事件的假账本。 */
-    static final class FakeLedger implements LpBook.Ledger {
+    static class FakeLedger implements LpBook.Ledger {
         final List<String> events = new ArrayList<>();
         final List<Map<String, Object>> details = new ArrayList<>();
         long ids;

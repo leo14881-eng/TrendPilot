@@ -97,7 +97,7 @@ class LpReportsTest {
         lp.maybeRun(after.plusSeconds(60), e.books());
         assertThat(texts).hasSize(1);
         String line = texts.getFirst()[1];
-        assertThat(line).startsWith("【LP】2026-11-03 前3 ").contains("｜后3 ").contains("｜持有50/50 ");
+        assertThat(line).startsWith("【LP】2026-11-03 ETH组 前3 ").contains("｜后3 ").contains("｜持有50/50 ").contains("门槛 15%");
         assertThat(line.lines().count()).isEqualTo(1);
         assertThat(jdbc.sql("SELECT COUNT(*) FROM lp_daily WHERE date = '2026-11-03'").query(Long.class).single()).isEqualTo(23L);
         // 覆盖率：开始后 3 分钟里 3 条都有效

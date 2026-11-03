@@ -112,6 +112,32 @@ final class FakeChain implements RpcClient.Transport {
         on(address, Abi.FACTORY, addr(FACTORY));
     }
 
+    // ----- BTC / 稳定币（2026-11-03）：Base 上 cbBTC 和 USDT 地址都比 USDC 大，所以 USDC 是 token0 -----
+    static final String CBBTC = "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf";
+    static final String USDT = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2";
+    static final String POOL_BTC = "0xfBB6Eed8e7aa03B138556eeDaF5D271A5E1e43ef";
+    static final String POOL_STB = "0xD56da2B74bA826f19015E6B7Dd9Dae1903E85DA1";
+
+    /** 加上 cbBTC / USDT 代币和两个池子（USDC 是 token0）。 */
+    FakeChain withBtcAndStable() {
+        on(CBBTC, Abi.SYMBOL, string("cbBTC"));
+        on(CBBTC, Abi.DECIMALS, uint(8));
+        on(USDT, Abi.SYMBOL, string("USDT"));
+        on(USDT, Abi.DECIMALS, uint(6));
+        poolOf(CBBTC, POOL_BTC, 500, 10, USDC, CBBTC);
+        poolOf(USDT, POOL_STB, 100, 1, USDC, USDT);
+        return this;
+    }
+
+    void poolOf(String base, String address, int fee, int spacing, String t0, String t1) {
+        on(FACTORY, Abi.getPool(base, USDC, fee), addr(address));
+        on(address, Abi.TOKEN0, addr(t0));
+        on(address, Abi.TOKEN1, addr(t1));
+        on(address, Abi.FEE, uint(fee));
+        on(address, Abi.TICK_SPACING, uint(spacing));
+        on(address, Abi.FACTORY, addr(FACTORY));
+    }
+
     void state(String address, BigInteger sqrtP, int tick, BigInteger liq, BigInteger fg0, BigInteger fg1) {
         on(address, Abi.SLOT0, words(sqrtP, BigInteger.valueOf(tick), BigInteger.ZERO, BigInteger.ONE, BigInteger.ONE,
                 BigInteger.ZERO, BigInteger.ONE));

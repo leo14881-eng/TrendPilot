@@ -45,16 +45,30 @@ final class PoolResolver {
         };
     }
 
-    /** 解析同一条链上的多个池子。 */
+    /**
+     * 解析同一条链上的多个池子。第一个 batch：USDC 的 symbol / decimals、每种 base 代币（去重）的 symbol / decimals、每个池子的 getPool；
+     * 第二个 batch：每个池子的 token0、token1、fee、tickSpacing、factory。USDC 不对 → 这条链全部停用；某个 base 代币不对 → 只停用用它的池子。
+     */
     static Map<String, Outcome> resolve(RpcClient rpc, LpShadowProperties.Chain chain, String chainName,
                                         List<LpShadowProperties.Pool> pools) {
         Map<String, Outcome> out = new LinkedHashMap<>();
         List<Call> first = new ArrayList<>();
-        first.add(Call.ethCall(chain.weth(), Abi.SYMBOL));
-        first.add(Call.ethCall(chain.weth(), Abi.DECIMALS));
+        Map<String, Integer> baseIndex = new LinkedHashMap<>();   // 小写地址 → 第一个 batch 里 symbol 的位置
+        for (LpShadowProperties.Pool p : pools) {
+            String b = p.baseAddress(chain).toLowerCase(java.util.Locale.ROOT);
+            if (!baseIndex.containsKey(b)) {
+                baseIndex.put(b, first.size());
+                first.add(Call.ethCall(p.baseAddress(chain), Abi.SYMBOL));
+                first.add(Call.ethCall(p.baseAddress(chain), Abi.DECIMALS));
+            }
+        }
+        int usdcAt = first.size();
         first.add(Call.ethCall(chain.usdc(), Abi.SYMBOL));
         first.add(Call.ethCall(chain.usdc(), Abi.DECIMALS));
-        for (LpShadowProperties.Pool p : pools) first.add(Call.ethCall(chain.factory(), Abi.getPool(chain.weth(), chain.usdc(), p.fee())));
+        int poolsAt = first.size();
+        for (LpShadowProperties.Pool p : pools) {
+            first.add(Call.ethCall(chain.factory(), Abi.getPool(p.baseAddress(chain), chain.usdc(), p.fee())));
+        }
         List<Result> r1;
         try {
             r1 = rpc.batch(first);
@@ -62,23 +76,19 @@ final class PoolResolver {
             pools.forEach(p -> out.put(p.key(), Outcome.retry(e.getMessage())));
             return out;
         }
-        if (!r1.get(0).ok() || !r1.get(1).ok() || !r1.get(2).ok() || !r1.get(3).ok()) {
+        if (!r1.get(usdcAt).ok() || !r1.get(usdcAt + 1).ok()) {
             pools.forEach(p -> out.put(p.key(), Outcome.retry("代币信息读取失败")));
             return out;
         }
-        String tokenProblem;
+        String usdcProblem;
         try {
-            tokenProblem = checkToken("WETH", Abi.string(r1.get(0).value()), Abi.uint(r1.get(1).value(), 0), chain.wethSymbol(),
-                    chain.wethDecimals());
-            if (tokenProblem == null) {
-                tokenProblem = checkToken("USDC", Abi.string(r1.get(2).value()), Abi.uint(r1.get(3).value(), 0), chain.usdcSymbol(),
-                        chain.usdcDecimals());
-            }
+            usdcProblem = checkToken("USDC", Abi.string(r1.get(usdcAt).value()), Abi.uint(r1.get(usdcAt + 1).value(), 0),
+                    chain.usdcSymbol(), chain.usdcDecimals());
         } catch (RuntimeException e) {
-            tokenProblem = "代币信息无法解码：" + e.getMessage();
+            usdcProblem = "代币信息无法解码：" + e.getMessage();
         }
-        if (tokenProblem != null) {
-            String why = tokenProblem;
+        if (usdcProblem != null) {
+            String why = usdcProblem;
             pools.forEach(p -> out.put(p.key(), Outcome.reject(why)));
             return out;
         }
@@ -87,14 +97,32 @@ final class PoolResolver {
         List<Call> second = new ArrayList<>();
         for (int i = 0; i < pools.size(); i++) {
             LpShadowProperties.Pool p = pools.get(i);
-            Result r = r1.get(4 + i);
+            int bi = baseIndex.get(p.baseAddress(chain).toLowerCase(java.util.Locale.ROOT));
+            String label = p.base() == null || p.base().isBlank() ? "WETH" : p.asset() + " 代币";
+            if (!r1.get(bi).ok() || !r1.get(bi + 1).ok()) {
+                out.put(p.key(), Outcome.retry("代币信息读取失败"));
+                continue;
+            }
+            String tokenProblem;
+            try {
+                tokenProblem = checkToken(label, Abi.string(r1.get(bi).value()), Abi.uint(r1.get(bi + 1).value(), 0),
+                        p.baseSymbolOr(chain), p.baseDecimalsOr(chain));
+            } catch (RuntimeException e) {
+                tokenProblem = "代币信息无法解码：" + e.getMessage();
+            }
+            if (tokenProblem != null) {
+                out.put(p.key(), Outcome.reject(tokenProblem));
+                continue;
+            }
+            Result r = r1.get(poolsAt + i);
             if (!r.ok()) {
                 out.put(p.key(), Outcome.retry("getPool 读取失败"));
                 continue;
             }
             String addr = Abi.address(r.value(), 0);
             if (new BigInteger(Abi.strip(addr), 16).signum() == 0) {
-                out.put(p.key(), Outcome.reject("Factory 上没有费率 " + p.fee() + " 的 WETH/USDC 池子"));
+                out.put(p.key(), Outcome.reject("Factory 上没有费率 " + p.fee() + " 的 " + (p.base() == null || p.base().isBlank()
+                        ? "WETH" : p.baseSymbolOr(chain)) + "/USDC 池子"));
                 continue;
             }
             addresses.put(p.key(), addr);
@@ -118,6 +146,8 @@ final class PoolResolver {
                 out.put(p.key(), Outcome.retry("池子信息读取失败"));
                 continue;
             }
+            String base = p.baseAddress(chain);
+            int baseDec = p.baseDecimalsOr(chain);
             try {
                 String t0 = Abi.address(rs.get(0).value(), 0);
                 String t1 = Abi.address(rs.get(1).value(), 0);
@@ -130,14 +160,14 @@ final class PoolResolver {
                     out.put(p.key(), Outcome.reject("池子费率 " + fee + " 不是 " + p.fee()));
                 } else if (spacing != expectedTickSpacing(p.fee())) {
                     out.put(p.key(), Outcome.reject("tickSpacing " + spacing + " 不符合费率 " + p.fee()));
-                } else if (Abi.sameAddress(t0, chain.weth()) && Abi.sameAddress(t1, chain.usdc())) {
-                    out.put(p.key(), Outcome.ok(new PoolInfo(p.key(), chainName, fee, addr, t0, t1, chain.wethDecimals(),
-                            chain.usdcDecimals(), true, spacing)));
-                } else if (Abi.sameAddress(t0, chain.usdc()) && Abi.sameAddress(t1, chain.weth())) {
+                } else if (Abi.sameAddress(t0, base) && Abi.sameAddress(t1, chain.usdc())) {
+                    out.put(p.key(), Outcome.ok(new PoolInfo(p.key(), chainName, fee, addr, t0, t1, baseDec,
+                            chain.usdcDecimals(), true, spacing, p.asset())));
+                } else if (Abi.sameAddress(t0, chain.usdc()) && Abi.sameAddress(t1, base)) {
                     out.put(p.key(), Outcome.ok(new PoolInfo(p.key(), chainName, fee, addr, t0, t1, chain.usdcDecimals(),
-                            chain.wethDecimals(), false, spacing)));
+                            baseDec, false, spacing, p.asset())));
                 } else {
-                    out.put(p.key(), Outcome.reject("池子的两个代币不是 WETH / USDC"));
+                    out.put(p.key(), Outcome.reject("池子的两个代币不是配置的 " + p.asset() + " / USDC"));
                 }
             } catch (RuntimeException e) {
                 out.put(p.key(), Outcome.reject("池子信息无法解码：" + e.getMessage()));
@@ -146,8 +176,9 @@ final class PoolResolver {
         return out;
     }
 
+    /** wantSymbol 可以写几个，用 | 分隔（例：Arbitrum 的 USDT0 合约 symbol 是 "USD₮0"）。 */
     static String checkToken(String label, String symbol, BigInteger decimals, String wantSymbol, int wantDecimals) {
-        if (!wantSymbol.equals(symbol)) return label + " 的 symbol 是 " + symbol + "，期望 " + wantSymbol;
+        if (!java.util.Arrays.asList(wantSymbol.split("\\|")).contains(symbol)) return label + " 的 symbol 是 " + symbol + "，期望 " + wantSymbol;
         if (decimals.intValue() != wantDecimals || decimals.bitLength() > 8) {
             return label + " 的 decimals 是 " + decimals + "，期望 " + wantDecimals;
         }

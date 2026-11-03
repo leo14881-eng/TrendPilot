@@ -34,14 +34,26 @@ final class LpCollector {
     private final LpStore store;
     /** (eventKey, text) → 通知。 */
     private final BiConsumer<String, String> alert;
+    private final PoolSizeCheck.VolumeSource volume;
+    /** 规模检查数据取不到时多久再试一次。 */
+    static final long SIZE_RETRY_SECONDS = 30 * 60;
 
     private final Map<String, PoolInfo> active = new LinkedHashMap<>();
+    /** 停用的池子：校验不通过（REJECTED）或规模不够（INACTIVE），本次运行期间不再采集。 */
     private final Set<String> rejected = new HashSet<>();
+    /** 等规模检查的池子 → 下次检查时间（epoch 秒）。等待期间不采集、不写快照。 */
+    private final Map<String, Long> sizeRetryAt = new HashMap<>();
     private final Map<String, Integer> failStreak = new HashMap<>();
     private final Map<String, Snapshot> latest = new HashMap<>();
 
     LpCollector(LpShadowProperties props, Map<String, RpcClient> rpc, PerpQuotes perp, LpStore store,
                 BiConsumer<String, String> alert) {
+        this(props, rpc, perp, store, alert, (c, a) -> null);
+    }
+
+    LpCollector(LpShadowProperties props, Map<String, RpcClient> rpc, PerpQuotes perp, LpStore store,
+                BiConsumer<String, String> alert, PoolSizeCheck.VolumeSource volume) {
+        this.volume = volume;
         this.props = props;
         this.rpc = rpc;
         this.perp = perp;
@@ -61,16 +73,31 @@ final class LpCollector {
     /** 采集一分钟；ts = 整分钟的 epoch 秒。返回写入的快照（每个配置的池子一行，已停用的除外）。 */
     List<Snapshot> collect(long ts, Instant now) {
         resolvePending(now);
-        PerpQuotes.Quote q = perp.get(now.toEpochMilli());
-        Double mark = q == null ? null : q.mark();
-        Double funding = q == null ? null : q.fundingRate();
+        long nowMs = now.toEpochMilli();
+        // 非 ETH 池子用 ETHUSDT 标记价把 gas 换成 USDC（和 ETH 池共用同一个 60 秒缓存，不多请求）
+        boolean needGasToken = props.pools().stream().anyMatch(p -> !LpShadowProperties.Pool.ETH.equals(p.asset())
+                && active.containsKey(p.key()));
+        PerpQuotes.Quote gasQuote = needGasToken ? perp.get(props.perpSymbol(), nowMs) : null;
+        Double gasTokenUsd = gasQuote == null ? null : gasQuote.mark();
         List<Snapshot> rows = new ArrayList<>();
         for (Map.Entry<String, List<LpShadowProperties.Pool>> e : poolsByChain().entrySet()) {
             String chain = e.getKey();
-            List<LpShadowProperties.Pool> pools = e.getValue().stream().filter(p -> !rejected.contains(p.key())).toList();
+            List<LpShadowProperties.Pool> pools = e.getValue().stream()
+                    .filter(p -> !rejected.contains(p.key()) && !sizeRetryAt.containsKey(p.key())).toList();
             List<PoolInfo> infos = pools.stream().map(p -> active.get(p.key())).filter(java.util.Objects::nonNull).toList();
+            Map<String, PerpQuotes.Quote> quotes = new HashMap<>();
             for (LpShadowProperties.Pool p : pools) {
-                if (!active.containsKey(p.key())) rows.add(Snapshot.gap(ts, p.key(), mark, funding, "池子地址还没解析成功"));
+                String sym = props.perpFor(p);
+                PerpQuotes.Quote q = sym == null ? null : perp.get(sym, nowMs);
+                quotes.put(p.key(), q);
+            }
+            Map<String, LpShadowProperties.Pool> cfg = new HashMap<>();
+            pools.forEach(p -> cfg.put(p.key(), p));
+            for (LpShadowProperties.Pool p : pools) {
+                if (!active.containsKey(p.key())) {
+                    PerpQuotes.Quote q = quotes.get(p.key());
+                    rows.add(Snapshot.gap(ts, p.key(), q == null ? null : q.mark(), q == null ? null : q.fundingRate(), "池子地址还没解析成功"));
+                }
             }
             if (infos.isEmpty()) continue;
             List<Call> calls = new ArrayList<>();
@@ -91,7 +118,11 @@ final class LpCollector {
                 chainOk(chain);
             } catch (RuntimeException ex) {
                 chainFailed(chain, ex.getMessage(), now);
-                for (PoolInfo i : infos) rows.add(Snapshot.gap(ts, i.key(), mark, funding, "RPC：" + RpcClient.abbreviate(String.valueOf(ex.getMessage()))));
+                for (PoolInfo i : infos) {
+                    PerpQuotes.Quote q = quotes.get(i.key());
+                    rows.add(withGasToken(i, Snapshot.gap(ts, i.key(), q == null ? null : q.mark(), q == null ? null : q.fundingRate(),
+                            "RPC：" + RpcClient.abbreviate(String.valueOf(ex.getMessage()))), gasTokenUsd));
+                }
                 continue;
             }
             int gasIdx = infos.size() * 4;
@@ -99,14 +130,23 @@ final class LpCollector {
             BigInteger gas = gasR.ok() ? Abi.quantity(gasR.value()) : null;
             L1Fees.Estimate l1 = L1Fees.parse(l1Kind, rs.subList(gasIdx + 1, rs.size()), props.l1TxBytes(), props.l1TxCount());
             for (int k = 0; k < infos.size(); k++) {
-                Snapshot snap = parse(ts, infos.get(k), rs.subList(k * 4, k * 4 + 4), gas, mark, funding);
-                rows.add(l1 == null ? snap : snap.withL1(l1.totalWei(), l1.source()));
+                PoolInfo info = infos.get(k);
+                PerpQuotes.Quote q = quotes.get(info.key());
+                Snapshot snap = parse(ts, info, rs.subList(k * 4, k * 4 + 4), gas, q == null ? null : q.mark(),
+                        q == null ? null : q.fundingRate());
+                snap = l1 == null ? snap : snap.withL1(l1.totalWei(), l1.source());
+                rows.add(withGasToken(info, snap, gasTokenUsd));
             }
         }
         store.insertSnapshots(rows);
         for (Snapshot s : rows) latest.put(s.pool(), s);
         collectTvl(ts, rows);
         return rows;
+    }
+
+    /** ETH 池子不写 gasTokenUsd（沿用池子自己的 ETH 价格，和上线以来的口径完全一样）。 */
+    private static Snapshot withGasToken(PoolInfo info, Snapshot s, Double gasTokenUsd) {
+        return info.isEth() || gasTokenUsd == null ? s : s.withGasTokenUsd(gasTokenUsd);
     }
 
     static Snapshot parse(long ts, PoolInfo p, List<Result> r, BigInteger gas, Double mark, Double funding) {
@@ -134,11 +174,13 @@ final class LpCollector {
         return out;
     }
 
-    /** 还没解析成功的池子：按链解析一次（失败的下一分钟再试）。 */
+    /** 还没解析成功的池子：按链解析一次（失败的下一分钟再试）；需要规模检查的池子解析成功后再检查规模。 */
     private void resolvePending(Instant now) {
         for (Map.Entry<String, List<LpShadowProperties.Pool>> e : poolsByChain().entrySet()) {
             List<LpShadowProperties.Pool> pending = e.getValue().stream()
-                    .filter(p -> !active.containsKey(p.key()) && !rejected.contains(p.key())).toList();
+                    .filter(p -> !active.containsKey(p.key()) && !rejected.contains(p.key())
+                            && sizeRetryAt.getOrDefault(p.key(), Long.MIN_VALUE) <= now.getEpochSecond())
+                    .toList();
             if (pending.isEmpty()) continue;
             LpShadowProperties.Chain chain = props.chains().get(e.getKey());
             RpcClient client = rpc.get(e.getKey());
@@ -151,22 +193,54 @@ final class LpCollector {
                 PoolResolver.Outcome o = res.get(p.key());
                 if (o == null) continue;
                 if (o.info() != null) {
-                    active.put(p.key(), o.info());
-                    store.savePool(p.key(), p.chain(), p.fee(), o.info(), "ACTIVE", null, now);
-                    log.info("LP 影子盘：池子 {} 已解析 {}（WETH 是 token{}）", p.key(), o.info().address(),
-                            o.info().wethIsToken0() ? 0 : 1);
+                    if (p.sizeCheck() && !store.hasStates(p.key())) {
+                        checkSize(p, o.info(), client, now);
+                    } else {
+                        activate(p, o.info(), now, null);
+                    }
                 } else if (o.rejected()) {
                     reject(p, o.reason(), now);
                 } else {
-                    store.savePool(p.key(), p.chain(), p.fee(), null, "PENDING", o.reason(), now);
+                    store.savePool(p.key(), p.chain(), p.fee(), null, "PENDING", o.reason(), now, p.asset(), null, null);
                 }
+            }
+        }
+    }
+
+    private void activate(LpShadowProperties.Pool p, PoolInfo info, Instant now, PoolSizeCheck.Outcome size) {
+        sizeRetryAt.remove(p.key());
+        active.put(p.key(), info);
+        store.savePool(p.key(), p.chain(), p.fee(), info, "ACTIVE", size == null ? null : size.reason(), now, p.asset(),
+                size == null ? null : size.tvlUsd(), size == null ? null : size.volumeUsd());
+        log.info("LP 影子盘：池子 {} 已解析 {}（{} 是 token{}）{}", p.key(), info.address(), p.asset(), info.wethIsToken0() ? 0 : 1,
+                size == null ? "" : "，" + size.reason());
+    }
+
+    /** 还没开始运行的池子：规模够才上线；不够就 INACTIVE 并告警；数据取不到 30 分钟后再试（期间不运行）。 */
+    private void checkSize(LpShadowProperties.Pool p, PoolInfo info, RpcClient client, Instant now) {
+        PoolSizeCheck.Outcome o = PoolSizeCheck.check(client, info, volume, props.minTvlUsd(), props.minVolume24hUsd());
+        switch (o.verdict()) {
+            case ACTIVE -> activate(p, info, now, o);
+            case INACTIVE -> {
+                rejected.add(p.key());
+                sizeRetryAt.remove(p.key());
+                store.savePool(p.key(), p.chain(), p.fee(), info, "INACTIVE", o.reason(), now, p.asset(), o.tvlUsd(), o.volumeUsd());
+                log.warn("LP 影子盘：池子 {} 规模不够，暂不运行：{}", p.key(), o.reason());
+                alert.accept("lpshadow:inactive:" + p.key() + ":" + now.toString().substring(0, 10),
+                        "【LP】池子 " + p.key() + "（" + info.address() + "）规模不够，暂不运行：" + o.reason() + "。其他池子照常采集。");
+            }
+            case RETRY -> {
+                sizeRetryAt.put(p.key(), now.getEpochSecond() + SIZE_RETRY_SECONDS);
+                store.savePool(p.key(), p.chain(), p.fee(), info, "PENDING", "规模检查：" + o.reason() + "，30 分钟后再试", now, p.asset(),
+                        o.tvlUsd(), o.volumeUsd());
+                log.info("LP 影子盘：池子 {} 规模检查暂时取不到数据（{}），30 分钟后再试", p.key(), o.reason());
             }
         }
     }
 
     private void reject(LpShadowProperties.Pool p, String why, Instant now) {
         rejected.add(p.key());
-        store.savePool(p.key(), p.chain(), p.fee(), null, "REJECTED", why, now);
+        store.savePool(p.key(), p.chain(), p.fee(), null, "REJECTED", why, now, p.asset(), null, null);
         log.warn("LP 影子盘：池子 {} 校验未通过，已停用：{}", p.key(), why);
         alert.accept("lpshadow:reject:" + p.key() + ":" + now.toString().substring(0, 10),
                 "【LP】池子 " + p.key() + " 校验未通过，已停用：" + why + "。其他池子照常采集。");

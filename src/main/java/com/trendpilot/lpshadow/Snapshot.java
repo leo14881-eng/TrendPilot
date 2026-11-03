@@ -7,11 +7,20 @@ import java.math.BigInteger;
  * GAP 时池子字段可能为空，note 写原因。perpMark / fundingRate 是 Binance ETHUSDT 永续的标记价格和资金费率，取不到为 null。
  * l1FeeWei 是按这一分钟链上数据估算的"一次调仓"的 L1 数据费（所有交易合计，wei），l1Source 写用的是哪个只读方法；取不到为 null。
  *
+ * gasTokenUsd 是付 gas 用的 ETH 的价格（ETHUSDT 永续标记价），只有非 ETH 池子（BTC、稳定币）写，用于把 gas 换成 USDC；
+ * ETH 池子为 null（沿用池子自己的 ETH 价格）。
+ *
  * @param ts 采样分钟（UTC epoch 秒，整分钟）
  */
 public record Snapshot(long ts, String pool, BigInteger sqrtPriceX96, Integer tick, BigInteger liquidity, BigInteger fg0,
                        BigInteger fg1, BigInteger gasPriceWei, Double perpMark, Double fundingRate, String status, String note,
-                       BigInteger l1FeeWei, String l1Source) {
+                       BigInteger l1FeeWei, String l1Source, Double gasTokenUsd) {
+
+    public Snapshot(long ts, String pool, BigInteger sqrtPriceX96, Integer tick, BigInteger liquidity, BigInteger fg0, BigInteger fg1,
+                    BigInteger gasPriceWei, Double perpMark, Double fundingRate, String status, String note, BigInteger l1FeeWei,
+                    String l1Source) {
+        this(ts, pool, sqrtPriceX96, tick, liquidity, fg0, fg1, gasPriceWei, perpMark, fundingRate, status, note, l1FeeWei, l1Source, null);
+    }
 
     public Snapshot(long ts, String pool, BigInteger sqrtPriceX96, Integer tick, BigInteger liquidity, BigInteger fg0, BigInteger fg1,
                     BigInteger gasPriceWei, Double perpMark, Double fundingRate, String status, String note) {
@@ -19,7 +28,13 @@ public record Snapshot(long ts, String pool, BigInteger sqrtPriceX96, Integer ti
     }
 
     public Snapshot withL1(BigInteger fee, String source) {
-        return new Snapshot(ts, pool, sqrtPriceX96, tick, liquidity, fg0, fg1, gasPriceWei, perpMark, fundingRate, status, note, fee, source);
+        return new Snapshot(ts, pool, sqrtPriceX96, tick, liquidity, fg0, fg1, gasPriceWei, perpMark, fundingRate, status, note, fee, source,
+                gasTokenUsd);
+    }
+
+    public Snapshot withGasTokenUsd(Double usd) {
+        return new Snapshot(ts, pool, sqrtPriceX96, tick, liquidity, fg0, fg1, gasPriceWei, perpMark, fundingRate, status, note, l1FeeWei,
+                l1Source, usd);
     }
 
     public static final String OK = "OK";

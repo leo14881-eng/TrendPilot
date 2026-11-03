@@ -27,6 +27,8 @@ final class LpEngine {
     /** 一个池子一分钟的全部写库（开平仓、事件、状态）放进一个事务；null = 不用事务（只在部分测试里）。 */
     private final org.springframework.transaction.support.TransactionTemplate tx;
     private final java.time.ZoneId zone;
+    /** Telegram 提醒（eventKey, text），稳定币池脱钩用。 */
+    private final java.util.function.BiConsumer<String, String> alert;
     private final Map<String, LpBook> books = new LinkedHashMap<>();
     private final Map<String, Integer> errors = new HashMap<>();
 
@@ -39,6 +41,12 @@ final class LpEngine {
     }
 
     LpEngine(LpStore store, long rebalanceGas, org.springframework.transaction.support.TransactionTemplate tx, java.time.ZoneId zone) {
+        this(store, rebalanceGas, tx, zone, (k, t) -> { });
+    }
+
+    LpEngine(LpStore store, long rebalanceGas, org.springframework.transaction.support.TransactionTemplate tx, java.time.ZoneId zone,
+             java.util.function.BiConsumer<String, String> alert) {
+        this.alert = alert;
         this.store = store;
         this.rebalanceGas = rebalanceGas;
         this.tx = tx;
@@ -102,7 +110,7 @@ final class LpEngine {
             }
         });
         Snapshot prev = store.lastSnapshotBefore(info.key(), ts).orElse(null);
-        return new LpBook(info, Strategy.forPool(info.key()), restored, prev, ledger(), rebalanceGas);
+        return new LpBook(info, Strategy.forPool(info.key(), info.asset()), restored, prev, ledger(), rebalanceGas);
     }
 
     private void save(LpBook book, long ts) {
@@ -128,6 +136,15 @@ final class LpEngine {
             @Override
             public void closePosition(long id, long ts) {
                 store.closePosition(id, ts);
+            }
+
+            @Override
+            public void alert(String eventKey, String text) {
+                try {
+                    alert.accept(eventKey, text);
+                } catch (RuntimeException e) {
+                    log.warn("LP 影子盘：提醒发送失败：{}", e.toString());
+                }
             }
 
             @Override

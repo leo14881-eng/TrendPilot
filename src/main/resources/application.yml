@@ -310,9 +310,11 @@ trendpilot.v3:
 trendpilot.btc-trend:
   enabled: true
 
-# LP 影子盘（Uniswap V3 做市 + 合约对冲，只读影子，见 docs/规则说明.md "LP 影子盘"）：每分钟读 3 个池子的链上状态，
-# 60 个虚拟仓位 + 3 个基准，独立表 lp_*，不影响其他账本。只用公开 RPC 和 Binance 公开行情，不需要任何密钥。
+# LP 影子盘（Uniswap V3 做市 + 合约对冲，只读影子，见 docs/规则说明.md "LP 影子盘"）：每分钟读各池子的链上状态，
+# ETH 池 3 个（2026-10-30 起）、BTC 池 2 个和稳定币池 2 个（2026-11-03 起，用户同意），独立表 lp_*，不影响其他账本。
+# 只用公开 RPC、Binance 公开行情和（新池子上线前一次）GeckoTerminal 公开成交量，不需要任何密钥。
 # 池子地址不写死：启动时用 Factory.getPool 解析，并核对代币 symbol / decimals，不一致就停用该池并告警。
+# size-check 的池子在开始运行前还要过规模门槛（链上 TVL ≥ min-tvl-usd、24 小时成交量 ≥ min-volume24h-usd），不够就 INACTIVE 并告警。
 trendpilot.lpshadow:
   enabled: true
   binance-futures-url: https://fapi.binance.com
@@ -322,6 +324,9 @@ trendpilot.lpshadow:
   rebalance-gas: 600000   # decreaseLiquidity + collect + swap + mint
   l1-tx-bytes: 1000
   l1-tx-count: 3
+  min-tvl-usd: 500000
+  min-volume24h-usd: 100000
+  volume-url: https://api.geckoterminal.com/api/v2
   chains:
     base:
       rpc-url: https://mainnet.base.org
@@ -341,6 +346,12 @@ trendpilot.lpshadow:
     - { key: base-030, chain: base, fee: 3000 }
     - { key: base-005, chain: base, fee: 500 }
     - { key: arb-005, chain: arbitrum, fee: 500 }
+    # BTC 池（2026-11-03）：对冲用 BTCUSDT 永续；BTC 代币 8 位小数。地址来源：Coinbase cbBTC（Base）、WBTC（Arbitrum），启动时链上核对
+    - { key: base-btc-005, chain: base, fee: 500, asset: BTC, base: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", base-symbol: cbBTC, base-decimals: 8, perp-symbol: BTCUSDT, size-check: true }
+    - { key: arb-btc-005, chain: arbitrum, fee: 500, asset: BTC, base: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f", base-symbol: WBTC, base-decimals: 8, perp-symbol: BTCUSDT, size-check: true }
+    # 稳定币池（2026-11-03）：USDC/USDT 0.01%，不对冲；Arbitrum 的 USDT0 合约 symbol 是 "USD₮0"
+    - { key: base-stb-001, chain: base, fee: 100, asset: STABLE, base: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", base-symbol: USDT, base-decimals: 6, size-check: true }
+    - { key: arb-stb-001, chain: arbitrum, fee: 100, asset: STABLE, base: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", base-symbol: "USD\u20AE0|USDT0|USDT", base-decimals: 6, size-check: true }
 
 # 秒级启动探测（docs/规则说明.md 16.5）：用已订阅的 15m K 线实时推送记录"5 分钟急涨 + 放量"，只写 launch_event，不买卖、不进任何账本
 trendpilot.launch:

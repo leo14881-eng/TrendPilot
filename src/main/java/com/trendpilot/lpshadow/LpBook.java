@@ -24,6 +24,11 @@ import java.util.Map;
  * <p><b>对冲</b>：ETHUSDT 永续空单，目标数量 = 仓位里的 ETH 数量；偏离超过仓位价值 2% 才调整，taker 0.05%；
  * 保证金按 3 倍杠杆从本金里划出（不参与做市）；每 8 小时（UTC 00/08/16）按结算前最后看到的资金费率结算（费率为正时空单收钱）；
  * 离强平价不到 15% 记一次风险事件；价格到达强平价按爆仓处理（保证金清零、空单平掉，之后不再对冲）。
+ *
+ * <p><b>BTC 池 / 稳定币池</b>（2026-11-03）：同一套计算，"ETH"换成池子里和 USDC 配对的代币；BTC 池对冲用 BTCUSDT 永续。
+ * 链上 gas 永远用 ETH 付，所以非 ETH 池子按快照里的 gasTokenUsd（ETHUSDT 标记价）换算，缺失时沿用 1 小时内最近值，超过就不调仓。
+ * 稳定币池不对冲、不需要永续报价；每分钟检查脱钩：价格偏离 1:1 超过 0.5% 记一条 DEPEG 事件（每次偏离一条），
+ * 超过 2% 发一次 Telegram 提醒；回到 0.5% 以内记 DEPEG_END（带这次的最大偏离）。只是监控，不改变任何仓位。
  */
 final class LpBook {
 
@@ -36,6 +41,8 @@ final class LpBook {
     static final double MAINTENANCE = 0.005;
     static final double RISK_DISTANCE = 0.15;
     static final long FUNDING_PERIOD = 8 * 3600;
+    static final double DEPEG_EVENT = 0.005;
+    static final double DEPEG_ALERT = 0.02;
 
     /** 持久化接口：开 / 平仓位记录、事件。 */
     interface Ledger {
@@ -44,6 +51,10 @@ final class LpBook {
         void closePosition(long id, long ts);
 
         void event(long ts, String strategy, String type, Map<String, Object> detail);
+
+        /** Telegram 提醒（eventKey 去重）；默认不发。 */
+        default void alert(String eventKey, String text) {
+        }
     }
 
     final PoolInfo pool;
@@ -63,6 +74,13 @@ final class LpBook {
     Double lastRate;
     long lastRateTs;
     Double lastMark;
+    /** 非 ETH 池子：最近一次有效的 ETH 价格（付 gas 用）。 */
+    Double lastGasTokenUsd;
+    long lastGasTokenTs;
+    /** 稳定币池的脱钩状态（只在内存里，重启后如果仍在偏离会再记一条）。 */
+    boolean depeg;
+    boolean depegAlerted;
+    double depegMax;
 
     LpBook(PoolInfo pool, List<Strategy> strategies, Map<String, PositionState> restored, Snapshot prev, Ledger ledger) {
         this(pool, strategies, restored, prev, ledger, DEFAULT_REBALANCE_GAS);
@@ -106,6 +124,7 @@ final class LpBook {
             prev = cur;
             return;
         }
+        if (pool.isStable()) checkDepeg(cur);
         if (gapStart != 0 || missingMinutes) {
             long from = gapStart != 0 ? gapStart : prev.ts() + 60;
             ledger.event(cur.ts(), pool.key(), "GAP", Map.of("from", from, "to", cur.ts(), "minutes", (cur.ts() - from) / 60));
@@ -113,8 +132,8 @@ final class LpBook {
         }
         boolean poolValid = prev != null && prev.ok() && cur.ts() - prev.ts() == 60;
         if (!started()) {
-            // 所有策略和基准同一分钟开始；需要永续报价（对冲策略开空单用）
-            if (cur.perpOk()) start(cur);
+            // 所有策略和基准同一分钟开始；有对冲策略的池子需要永续报价（开空单用）
+            if (cur.perpOk() || strategies.stream().noneMatch(Strategy::hedged)) start(cur);
         } else {
             for (Strategy s : strategies) {
                 PositionState st = states.get(s.name());
@@ -133,6 +152,42 @@ final class LpBook {
         if (s.l1FeeWei() != null) {
             lastL1Wei = s.l1FeeWei();
             lastL1Ts = s.ts();
+        }
+        if (s.gasTokenUsd() != null && s.gasTokenUsd() > 0) {
+            lastGasTokenUsd = s.gasTokenUsd();
+            lastGasTokenTs = s.ts();
+        }
+    }
+
+    /** 付 gas 的 ETH 价格（USDC）：ETH 池就是池子价格；其他池子用 1 小时内最近一次 ETHUSDT 标记价，没有返回 null。 */
+    Double gasTokenUsd(long ts, double poolPrice) {
+        if (pool.isEth()) return poolPrice;
+        return lastGasTokenUsd != null && ts - lastGasTokenTs <= COST_MAX_AGE ? lastGasTokenUsd : null;
+    }
+
+    /** 稳定币池：价格偏离 1:1 的检查（只记事件和提醒，不动仓位）。 */
+    private void checkDepeg(Snapshot cur) {
+        double price = LpMath.ethPriceAtSqrt(pool, LpMath.sqrtRaw(cur.sqrtPriceX96()));
+        double dev = Math.abs(price - 1);
+        if (!Double.isFinite(dev)) return;
+        if (dev > DEPEG_EVENT) {
+            if (!depeg) {
+                depeg = true;
+                depegMax = 0;
+                ledger.event(cur.ts(), pool.key(), "DEPEG", Map.of("price", price, "deviation", dev));
+            }
+            depegMax = Math.max(depegMax, dev);
+            if (dev > DEPEG_ALERT && !depegAlerted) {
+                depegAlerted = true;
+                ledger.alert("lpshadow:depeg:" + pool.key() + ":" + java.time.Instant.ofEpochSecond(cur.ts()).toString().substring(0, 10),
+                        String.format(java.util.Locale.ROOT, "【LP】稳定币池 %s 价格偏离 1:1 达 %.2f%%（当前 1 个 %s = %.4f USDC），"
+                                + "只是提醒，影子仓位照常按规则计算。", pool.key(), dev * 100, "USDT", price));
+            }
+        } else if (depeg) {
+            ledger.event(cur.ts(), pool.key(), "DEPEG_END", Map.of("price", price, "maxDeviation", depegMax));
+            depeg = false;
+            depegAlerted = false;
+            depegMax = 0;
         }
     }
 
@@ -221,16 +276,20 @@ final class LpBook {
         if (st.outSince == 0) st.outSince = cur.ts();
         if (cur.ts() - st.outSince < s.cooldownMinutes() * 60L) return;
         double[] chain = chainCostWei(cur.ts());
-        if (chain == null) {   // 1 小时内没有有效的 gas / L1 费：这一分钟不调仓
-            if (!costGap) ledger.event(cur.ts(), pool.key(), "COST_GAP", Map.of("gasTs", lastGasTs, "l1Ts", lastL1Ts));
+        double price = LpMath.ethPriceAtSqrt(pool, sqrt);
+        Double gasPx = gasTokenUsd(cur.ts(), price);
+        if (chain == null || gasPx == null) {   // 1 小时内没有有效的 gas / L1 费 / ETH 价格：这一分钟不调仓
+            if (!costGap) {
+                ledger.event(cur.ts(), pool.key(), "COST_GAP", pool.isEth() ? Map.of("gasTs", lastGasTs, "l1Ts", lastL1Ts)
+                        : Map.of("gasTs", lastGasTs, "l1Ts", lastL1Ts, "gasTokenTs", lastGasTokenTs));
+            }
             costGap = true;
             return;
         }
         costGap = false;
-        double price = LpMath.ethPriceAtSqrt(pool, sqrt);
         double lp = LpMath.value(pool, st.liquidity, st.tickLower, st.tickUpper, sqrt);
-        double l1 = chain[1] / 1e18 * price;
-        double gas = chain[0] / 1e18 * price + l1;
+        double l1 = chain[1] / 1e18 * gasPx;
+        double gas = chain[0] / 1e18 * gasPx + l1;
         double swap = lp / 2 * (pool.feeRate() + SLIPPAGE);
         double capital = lp - gas - swap;
         if (!(capital > 0)) return;

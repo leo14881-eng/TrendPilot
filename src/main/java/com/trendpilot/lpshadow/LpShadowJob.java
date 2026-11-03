@@ -25,9 +25,9 @@ import com.trendpilot.notify.Notifier;
 import jakarta.annotation.PreDestroy;
 
 /**
- * LP 影子盘的分钟任务（开关 trendpilot.lpshadow.enabled）：采集三个 Uniswap V3 池子的链上状态并写快照。
+ * LP 影子盘的分钟任务（开关 trendpilot.lpshadow.enabled）：采集配置的 Uniswap V3 池子（ETH / BTC / 稳定币）的链上状态并写快照。
  * <ul>
- * <li>只读：只发 eth_call / eth_gasPrice 和 Binance 公开行情请求，不建钱包、不签名、不发交易；</li>
+ * <li>只读：只发 eth_call / eth_gasPrice、Binance 公开行情请求和（新池子上线前一次）GeckoTerminal 公开成交量查询，不建钱包、不签名、不发交易；</li>
  * <li>用自己的单线程调度（线程名 lpshadow），不占公共定时任务线程，不用组合锁，不会拖慢 Discovery / Monitor；</li>
  * <li>任何错误只记 warn，不影响其他任务；本机待命（另一台机器在运行）时跳过。</li>
  * </ul>
@@ -59,17 +59,47 @@ public class LpShadowJob {
         Map<String, RpcClient> rpc = new LinkedHashMap<>();
         props.chains().forEach((name, c) -> rpc.put(name,
                 new RpcClient(name, RpcClient.http(builder, c.rpcUrl()), c.minGapMs(), System::currentTimeMillis)));
-        PerpQuotes perp = new PerpQuotes(() -> {
+        PerpQuotes perp = new PerpQuotes((String symbol) -> {
             BinanceClient b = binance.getIfAvailable();
             if (b == null) return null;
-            BinanceClient.PremiumIndex p = b.premiumIndex(props.binanceFuturesUrl(), props.perpSymbol());
+            BinanceClient.PremiumIndex p = b.premiumIndex(props.binanceFuturesUrl(), symbol);
             return new PerpQuotes.Quote(p.markPrice(), p.lastFundingRate());
         });
-        this.collector = new LpCollector(props, rpc, perp, store, notifier::send);
+        this.collector = new LpCollector(props, rpc, perp, store, notifier::send, geckoVolume(builder, props.volumeUrl()));
         this.engine = new LpEngine(store, props.rebalanceGas(), new org.springframework.transaction.support.TransactionTemplate(tm),
-                java.time.ZoneId.of(zone));
+                java.time.ZoneId.of(zone), notifier::send);
         this.reports = new LpReports(store, java.time.ZoneId.of(zone), java.nio.file.Path.of(dataDir, "reports"), notifier::send,
                 notifier::sendDocument);
+    }
+
+    /**
+     * 新池子规模检查用的 24 小时成交量：GeckoTerminal 公开接口（免费、只读，不需要密钥）。
+     * 只在还没开始运行的池子上线前调用（每个池子一次，取不到 30 分钟后再试），不进每分钟采集。
+     */
+    static PoolSizeCheck.VolumeSource geckoVolume(RestClient.Builder builder, String baseUrl) {
+        RestClient http = builder.clone().baseUrl(baseUrl).build();
+        return (chain, address) -> {
+            try {
+                com.fasterxml.jackson.databind.JsonNode n = http.get().uri("/networks/{n}/pools/{a}", chain, address.toLowerCase(java.util.Locale.ROOT))
+                        .header("Accept", "application/json").retrieve().body(com.fasterxml.jackson.databind.JsonNode.class);
+                return parseGeckoVolume(n);
+            } catch (RuntimeException e) {
+                log.info("LP 影子盘：GeckoTerminal 成交量读取失败（{} {}）：{}", chain, address, e.toString());
+                return null;
+            }
+        };
+    }
+
+    static Double parseGeckoVolume(com.fasterxml.jackson.databind.JsonNode n) {
+        if (n == null) return null;
+        com.fasterxml.jackson.databind.JsonNode v = n.path("data").path("attributes").path("volume_usd").path("h24");
+        if (v.isMissingNode() || v.isNull()) return null;
+        try {
+            double d = Double.parseDouble(v.asText());
+            return Double.isFinite(d) && d >= 0 ? d : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     @EventListener(ApplicationReadyEvent.class)
