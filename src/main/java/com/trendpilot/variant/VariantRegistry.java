@@ -42,7 +42,7 @@ public class VariantRegistry {
 
     /** 一个变体。overrides 含每笔金额（trade-usdt）。 */
     public record Variant(String name, String base, VariantOverrides overrides, String table, String source,
-                          boolean backtestPassed, String evidence, String status, Instant startedAt, Ledger book) {
+                          boolean backtestPassed, String evidence, String status, Instant startedAt, Ledger book, String note) {
 
         public boolean opensNew() {
             return ACTIVE.equals(status);
@@ -107,6 +107,15 @@ public class VariantRegistry {
     public synchronized void sync() {
         if (synced) return;
         Instant now = clock.instant();
+        // 先处理用户停用的变体：停开新仓、腾出名额，再登记新变体
+        for (VariantsProperties.Def d : config.list()) {
+            if (!d.isRetired()) continue;
+            try {
+                retire(d.name(), d.retiredNote(), now);
+            } catch (RuntimeException e) {
+                log.warn("变体 {} 停用没有完成：{}", d.name(), e.getMessage());
+            }
+        }
         for (VariantsProperties.Def d : config.list()) {
             try {
                 validateName(d.name());
@@ -117,6 +126,7 @@ public class VariantRegistry {
                 String table = tableFor(d.name());
                 VariantBook.ensureTable(jdbc, table);
                 boolean passed = Boolean.TRUE.equals(d.backtestPassed());
+                if (row.isEmpty() && d.isRetired()) continue; // 已停用的不再登记
                 if (row.isEmpty()) {
                     if (activeCount() >= opt.maxActive()) {
                         log.warn("变体 {} 没有上线：已有 {} 个活跃变体（最多 {} 个）", d.name(), activeCount(), opt.maxActive());
@@ -153,6 +163,20 @@ public class VariantRegistry {
         return jdbc.sql("SELECT MIN(created_at) FROM shadow_event WHERE book = :b AND type = 'BUY'").param("b", book)
                 .query(String.class).optional().filter(s -> s != null && !s.isBlank()).map(Instant::parse);
     }
+
+    /**
+     * 用户停用一个变体：正在开新仓（ACTIVE）的改为 STOPPED（停开新仓），现有持仓照原规则卖出，卖完后
+     * {@link VariantTracker#monitorAll} 自动归档。已经停开新仓、转正或归档的不变。不删任何记账和历史。
+     */
+    public void retire(String name, String note, Instant now) {
+        int n = jdbc.sql("UPDATE variant_registry SET status = 'STOPPED', status_at = :now, note = :note WHERE name = :n AND status = 'ACTIVE'")
+                .param("now", now.toString()).param("note", RETIRED_PREFIX + (note == null || note.isBlank() ? "" : "：" + note))
+                .param("n", name).update();
+        if (n > 0) log.info("变体 {} 已停用：停开新仓，持仓按原规则卖完后归档", name);
+    }
+
+    /** 用户停用时写在 note 开头，报表据此显示"已停用"。 */
+    public static final String RETIRED_PREFIX = "用户停用";
 
     public int activeCount() {
         return jdbc.sql("SELECT COUNT(*) FROM variant_registry WHERE status = 'ACTIVE'").query(Integer.class).single();
@@ -199,7 +223,7 @@ public class VariantRegistry {
         String table = rs.getString("position_table");
         Ledger book = books.computeIfAbsent(name, n -> StrongVariantBook.BOOK.equals(n) ? v5 : new VariantBook(jdbc, params, n, table, tx));
         return new Variant(name, rs.getString("base"), o, table, rs.getString("source"), rs.getInt("backtest_passed") == 1,
-                rs.getString("evidence"), rs.getString("status"), Instant.parse(rs.getString("started_at")), book);
+                rs.getString("evidence"), rs.getString("status"), Instant.parse(rs.getString("started_at")), book, rs.getString("note"));
     }
 
     /**
@@ -252,6 +276,14 @@ public class VariantRegistry {
         List<String> out = new ArrayList<>();
         for (Variant v : all()) out.add(v.name() + "（" + statusLabel(v.status()) + "）：" + v.overrides().describe());
         return out;
+    }
+
+    /** 报表用的状态：用户停用的（note 以"用户停用"开头，或停开新仓后已归档）显示"已停用"。 */
+    public static String statusLabel(Variant v) {
+        boolean retired = v.note() != null && v.note().startsWith(RETIRED_PREFIX);
+        if (retired && STOPPED.equals(v.status())) return "已停用（不开新仓，持仓按原规则卖完）";
+        if (ARCHIVED.equals(v.status())) return "已停用（已归档）";
+        return statusLabel(v.status());
     }
 
     public static String statusLabel(String status) {

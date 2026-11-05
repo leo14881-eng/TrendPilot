@@ -534,7 +534,8 @@ public class VariantTracker {
                 log.warn("{} 本轮跳过 {}：K 线获取失败 {}", v.name(), e.getKey(), ex.getMessage());
                 continue;
             }
-            for (Position pos : guard.needDailyAtr(v.name(), e.getValue())) {
+            // 固定止损的变体不需要日线 ATR（少一次请求）
+            for (Position pos : v.overrides().hasFixedStop() ? List.<Position>of() : guard.needDailyAtr(v.name(), e.getValue())) {
                 guard.provideDailyAtr(v.name(), pos, guard.dailyAtrCached(m, pos.symbol(), now));
             }
             for (Position pos : e.getValue()) {
@@ -575,7 +576,7 @@ public class VariantTracker {
                         in.book(), sig, fresh);
                 Kline lastHour = in.bars() == null || in.bars().hourly().isEmpty() ? null : in.bars().hourly().getLast();
                 if (lastHour != null && in.info() != null && in.info().trading()) {
-                    String g = guard.check(v.name(), pos, d, lastHour.close(), lastHour.openTime(), now);
+                    String g = guard.check(v.name(), pos, d, lastHour.close(), lastHour.openTime(), now, v.overrides().stopFixedPct());
                     if (g != null) d = LossGuard.asExit(d, g);
                     String extra = rules.earlyExit(v.name(), v.overrides(), pos, d, book.maxNet(pos.symbol()), lastHour, now);
                     if (extra != null) d = LossGuard.asExit(d, extra);
@@ -639,8 +640,9 @@ public class VariantTracker {
                 if (!exits.isEmpty()) out.put(v.name(), exits);
                 checkDrawdown(v, now);
                 if (!v.opensNew() && v.book().positions().isEmpty()) {
-                    registry.setStatus(v.name(), VariantRegistry.ARCHIVED,
-                            VariantRegistry.statusLabel(v.status()) + "后持仓已卖完，归档", now);
+                    boolean retired = v.note() != null && v.note().startsWith(VariantRegistry.RETIRED_PREFIX);
+                    registry.setStatus(v.name(), VariantRegistry.ARCHIVED, (retired ? VariantRegistry.RETIRED_PREFIX + "；" : "")
+                            + VariantRegistry.statusLabel(v.status()) + "后持仓已卖完，归档", now);
                     log.info("{} 持仓已卖完，归档", v.name());
                 }
             } catch (RuntimeException e) {

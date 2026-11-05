@@ -21,8 +21,16 @@ public record VariantsProperties(List<Def> list) {
         list = list == null ? List.of() : List.copyOf(list);
     }
 
-    /** 一个变体的配置。base 只能是 V2；tradeUsdt 为空时用 V2 的每笔金额。 */
+    /**
+     * 一个变体的配置。base 只能是 V2；tradeUsdt 为空时用 V2 的每笔金额。
+     * retired = true：用户决定停用（retiredNote 写原因）。运行中的变体停开新仓，现有持仓按原规则卖完后自动归档，
+     * 记账和历史保留；停用期间不占活跃名额。没登记过的不会再登记。
+     */
     public record Def(String name, String base, Double tradeUsdt, Map<String, String> overrides, Boolean backtestPassed,
-                      String evidence) {
+                      String evidence, Boolean retired, String retiredNote) {
+
+        public boolean isRetired() {
+            return Boolean.TRUE.equals(retired);
+        }
     }
 }

@@ -29,6 +29,27 @@ class VariantOverridesTest {
     }
 
     @Test
+    void fixedStopReplacesTheAtrDistanceAndUsesTheSameOneHourCloseCheck() {
+        VariantOverrides o = VariantOverrides.parseInline("momentum-top=3,momentum-hours=24,max-open=17,momentum-venue=BYBIT,stop-fixed-pct=6");
+        assertThat(o.inline()).isEqualTo("max-open=17,momentum-hours=24,momentum-top=3,momentum-venue=BYBIT,stop-fixed-pct=6");
+        assertThat(VariantOverrides.parseInline(o.inline())).isEqualTo(o);
+        assertThat(o.describe()).contains("固定 6%");
+        assertThat(o.stopDistancePct(Double.NaN)).isEqualTo(6.0);
+        assertThat(o.stopDistancePct(20)).isEqualTo(6.0); // ATR 不参与
+        VariantOverrides v6b = VariantOverrides.parseInline("momentum-top=3,momentum-venue=BYBIT");
+        assertThat(v6b.hasFixedStop()).isFalse();
+        assertThat(v6b.stopDistancePct(Double.NaN)).isEqualTo(AtrStaleExit.distancePct(Double.NaN));
+        assertThatThrownBy(() -> VariantOverrides.parse(Map.of("stop-fixed-pct", "40"))).hasMessageContaining("1～25");
+        // 线上判断（AtrStaleExit.step，距离 = 6%）：1h 收盘相对均价 −5.9% 不卖，−6% 卖
+        java.time.Instant open = java.time.Instant.parse("2026-11-05T10:00:00Z");
+        java.time.Instant now = open.plusSeconds(3 * 3600);
+        long hour = now.toEpochMilli() - 3_600_000L;
+        var st = AtrStaleExit.State.fresh(o.stopDistancePct(Double.NaN));
+        assertThat(AtrStaleExit.step(st, open, now, false, 100, 94.1, hour, -60).exit()).isNull();
+        assertThat(AtrStaleExit.step(st, open, now, false, 100, 94.0, hour, -61).exit()).isEqualTo("X1_STOP");
+    }
+
+    @Test
     void entryFilterSkipsOrHalvesHotEntriesAndTreatsMissingDataAsNoBuy() {
         VariantOverrides skip = VariantOverrides.parseInline("btc24h-above-pct=1.5,coin24h-band-pct=5-10");
         assertThat(skip.entryMultiplier(1.0, 3, 2)).isEqualTo(1);

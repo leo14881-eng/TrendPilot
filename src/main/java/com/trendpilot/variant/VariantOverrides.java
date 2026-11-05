@@ -14,6 +14,7 @@ import java.util.TreeMap;
  * <li>H1 追高过滤：{@code btc24h-above-pct}（BTC 24h 涨幅高于此值）或 {@code coin24h-band-pct}（币 24h 涨幅落在 "5-10" 区间）时，
  *     按 {@code hot-entry}（SKIP 不开仓 / HALF 半仓，默认 SKIP）处理。</li>
  * <li>H4 放量上限：{@code max-volume-accel}，放量倍数高于此值不开仓。</li>
+ * <li>固定止损：{@code stop-fixed-pct}，1h 收盘相对均价跌到这个百分比就卖，替代 ATR×1.5 止损（利润保护、3 天等反弹照旧）。</li>
  * <li>H2 从没赚过就早走：持有满 {@code early-exit-hours} 小时、利润保护没启动、持仓期间最大可退出净利 &lt; 本金
  *     {@code early-exit-max-mfe-pct}%、最近 1h 收盘相对均价跌超 {@code early-exit-loss-pct}% 时卖出。</li>
  * </ul>
@@ -24,10 +25,11 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
                                Double maxVolumeAccel,
                                Double earlyExitHours, Double earlyExitMaxMfePct, Double earlyExitLossPct,
                                String exitRule, Double runnerArmPct, Double runnerGivebackPct, Double runnerLockRatio,
-                               Integer momentumTop, Integer momentumHours, Integer maxOpen, String momentumVenue) {
+                               Integer momentumTop, Integer momentumHours, Integer maxOpen, String momentumVenue,
+                               Double stopFixedPct) {
 
     public static final String EARLY_EXIT = "EARLY_EXIT";
-    public static final VariantOverrides NONE = new VariantOverrides(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+    public static final VariantOverrides NONE = new VariantOverrides(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     /** 可以叠加的离线退出规则族（tracking.ExitRule，只用净收益和持有时间的几种）。 */
     static final java.util.Set<String> EXIT_RULE_FAMILIES = java.util.Set.of("S1", "C1", "T1", "T2");
     public static final String RULE_EXIT_PREFIX = "RULE_";
@@ -71,6 +73,7 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         }
         if (momentumVenue != null && momentumTop == null) throw new IllegalArgumentException("momentum-venue 需要 momentum-top");
         if (tradeUsdt != null && tradeUsdt > 5000) throw new IllegalArgumentException("trade-usdt 影子变体每笔最多 5000");
+        if (stopFixedPct != null && !(stopFixedPct >= 1 && stopFixedPct <= 25)) throw new IllegalArgumentException("stop-fixed-pct 要在 1～25");
     }
 
     private static void positive(String key, Double v, boolean allowZero) {
@@ -87,6 +90,7 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         Double rArm = null, rGive = null, rLock = null;
         Integer mTop = null, mHours = null, mOpen = null;
         String mVenue = null;
+        Double stopFixed = null;
         for (var e : raw.entrySet()) {
             String k = e.getKey().trim().toLowerCase(Locale.ROOT).replace('_', '-');
             String v = String.valueOf(e.getValue()).trim();
@@ -114,12 +118,13 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
                 case "momentum-hours" -> mHours = (int) Math.round(num(k, v));
                 case "max-open" -> mOpen = (int) Math.round(num(k, v));
                 case "momentum-venue" -> mVenue = v.toUpperCase(Locale.ROOT);
+                case "stop-fixed-pct" -> stopFixed = num(k, v);
                 default -> throw new IllegalArgumentException("不认识的变体参数 " + e.getKey());
             }
         }
         if (hot != null && btc == null && cMin == null) throw new IllegalArgumentException("hot-entry 需要 btc24h-above-pct 或 coin24h-band-pct");
         return new VariantOverrides(rel, depth, trade, btc, cMin, cMax, hot, vol, h, mfe, loss, rule, rArm, rGive, rLock, mTop, mHours, mOpen,
-                "BINANCE".equals(mVenue) ? null : mVenue);
+                "BINANCE".equals(mVenue) ? null : mVenue, stopFixed);
     }
 
     /** 命令行写法 "key=v,key=v"（回测入口和 candidates.json 用）。 */
@@ -170,6 +175,7 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         if (momentumHours != null) m.put("momentum-hours", String.valueOf(momentumHours));
         if (maxOpen != null) m.put("max-open", String.valueOf(maxOpen));
         if (momentumVenue != null) m.put("momentum-venue", momentumVenue);
+        put(m, "stop-fixed-pct", stopFixedPct);
         return m;
     }
 
@@ -210,6 +216,19 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
     /** 涨幅榜动量的标的池和盘口所在交易所（默认 Binance；V6B 用 Bybit）。 */
     public com.trendpilot.market.Venue momentumVenueOr() {
         return momentumVenue == null ? com.trendpilot.market.Venue.BINANCE : com.trendpilot.market.Venue.valueOf(momentumVenue);
+    }
+
+    /**
+     * 山寨止损距离（%）：设置了 {@code stop-fixed-pct} 时用固定百分比（替代 ATR 止损），否则按买入时日线 ATR×1.5（6%～25%）。
+     * 线上 LossGuard（{@link AtrStaleExit#step}）和回测 B0Sim（{@code StopRule.fixed}）都按 1h 收盘相对均价跌到这个距离就卖，
+     * 利润保护和 3 天等反弹照旧。
+     */
+    public double stopDistancePct(double atrDailyPct) {
+        return stopFixedPct != null ? stopFixedPct : AtrStaleExit.distancePct(atrDailyPct);
+    }
+
+    public boolean hasFixedStop() {
+        return stopFixedPct != null;
     }
 
     public int momentumHoursOr24() {
@@ -326,6 +345,7 @@ public record VariantOverrides(Double minBuyRel1h, Double minDepthUsdt, Double t
         if (momentumTop != null) p.add("涨幅榜动量：滚动 " + momentumHoursOr24() + "h 涨幅前 " + momentumTop + " 名（不看 EARLY 信号）"
                 + (momentumVenue == null ? "" : "，标的池和盘口用 " + momentumVenue));
         if (maxOpen != null) p.add("最多同时持有 " + maxOpen + " 个");
+        if (stopFixedPct != null) p.add("止损改为固定 " + fmt(stopFixedPct) + "%（1h 收盘确认，替代 ATR 止损）");
         if (runnerArmPct != null) {
             p.add("浮盈到 " + fmt(runnerArmPct) + "% 后保护改为回吐 " + fmt(runnerGivebackPct) + "%"
                     + (runnerLockRatio == null || runnerLockRatio == 0 ? "" : "、锁 " + fmt(runnerLockRatio * 100) + "%"));

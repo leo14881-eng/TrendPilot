@@ -65,13 +65,21 @@ public class LossGuard {
      * @return 要卖出时的原因（STOP_LOSS / STALE_EXIT），否则 null
      */
     public String check(String book, Position pos, ExitDecision d, double hourClose, long hourOpen, Instant now) {
+        return check(book, pos, d, hourClose, hourOpen, now, null);
+    }
+
+    /**
+     * @param fixedDistPct 固定止损距离（%，影子变体的 stop-fixed-pct），null = 按买入时日线 ATR×1.5。
+     *                     固定时不需要日线 ATR，3 天等反弹和 −30% 灾难线照旧。
+     */
+    public String check(String book, Position pos, ExitDecision d, double hourClose, long hourOpen, Instant now, Double fixedDistPct) {
         if (!enabled || d.sell() || !"HOLD".equals(d.reason()) || d.notes().contains("ABNORMAL_BOOK_HOLD")
                 || d.fill() == null || !d.fill().complete() || Double.isNaN(hourClose)) {
             return null;
         }
         String v = pos.venue().name(), sym = pos.symbol(), o = pos.openedAt().toString();
         Double atr = dailyAtr.remove(book + ":" + pos.venue() + ":" + sym);
-        Double dist = atr == null ? null : AtrStaleExit.distancePct(atr);
+        Double dist = fixedDistPct != null ? fixedDistPct : atr == null ? null : AtrStaleExit.distancePct(atr);
         jdbc.sql("""
                 INSERT OR IGNORE INTO loss_guard(book, venue, symbol, opened_at, dist_pct) VALUES (:b, :v, :s, :o, :d)
                 """).param("b", book).param("v", v).param("s", sym).param("o", o).param("d", dist).update();
@@ -89,6 +97,7 @@ public class LossGuard {
                         rs.getString(2) == null ? null : Instant.parse(rs.getString(2)), (Double) rs.getObject(3),
                         rs.getInt(4) != 0, rs.getObject(5) == null ? null : rs.getLong(5)))
                 .single();
+        if (fixedDistPct != null) st = new AtrStaleExit.State(fixedDistPct, st.waitSince(), st.prevClose(), st.rose(), st.lastHour());
         AtrStaleExit.Step step = AtrStaleExit.step(st, pos.openedAt(), now, d.updated().protectArmed(),
                 pos.avgEntryPrice().doubleValue(), hourClose, hourOpen, d.netPnl().doubleValue());
         if (step.exit() != null) {

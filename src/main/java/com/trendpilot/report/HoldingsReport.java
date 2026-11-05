@@ -437,10 +437,17 @@ public class HoldingsReport {
             double net = rows.stream().mapToDouble(Row::net).sum();
             double realized = v.book().realizedPnl();
             out.add(String.format(Locale.ROOT, "- **%s**（%s，风控%s，%s 起）合计 %s U%s；持仓 %d 个；当天买 %d 卖 %d。%s",
-                    v.name(), com.trendpilot.variant.VariantRegistry.statusLabel(v.status()), riskOf(v.name()),
+                    v.name(), com.trendpilot.variant.VariantRegistry.statusLabel(v), riskOf(v.name()),
                     v.startedAt().atZone(zone).toLocalDate(), signed(realized + net), dayChange(v.name(), dayStart, realized + net),
                     rows.size(), buys(v.name(), dayStart, dayEnd).size(), sells(v.name(), dayStart, dayEnd).size(),
                     v.overrides().describe()));
+        }
+        // 已归档（停用）的变体：一行合计，记账和历史都保留
+        for (var v : reg.everything()) {
+            if (!com.trendpilot.variant.VariantRegistry.ARCHIVED.equals(v.status())) continue;
+            out.add(String.format(Locale.ROOT, "- **%s**（%s，%s 起）合计 %s U；%s", v.name(),
+                    com.trendpilot.variant.VariantRegistry.statusLabel(v), v.startedAt().atZone(zone).toLocalDate(),
+                    signed(v.book().realizedPnl()), v.overrides().describe()));
         }
         var pr = promoter == null ? null : promoter.getIfAvailable();
         if (pr != null) pr.latestLines().forEach(l -> out.add("- 评估：" + l));

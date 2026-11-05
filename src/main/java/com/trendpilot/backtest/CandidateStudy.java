@@ -61,6 +61,8 @@ public final class CandidateStudy {
             if (sim.containsKey("momentum-top")) {
                 b.momentum(Integer.parseInt(sim.get("momentum-top")), Integer.parseInt(sim.getOrDefault("momentum-hours", "24")) * 4);
             }
+            // 变体参数 stop-fixed-pct（线上 V6BS6 用）和回测专用 sim.stop-fixed 是同一个固定止损
+            if (overrides.hasFixedStop()) b.stop(StopRule.fixed("固定" + overrides.toMap().get("stop-fixed-pct") + "%", overrides.stopFixedPct(), "HOUR"));
             if (sim.containsKey("stop-fixed")) b.stop(StopRule.fixed("固定" + sim.get("stop-fixed") + "%", Double.parseDouble(sim.get("stop-fixed")), "HOUR"));
             if (sim.containsKey("trail-atr")) b.trailAtr(Double.parseDouble(sim.get("trail-atr")));
             if (sim.containsKey("max-ret4h-pct")) b.chaseCap(Double.parseDouble(sim.get("max-ret4h-pct")));

@@ -59,6 +59,7 @@ summary() {
     book V3 v3_position
     echo
     echo "- 影子变体风控（各自的亏损冻结 / 减半 / 恢复期）：$(q "SELECT GROUP_CONCAT(r.name || ' ' || IFNULL((SELECT value FROM app_state WHERE key = 'risk:' || r.name || ':status'), 'NORMAL'), ', ') FROM variant_registry r WHERE r.status != 'ARCHIVED';" | tr -cd 'A-Z0-9_ ,' | head -c 300)"
+    echo "- 影子变体状态（ACTIVE 开新仓 / STOPPED 停开新仓、持仓卖完归档 / ARCHIVED 已归档；名字 状态 上线时间）：$(q "SELECT GROUP_CONCAT(name || ' ' || status || ' ' || substr(started_at, 1, 16), ', ') FROM variant_registry;" | tr -cd 'A-Z0-9_ ,:T-' | head -c 400)"
     echo "- 山寨季指标（日期 状态 宽度50% 宽度200% 山寨30日% 比BTC点 连续跑赢天数 ETH/BTC比50日线%）：$(q "SELECT day, state, ROUND(breadth50_pct), ROUND(breadth200_pct), ROUND(alt30_median_pct,1), ROUND(alt_vs_btc30_pct,1), outperform_days, ROUND(ethbtc_vs50_pct,1) FROM alt_season_daily ORDER BY day DESC LIMIT 1;" | tr -cd 'A-Z_0-9 .-' | head -c 120)"
     echo "- V2 参数集（自动转正）：$(q "SELECT IFNULL((SELECT value FROM app_state WHERE key = 'params:V2'), '基准');" | tr -cd 'a-z0-9=.,_-' | head -c 200 | sed 's/^$/基准/')"
     echo "- BTC 短线计划（日期 开盘 不开新一轮 金额倍数）：$plan；第 1 档挂单价：$level0"

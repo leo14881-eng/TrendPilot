@@ -121,7 +121,7 @@ public class HealthJob {
                     continue;
                 }
                 var st = v.book().stats();
-                String tag = "（" + com.trendpilot.variant.VariantRegistry.statusLabel(v.status()) + "，风控" + risk + "：" + v.overrides().describe() + "）";
+                String tag = "（" + com.trendpilot.variant.VariantRegistry.statusLabel(v) + "，风控" + risk + "：" + v.overrides().describe() + "）";
                 out.add(new String[]{st.shortLine() + tag, st.line() + tag});
             }
         } catch (RuntimeException e) {
