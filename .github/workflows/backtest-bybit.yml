@@ -22,6 +22,10 @@ on:
         description: 结果是否推到 backtest-results 分支（研究分支可设 false，只留 Actions 附件和日志）
         required: false
         default: 'true'
+      cleanup_month:
+        description: 不完整的当月（如 2026-11）：回测后删除这个月的 Bybit 聚合包和 Binance 日度包，不写进缓存（空 = 不删）
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -54,6 +58,11 @@ jobs:
         run: |
           du -sh bybit-data
           java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.${{ inputs.main || 'CandidateStudy' }} bybit-data backtest-out ${{ inputs.args }}
+      - name: 删除不完整月份的缓存数据
+        if: always() && inputs.cleanup_month != ''
+        run: |
+          find bybit-data -path '*/15m/*' -name "*-15m-${{ inputs.cleanup_month }}.zip*" -delete || true
+          rm -rf bybit-data/binance-1d/data/spot/daily || true
       - name: 结果推到 backtest-results 分支
         if: inputs.publish != 'false'
         run: |

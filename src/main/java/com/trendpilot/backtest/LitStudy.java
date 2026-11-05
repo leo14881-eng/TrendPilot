@@ -849,6 +849,13 @@ public final class LitStudy {
             real = runWeekly(p, from, to, hold, c, null);
             twin = j -> runWeekly(p, from, to, h, c, new SplittableRandom(seed * 7919 + j));
         }
+        return score(run, s, seed, real, twin);
+    }
+
+    /** Statistics of one real curve against its RANDOMS twins (twin j = twin.apply(j)). */
+    static Row score(Run run, Spec s, long seed, Curve real, IntFunction<Curve> twin) {
+        Panel p = run.p;
+        int from = run.from, to = run.to;
         double[] w = weekly(p, from, from, to, real.nav());
         double[] wv = weekly(p, from, run.split, to, real.nav());
         double[] wt = weekly(p, from, from, run.split, real.nav());
