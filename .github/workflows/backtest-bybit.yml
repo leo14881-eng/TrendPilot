@@ -18,6 +18,10 @@ on:
         description: 聚合的月份范围（起始月 结束月）
         required: true
         default: '2022-11 2026-10'
+      publish:
+        description: 结果是否推到 backtest-results 分支（研究分支可设 false，只留 Actions 附件和日志）
+        required: false
+        default: 'true'
 
 permissions:
   contents: write
@@ -51,6 +55,7 @@ jobs:
           du -sh bybit-data
           java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.${{ inputs.main || 'CandidateStudy' }} bybit-data backtest-out ${{ inputs.args }}
       - name: 结果推到 backtest-results 分支
+        if: inputs.publish != 'false'
         run: |
           RUN=results/$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}-bybit
           git config user.name "github-actions"

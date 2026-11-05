@@ -115,7 +115,7 @@ public final class SeasonStudy {
         return st;
     }
 
-    private static List<String> list(Archive a, Path dir, String prefix) throws IOException, InterruptedException {
+    static List<String> list(Archive a, Path dir, String prefix) throws IOException, InterruptedException {
         Path cache = dir.resolve(prefix + ".list");
         if (Files.exists(cache)) return Files.readAllLines(cache);
         List<String> out = new ArrayList<>();
