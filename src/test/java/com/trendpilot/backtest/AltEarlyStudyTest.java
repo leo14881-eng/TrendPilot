@@ -73,10 +73,23 @@ class AltEarlyStudyTest {
         assertThat(s.alt[250]).isGreaterThan(1);
     }
 
-    static AltEarlyStudy.Pick[] picks(LitStudy.Panel p) {
+    static AltEarlyStudy.Book picks(LitStudy.Panel p) {
         AltEarlyStudy.Pick[] k = new AltEarlyStudy.Pick[p.days];
         for (int d = 0; d < p.days; d++) k[d] = AltEarlyStudy.pick(p, d);
-        return k;
+        return new AltEarlyStudy.Book("test", k, false);
+    }
+
+    @Test
+    void widePoolNeedsTwoMillionMeanVolumeAndSlippageGrowsForSmallCoins() {
+        LitStudy.Panel p = panel(200);
+        // panel volumes are 1e6 * (26 - i): only coins with at least 2M mean volume qualify
+        int[] w = AltEarlyStudy.widePool(p, 150);
+        for (int i : w) assertThat(p.qv[i][150]).isGreaterThanOrEqualTo(2e6);
+        assertThat(w).hasSize(24); // ETH + 23 alts; the last alt has only 1M volume
+        assertThat(AltEarlyStudy.slipTier(2e8)).isEqualTo(0.0005);
+        assertThat(AltEarlyStudy.slipTier(3e7)).isEqualTo(0.0010);
+        assertThat(AltEarlyStudy.slipTier(6e6)).isEqualTo(0.0020);
+        assertThat(AltEarlyStudy.slipTier(2e6)).isEqualTo(0.0040);
     }
 
     @Test
@@ -117,8 +130,8 @@ class AltEarlyStudyTest {
 
     @Test
     void randomPlanKeepsLengthsAndDoesNotOverlap() {
-        List<AltEarlyStudy.Ep> eps = List.of(new AltEarlyStudy.Ep(100, 130, 110, "x", 0, 0, 0, Set.of()),
-                new AltEarlyStudy.Ep(200, 220, -1, "x", 0, 0, 0, Set.of()));
+        List<AltEarlyStudy.Ep> eps = List.of(new AltEarlyStudy.Ep(100, 130, 110, "x", 0, 0, 0, Map.of()),
+                new AltEarlyStudy.Ep(200, 220, -1, "x", 0, 0, 0, Map.of()));
         double[] plan = AltEarlyStudy.randomPlan(400, 50, 399, eps, new java.util.SplittableRandom(1));
         long full = Arrays.stream(plan).filter(x -> x == 1).count(), third = Arrays.stream(plan).filter(x -> x > 0 && x < 1).count();
         assertThat(full).isEqualTo(20);

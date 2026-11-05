@@ -47,7 +47,6 @@ import com.trendpilot.config.StrategyParams;
  */
 public final class AltEarlyStudy {
 
-    static final double COST = LitStudy.COST;
     static final double START = 10_000;
     static final int RANDOMS = 1000;
     static final int EVENT_DAYS = 14;
@@ -62,7 +61,10 @@ public final class AltEarlyStudy {
     static final int ROT_K = 5;
     /** Rule-family trials in docs/策略对比记录/README.md before this study. */
     static final int PRIOR_TRIALS = 391;
-    static final int THIS_TRIALS = 7;
+    static final int THIS_TRIALS = 8;
+    /** Wide-pool variant (added 2026-11-05 before results): top 150 by median 30d quote volume, mean 30d volume at least 2M. */
+    static final int WIDE_POOL = 150;
+    static final double WIDE_MIN_QV = 2_000_000;
     static final String[] IND = {"a ETH/BTC 转强", "b 山寨广度修复", "c 篮子/BTC 60 日新高", "d 稳定币 30 日 > 3%", "e BTC 新高后横盘"};
 
     // ------------------------------------------------------------------ signals
@@ -271,11 +273,59 @@ public final class AltEarlyStudy {
     record Pick(int[] syms, double[] w) {
     }
 
-    /** 21-day risk-adjusted rotation for day d: top 5 of the pool, inverse-volatility weights, 25% cap (sum may be < 1). */
+    /** Median of the last 30 days' quote volume (0 when not enough history). */
+    static double medQv(LitStudy.Panel p, int i, int d) {
+        if (d < 29) return 0;
+        double[] w = new double[30];
+        for (int j = 0; j < 30; j++) w[j] = p.qv[i][d - j];
+        Arrays.sort(w);
+        return (w[14] + w[15]) / 2;
+    }
+
+    /** Wide pool: alts listed 90+ days, top 150 by median 30d quote volume, mean 30d quote volume at least 2M USDT. */
+    static int[] widePool(LitStudy.Panel p, int d) {
+        List<double[]> c = new ArrayList<>();
+        for (int i = 0; i < p.syms.length; i++) {
+            if (!p.alt[i] || !p.valid(i, d) || !p.oldEnough(i, d) || d < 29) continue;
+            double med = medQv(p, i, d);
+            if (med > 0) c.add(new double[]{i, med});
+        }
+        c.sort((x, y) -> Double.compare(y[1], x[1]));
+        List<Integer> out = new ArrayList<>();
+        for (int j = 0; j < Math.min(WIDE_POOL, c.size()); j++) {
+            int i = (int) c.get(j)[0];
+            double sum = 0;
+            for (int k = 0; k < 30; k++) sum += p.qv[i][d - k];
+            if (sum / 30 >= WIDE_MIN_QV) out.add(i);
+        }
+        return LitStudy.ints(out);
+    }
+
+    /** Per-side slippage by median 30d quote volume (pre-registered tiers for the wide-pool comparison). */
+    static double slipTier(double medQv) {
+        if (medQv >= 100e6) return 0.0005;
+        if (medQv >= 20e6) return 0.0010;
+        if (medQv >= 5e6) return 0.0020;
+        return 0.0040;
+    }
+
+    static double cost(LitStudy.Panel p, int i, int d, boolean tiered) {
+        return LitStudy.FEE + (tiered ? slipTier(medQv(p, i, d)) : LitStudy.SLIP);
+    }
+
+    /** Which pool the rotation chooses from and whether slippage is tiered by volume. */
+    record Book(String name, Pick[] picks, boolean tiered) {
+    }
+
     static Pick pick(LitStudy.Panel p, int d) {
+        return pick(p, d, p.pool(d, LitStudy.POOL));
+    }
+
+    /** 21-day risk-adjusted rotation for day d: top 5 of the pool, inverse-volatility weights, 25% cap (sum may be < 1). */
+    static Pick pick(LitStudy.Panel p, int d, int[] pool) {
         List<Integer> ci = new ArrayList<>();
         List<Double> sc = new ArrayList<>(), vo = new ArrayList<>();
-        for (int i : p.pool(d, LitStudy.POOL)) {
+        for (int i : pool) {
             double r = p.ret(i, d, ROT_L), v = p.vol(i, d, ROT_L);
             if (Double.isNaN(r) || Double.isNaN(v)) continue;
             ci.add(i);
@@ -292,7 +342,7 @@ public final class AltEarlyStudy {
 
     enum Mode { COMBO, S2ONLY, PLAN }
 
-    record Ep(int entry, int exit, int fullAt, String reason, double ret, double peakRet, double giveback, Set<String> coins) {
+    record Ep(int entry, int exit, int fullAt, String reason, double ret, double peakRet, double giveback, Map<String, Integer> coins) {
     }
 
     record Result(double[] nav, double[] expo, List<Ep> eps) {
@@ -302,7 +352,8 @@ public final class AltEarlyStudy {
      * Daily book from day from to day to (nav[k] = value at close of from + k after trades, start 1). PLAN follows
      * {@code plan[d]} (target exposure 0, 1/3 or 1) without any exit rule.
      */
-    static Result run(LitStudy.Panel p, Signals s, Pick[] picks, int from, int to, Mode mode, double[] plan) {
+    static Result run(LitStudy.Panel p, Signals s, Book bk, int from, int to, Mode mode, double[] plan) {
+        Pick[] picks = bk.picks();
         int n = p.syms.length;
         double[] units = new double[n];
         double cash = 1;
@@ -312,11 +363,11 @@ public final class AltEarlyStudy {
         int entry = -1, fullAt = -1;
         double navStart = 0, peak = 0;
         boolean needS2Off = false, needDrop = false;
-        Set<String> coins = new HashSet<>();
+        Map<String, Integer> coins = new LinkedHashMap<>();
         for (int d = from; d <= to; d++) {
             for (int i = 0; i < n; i++) {
                 if (units[i] > 0 && p.stale[i][d] >= LitStudy.DELIST_DAYS) {
-                    cash += units[i] * p.cpx[i][d] * 0.995 * (1 - COST);
+                    cash += units[i] * p.cpx[i][d] * 0.995 * (1 - cost(p, i, d, bk.tiered()));
                     units[i] = 0;
                 }
             }
@@ -356,7 +407,7 @@ public final class AltEarlyStudy {
                 navStart = v;
                 peak = v;
                 fullAt = -1;
-                coins = new HashSet<>();
+                coins = new LinkedHashMap<>();
             }
             if (target == 1 && fullAt < 0) fullAt = d;
             boolean trade = target != tier || (target > 0 && p.sunday(d));
@@ -366,15 +417,17 @@ public final class AltEarlyStudy {
                     Pick pk = picks[d];
                     for (int j = 0; j < pk.syms().length; j++) tv[pk.syms()[j]] += pk.w()[j] * target * v;
                 }
-                double traded = 0;
-                for (int i = 0; i < n; i++) traded += Math.abs(tv[i] - (units[i] > 0 ? units[i] * p.cpx[i][d] : 0));
-                double cost = traded * COST;
+                double cost = 0;
+                for (int i = 0; i < n; i++) {
+                    double t = Math.abs(tv[i] - (units[i] > 0 ? units[i] * p.cpx[i][d] : 0));
+                    if (t > 0) cost += t * cost(p, i, d, bk.tiered());
+                }
                 double scale = v > 0 ? (v - cost) / v : 0;
                 double inv = 0;
                 for (int i = 0; i < n; i++) {
                     double x = tv[i] * scale;
                     units[i] = x > 0 ? x / p.cpx[i][d] : 0;
-                    if (x > 0) coins.add(p.syms[i].substring(0, p.syms[i].length() - 4));
+                    if (x > 0) coins.putIfAbsent(p.syms[i].substring(0, p.syms[i].length() - 4), d);
                     inv += x;
                 }
                 cash = v - cost - inv;
@@ -441,11 +494,11 @@ public final class AltEarlyStudy {
         final String label;
         final int from, to;
         final Signals s;
-        final Pick[] picks;
+        final Book b40, b40t, b150, b150t;
         final List<Season> seasons;
-        Result combo, s2only;
+        Result combo, s2only, combo40t, combo150, combo150t;
         double[] ew40, btc;
-        Rand randCombo, randS2;
+        Rand randCombo, randS2, rand150t;
 
         Data(LitStudy.Panel p, String label, LocalDate evalFrom, LocalDate last, Map<Long, Double> stable) {
             this.p = p;
@@ -453,22 +506,33 @@ public final class AltEarlyStudy {
             from = Math.max(1, p.day(evalFrom));
             to = Math.min(p.days - 1, p.day(last));
             s = signals(p, stable);
-            picks = new Pick[p.days];
-            for (int d = from; d <= to; d++) picks[d] = pick(p, d);
+            Pick[] picks = new Pick[p.days], wide = new Pick[p.days];
+            for (int d = from; d <= to; d++) {
+                picks[d] = pick(p, d);
+                wide[d] = pick(p, d, widePool(p, d));
+            }
+            b40 = new Book("前 40", picks, false);
+            b40t = new Book("前 40", picks, true);
+            b150 = new Book("前 150 + 200 万", wide, false);
+            b150t = new Book("前 150 + 200 万", wide, true);
             seasons = AltEarlyStudy.seasons(s.r, s.alt, from, to);
         }
     }
 
     static void study(Data x, int threads) throws Exception {
-        x.combo = run(x.p, x.s, x.picks, x.from, x.to, Mode.COMBO, null);
-        x.s2only = run(x.p, x.s, x.picks, x.from, x.to, Mode.S2ONLY, null);
+        x.combo = run(x.p, x.s, x.b40, x.from, x.to, Mode.COMBO, null);
+        x.s2only = run(x.p, x.s, x.b40, x.from, x.to, Mode.S2ONLY, null);
+        x.combo40t = run(x.p, x.s, x.b40t, x.from, x.to, Mode.COMBO, null);
+        x.combo150 = run(x.p, x.s, x.b150, x.from, x.to, Mode.COMBO, null);
+        x.combo150t = run(x.p, x.s, x.b150t, x.from, x.to, Mode.COMBO, null);
         x.ew40 = LitStudy.runWeekly(x.p, x.from, x.to, 1, LitStudy.equalPool(x.p, x.from, x.to, LitStudy.POOL), null).nav();
         x.btc = LitStudy.btcHold(x.p, x.from, x.to);
-        x.randCombo = random(x, x.combo.eps(), threads, 11);
-        x.randS2 = random(x, x.s2only.eps(), threads, 22);
+        x.randCombo = random(x, x.b40, x.combo.eps(), threads, 11);
+        x.randS2 = random(x, x.b40, x.s2only.eps(), threads, 22);
+        x.rand150t = random(x, x.b150t, x.combo150t.eps(), threads, 33);
     }
 
-    static Rand random(Data x, List<Ep> eps, int threads, long seed) throws Exception {
+    static Rand random(Data x, Book bk, List<Ep> eps, int threads, long seed) throws Exception {
         double[] fin = new double[RANDOMS], mean = new double[RANDOMS];
         try (ExecutorService ex = Executors.newFixedThreadPool(threads)) {
             List<Future<?>> fs = new ArrayList<>();
@@ -477,7 +541,7 @@ public final class AltEarlyStudy {
                 fs.add(ex.submit(() -> {
                     SplittableRandom r = new SplittableRandom(seed * 1_000_003L + kk);
                     double[] plan = randomPlan(x.p.days, x.from, x.to, eps, r);
-                    Result res = run(x.p, x.s, x.picks, x.from, x.to, Mode.PLAN, plan);
+                    Result res = run(x.p, x.s, bk, x.from, x.to, Mode.PLAN, plan);
                     fin[kk] = START * (res.nav()[res.nav().length - 1] - 1);
                     double s = 0;
                     for (Ep e : res.eps()) s += e.ret();
@@ -624,8 +688,12 @@ public final class AltEarlyStudy {
         b.append("\n### 全期（10,000U 起始，扣费后）\n\n| 方案 | 全期 U | 最大回撤 | 持仓次数 | 平均持有天数 | 每次持仓平均收益 [95% 区间] | 随机进场：全期 U 中位数 / 策略所在分位 | 随机：每次平均收益中位 [2.5%, 97.5%] |\n|---|---:|---:|---:|---:|---:|---:|---:|\n");
         b.append(row(x, "埋伏组合（第一档 + S2 加满）", x.combo, x.randCombo, 1));
         b.append(row(x, "只用 S2 进场", x.s2only, x.randS2, 2));
+        b.append(row(x, "埋伏组合，前 40，滑点按成交额分档", x.combo40t, null, 3));
+        b.append(row(x, "埋伏组合，前 150 + 200 万，滑点按成交额分档", x.combo150t, x.rand150t, 4));
+        b.append(row(x, "埋伏组合，前 150 + 200 万，统一滑点 0.05%", x.combo150, null, 5));
         b.append(String.format(Locale.ROOT, "| 前 40 等权持有（每周再平衡） | %s | %.1f%% | | | | | |%n", u(START * (last(x.ew40) - 1)), 100 * LitStudy.maxDd(x.ew40, 0, x.ew40.length - 1)));
         b.append(String.format(Locale.ROOT, "| BTC 持有 | %s | %.1f%% | | | | | |%n", u(START * (last(x.btc) - 1)), 100 * LitStudy.maxDd(x.btc, 0, x.btc.length - 1)));
+        b.append(poolCompare(x));
         // yearly
         b.append("\n#### 分年收益\n\n| 年 | 埋伏组合 | 只用 S2 | 前 40 等权 | BTC |\n|---|---:|---:|---:|---:|\n");
         for (int y = p.date(x.from).getYear(); y <= p.date(x.to).getYear(); y++) {
@@ -635,9 +703,11 @@ public final class AltEarlyStudy {
                     pc(x.s2only.nav()[e] / x.s2only.nav()[a0] - 1), pc(x.ew40[e] / x.ew40[a0] - 1), pc(x.btc[e] / x.btc[a0] - 1)));
         }
         // per season / episode
-        for (int m = 0; m < 2; m++) {
-            Result res = m == 0 ? x.combo : x.s2only;
-            b.append(m == 0 ? "\n### 埋伏组合：每次持仓（每次按 10,000U 单独计）\n\n" : "\n### 对照：只用 S2，每次持仓（每次按 10,000U）\n\n");
+        for (int m = 0; m < 3; m++) {
+            Result res = m == 0 ? x.combo : m == 1 ? x.combo150t : x.s2only;
+            b.append(m == 0 ? "\n### 埋伏组合（前 40，事先登记的主方案）：每次持仓（每次按 10,000U 单独计）\n\n"
+                    : m == 1 ? "\n### 埋伏组合，币池前 150 + 200 万、滑点分档：每次持仓（每次按 10,000U）\n\n"
+                    : "\n### 对照：只用 S2，每次持仓（每次按 10,000U）\n\n");
             b.append("| 属于 | 第一档进场 | 比启动日 | 加满日 | 比启动日 | 离场 | 原因 | 赚 U | 吃到这段篮子最大涨幅的 | 最高时浮盈 | 离场比最高点回吐 | 买过的币 |\n|---|---|---:|---|---:|---|---|---:|---:|---:|---:|---|\n");
             double falseU = 0;
             int falseN = 0;
@@ -653,7 +723,7 @@ public final class AltEarlyStudy {
                         e.fullAt() < 0 ? "—" : p.date(e.fullAt()).toString(), q == null || e.fullAt() < 0 ? "" : days(e.fullAt() - q.trough()),
                         e.exit() < 0 ? "持有中" : p.date(e.exit()).toString(), e.reason(), u(START * e.ret()),
                         q == null ? "" : String.format(Locale.ROOT, "%.0f%%", 100 * e.ret() / q.altRunUp()), pc(e.peakRet()),
-                        String.format(Locale.ROOT, "%.1f%%", 100 * e.giveback()), String.join(" ", new java.util.TreeSet<>(e.coins()))));
+                        String.format(Locale.ROOT, "%.1f%%", 100 * e.giveback()), String.join(" ", new java.util.TreeSet<>(e.coins().keySet()))));
             }
             b.append(String.format(Locale.ROOT, "%n非山寨季（误报）持仓 %d 次，合计 %s U（每次按 10,000U 计）。%n", falseN, u(falseU)));
             int miss = 0;
@@ -665,6 +735,76 @@ public final class AltEarlyStudy {
             b.append(String.format(Locale.ROOT, "完全没进场的山寨季：%d 段。%n", miss));
         }
         b.append(current(x));
+        return b.toString();
+    }
+
+    /** Top 10 alts by trough-to-peak return of the season (listed 90+ days, real closes at both ends), best first. */
+    static List<Integer> top10(LitStudy.Panel p, Season q) {
+        List<double[]> c = new ArrayList<>();
+        for (int i = 0; i < p.syms.length; i++) {
+            if (!p.alt[i] || !p.valid(i, q.trough()) || !p.valid(i, q.peak()) || !p.oldEnough(i, q.trough())) continue;
+            c.add(new double[]{i, p.cpx[i][q.peak()] / p.cpx[i][q.trough()] - 1});
+        }
+        c.sort((a, b) -> Double.compare(b[1], a[1]));
+        List<Integer> out = new ArrayList<>();
+        for (int j = 0; j < Math.min(10, c.size()); j++) out.add((int) c.get(j)[0]);
+        return out;
+    }
+
+    static String base(LitStudy.Panel p, int i) {
+        return p.syms[i].substring(0, p.syms[i].length() - 4);
+    }
+
+    /** Sum of 10,000U-per-episode results for episodes belonging to season k (k = -1: false alarms), and coins bought by the peak. */
+    static double[] seasonU(Data x, Result res, int k, Set<String> caught) {
+        double sum = 0;
+        int n = 0;
+        for (Ep e : res.eps()) {
+            if (seasonOf(x, e.entry()) != k) continue;
+            sum += START * e.ret();
+            n++;
+            if (caught != null) for (Map.Entry<String, Integer> c : e.coins().entrySet()) if (c.getValue() <= x.seasons.get(k).peak()) caught.add(c.getKey());
+        }
+        return new double[]{sum, n};
+    }
+
+    static String poolCompare(Data x) {
+        LitStudy.Panel p = x.p;
+        StringBuilder b = new StringBuilder("\n### 两个币池并列（埋伏组合，其余规则相同；每次持仓按 10,000U 计）\n\n");
+        b.append("滑点影响 = 统一滑点 0.05% 的结果 − 按成交额分档滑点的结果（分档：30 日成交额中位数 ≥ 1 亿 0.05%、2,000 万～1 亿 0.10%、500 万～2,000 万 0.20%、< 500 万 0.40%，每边；手续费另计 0.1%）。\n\n");
+        b.append("| 段 | 前 40：U（分档滑点） | 前 40：滑点影响 | 前 40：抓到前 10 中 | 前 150：U（分档滑点） | 前 150：滑点影响 | 前 150：抓到前 10 中 | 前 10 里当时在前 40 / 前 150 池内 | 这段涨幅前 10 |\n|---|---:|---:|---:|---:|---:|---:|---:|---|\n");
+        for (int k = -1; k < x.seasons.size(); k++) {
+            Set<String> c40 = new HashSet<>(), c150 = new HashSet<>();
+            double[] a = seasonU(x, x.combo40t, k, k < 0 ? null : c40), a0 = seasonU(x, x.combo, k, null);
+            double[] w = seasonU(x, x.combo150t, k, k < 0 ? null : c150), w0 = seasonU(x, x.combo150, k, null);
+            String label = k < 0 ? "非山寨季（误报）" : "第 " + (k + 1) + " 段 " + p.date(x.seasons.get(k).trough());
+            if (k < 0) {
+                b.append(String.format(Locale.ROOT, "| %s | %s（%d 次） | %s | | %s（%d 次） | %s | | | |%n", label, u(a[0]), (int) a[1], u(a0[0] - a[0]), u(w[0]),
+                        (int) w[1], u(w0[0] - w[0])));
+                continue;
+            }
+            Season q = x.seasons.get(k);
+            List<Integer> top = top10(p, q);
+            int h40 = 0, h150 = 0, in40 = 0, in150 = 0;
+            Set<Integer> pool40 = new HashSet<>(), pool150 = new HashSet<>();
+            for (int i : p.pool(q.trough(), LitStudy.POOL)) pool40.add(i);
+            for (int i : widePool(p, q.trough())) pool150.add(i);
+            StringBuilder names = new StringBuilder();
+            for (int i : top) {
+                String s = base(p, i);
+                if (c40.contains(s)) h40++;
+                if (c150.contains(s)) h150++;
+                if (pool40.contains(i)) in40++;
+                if (pool150.contains(i)) in150++;
+                names.append(names.length() == 0 ? "" : " ").append(s).append(String.format(Locale.ROOT, "(%+.0f%%)", 100 * (p.cpx[i][q.peak()] / p.cpx[i][q.trough()] - 1)));
+            }
+            b.append(String.format(Locale.ROOT, "| %s | %s | %s | %d | %s | %s | %d | %d / %d | %s |%n", label, u(a[0]), u(a0[0] - a[0]), h40, u(w[0]),
+                    u(w0[0] - w[0]), h150, in40, in150, names));
+        }
+        double f40 = START * (last(x.combo.nav()) - 1), f40t = START * (last(x.combo40t.nav()) - 1);
+        double f150 = START * (last(x.combo150.nav()) - 1), f150t = START * (last(x.combo150t.nav()) - 1);
+        b.append(String.format(Locale.ROOT, "%n全期（复利）滑点影响：前 40 %s U，前 150 + 200 万 %s U。%n", u(f40 - f40t), u(f150 - f150t)));
+        b.append("\n\"抓到\" = 这段高点之前买过这个币（启动日前 60 天到高点之间进场的持仓）。\"池内\" 按启动日当天的池子。\n");
         return b.toString();
     }
 
@@ -682,6 +822,7 @@ public final class AltEarlyStudy {
         }
         int n = res.eps().size();
         double[] ci = bootMean(res.eps(), seed);
+        if (rnd == null) rnd = new Rand(new double[]{Double.NaN}, new double[]{Double.NaN});
         return String.format(Locale.ROOT, "| %s | %s | %.1f%% | %d | %.0f | %s [%s, %s] | %s / %.1f%% | %s [%s, %s] |%n", name, u(fin), 100 * dd, n,
                 n == 0 ? 0 : hold / n, pc(n == 0 ? Double.NaN : mean / n), pc(ci[0]), pc(ci[1]), u(LitStudy.percentile(rnd.finalU(), 0.5)),
                 100 * below(rnd.finalU(), fin), pc(LitStudy.percentile(rnd.meanEp(), 0.5)), pc(LitStudy.percentile(rnd.meanEp(), 0.025)),
