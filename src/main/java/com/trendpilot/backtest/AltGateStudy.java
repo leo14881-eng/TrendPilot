@@ -593,6 +593,36 @@ public final class AltGateStudy {
         return (w[14] + w[15]) / 2;
     }
 
+    /** Which S1 entry conditions held during [a, e] (Binance panel), to explain late or missing openings. */
+    static String s1Diag(Panel p, S1Day[] s1, LocalDate sa, LocalDate se) {
+        int a = p.day(sa), e = p.day(se);
+        int days = 0, br = 0, st = 0, eth = 0, reg = 0, allButReg = 0, all = 0, on = 0, firstAll = -1, maxStreak = 0;
+        double maxBr = Double.NaN;
+        for (int d = Math.max(0, a); d <= Math.min(p.days - 1, e); d++) {
+            S1Day x = s1[d];
+            days++;
+            if (x.on()) on++;
+            if (!x.complete()) continue;
+            boolean b1 = x.m().breadth50() >= AltSeasonRules.ENTER_BREADTH50, b2 = x.streak() >= AltSeasonRules.ENTER_OUTPERFORM_DAYS,
+                    b3 = x.m().ethBtcVs50() > 0;
+            maxBr = Double.isNaN(maxBr) ? x.m().breadth50() : Math.max(maxBr, x.m().breadth50());
+            maxStreak = Math.max(maxStreak, x.streak());
+            if (b1) br++;
+            if (b2) st++;
+            if (b3) eth++;
+            if (x.regimeOk()) reg++;
+            if (b1 && b2 && b3) {
+                allButReg++;
+                if (x.regimeOk()) {
+                    all++;
+                    if (firstAll < 0) firstAll = d - a;
+                }
+            }
+        }
+        return String.format(Locale.ROOT, "| %s ～ %s | %d | %d | %d（最高 %.0f%%） | %d（最长 %d 天） | %d | %d | %d | %d | %s |%n", sa, se, days, on, br, maxBr, st, maxStreak,
+                eth, reg, allButReg, all, firstAll < 0 ? "—" : "第 " + firstAll + " 天");
+    }
+
     static String current(GRun g, S1Day[] s1, Panel s1Panel, String s1Label) {
         Panel p = g.run.p;
         int last = p.days - 1;
@@ -730,6 +760,11 @@ public final class AltGateStudy {
         md.append(season(gn, LocalDate.of(2021, 1, 4), LocalDate.of(2021, 5, 15), "旁证 2021 年第一波"));
         md.append(season(gn, LocalDate.of(2021, 7, 20), LocalDate.of(2021, 11, 10), "旁证 2021 年第二波"));
         for (LocalDate[] s : LitStudy.SEASONS) md.append(season(gn, s[0], s[1], "旁证 山寨季"));
+        md.append("\n## S1 各条件在山寨季里满足了几天（Binance 前 150 日线）\n\n| 段 | 天数 | S1 打开天数 | 宽度 ≥ 70% | 连续跑赢 ≥ 14 天 | ETH/BTC > 50 日线 | 当日行情 ≥ CONSTRUCTIVE（近似） | 除行情外三条同时满足 | 四条同时满足 | 首次四条满足 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+        for (LocalDate[] s : LitStudy.SEASONS) md.append(s1Diag(bin, s1bin, s[0], s[1]));
+        md.append(s1Diag(bin, s1bin, LocalDate.of(2021, 1, 4), LocalDate.of(2021, 5, 15)));
+        md.append(s1Diag(bin, s1bin, LocalDate.of(2021, 7, 20), LocalDate.of(2021, 11, 10)));
+        md.append(s1Diag(bin, s1bin, LocalDate.of(2023, 10, 30), LocalDate.of(2024, 1, 1)));
         md.append("\n## 当前状态（只是信息，不是交易建议）\n");
         md.append(current(gb, null, null, null));
         md.append(current(gn, s1bin, bin, "Binance 前 150"));
