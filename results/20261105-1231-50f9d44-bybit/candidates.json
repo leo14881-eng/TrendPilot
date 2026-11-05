@@ -1,0 +1,96 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-11-05T12:31:46.649856655Z",
+  "grid" : "custom",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-12-01",
+  "dataTo" : "2026-10-31",
+  "validationFrom" : "2025-07-02",
+  "evidence" : "",
+  "baseline" : {
+    "full" : {
+      "equity" : -12445.76,
+      "trades" : 8795,
+      "maxDrawdown" : 15451.94
+    },
+    "validation" : {
+      "equity" : -6102.32,
+      "trades" : 2579,
+      "maxDrawdown" : 8609.01
+    }
+  },
+  "candidates" : [ {
+    "id" : "V6_Bybit现行卖法",
+    "group" : "custom",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PASS",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : true,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "calmar" : 11.52,
+      "equity" : 43143.03,
+      "maxDrawdown" : 3743.85,
+      "trades" : 9738,
+      "perTrade" : 4.43,
+      "navDrawdownPct" : 7.79
+    },
+    "validation" : {
+      "equity" : 7208.64,
+      "trades" : 3901,
+      "perTrade" : 1.85,
+      "maxDrawdown" : 3743.85
+    },
+    "evidence" : ""
+  }, {
+    "id" : "V6B_止损6%",
+    "group" : "custom",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : {
+      "stop-fixed" : "6",
+      "base" : "V6_Bybit现行卖法"
+    },
+    "liveCapable" : false,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "calmar" : 7.11,
+      "equity" : 24247.04,
+      "maxDrawdown" : 3408.13,
+      "trades" : 10153,
+      "perTrade" : 2.39,
+      "navDrawdownPct" : 7.33
+    },
+    "validation" : {
+      "equity" : 1805.96,
+      "trades" : 4136,
+      "perTrade" : 0.44,
+      "maxDrawdown" : 3408.13
+    },
+    "evidence" : ""
+  } ]
+}
