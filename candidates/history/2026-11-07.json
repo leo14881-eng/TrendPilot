@@ -1,0 +1,461 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-11-07T09:02:03.021733362Z",
+  "grid" : "weekly",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-10-01",
+  "dataTo" : "2026-11-06",
+  "validationFrom" : "2025-07-07",
+  "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly",
+  "baseline" : {
+    "full" : {
+      "trades" : 15742,
+      "equity" : 18654.85,
+      "maxDrawdown" : 14538.46
+    },
+    "validation" : {
+      "trades" : 4828,
+      "equity" : -6032.95,
+      "maxDrawdown" : 14309.81
+    }
+  },
+  "candidates" : [ {
+    "id" : "W_H1_BTC24h>1.5_半仓",
+    "group" : "H1",
+    "overrides" : {
+      "btc24h-above-pct" : "1.5",
+      "hot-entry" : "HALF"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "equity" : 7701.82,
+      "calmar" : 0.52,
+      "navDrawdownPct" : 39.9,
+      "perTrade" : 0.44,
+      "trades" : 17572,
+      "maxDrawdown" : 14910.64
+    },
+    "validation" : {
+      "perTrade" : -1.07,
+      "trades" : 4968,
+      "equity" : -5288.95,
+      "maxDrawdown" : 11864.34
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_H1_币24h5-10_半仓",
+    "group" : "H1",
+    "overrides" : {
+      "coin24h-band-pct" : "5-10",
+      "hot-entry" : "HALF"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "equity" : 2856.62,
+      "calmar" : 0.15,
+      "navDrawdownPct" : 46.86,
+      "perTrade" : 0.17,
+      "trades" : 16516,
+      "maxDrawdown" : 18921.48
+    },
+    "validation" : {
+      "perTrade" : -2.2,
+      "trades" : 4778,
+      "equity" : -10597.1,
+      "maxDrawdown" : 13257.63
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_H2_24h_浮盈<1%_亏>4%",
+    "group" : "H2",
+    "overrides" : {
+      "early-exit-hours" : "24",
+      "early-exit-loss-pct" : "4",
+      "early-exit-max-mfe-pct" : "1"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "equity" : -11249.77,
+      "calmar" : -0.6,
+      "navDrawdownPct" : 74.6,
+      "perTrade" : -0.83,
+      "trades" : 13606,
+      "maxDrawdown" : 18772.82
+    },
+    "validation" : {
+      "perTrade" : -1.17,
+      "trades" : 3363,
+      "equity" : -3977.6,
+      "maxDrawdown" : 9676.81
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_H2_12h_浮盈<1%_亏>4%",
+    "group" : "H2",
+    "overrides" : {
+      "early-exit-hours" : "12",
+      "early-exit-loss-pct" : "4",
+      "early-exit-max-mfe-pct" : "1"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "equity" : -9686.25,
+      "calmar" : -0.68,
+      "navDrawdownPct" : 62.8,
+      "perTrade" : -0.63,
+      "trades" : 15303,
+      "maxDrawdown" : 14229.85
+    },
+    "validation" : {
+      "perTrade" : -0.71,
+      "trades" : 4134,
+      "equity" : -2939.34,
+      "maxDrawdown" : 9085.91
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_H4_放量≤4倍",
+    "group" : "H4",
+    "overrides" : {
+      "max-volume-accel" : "4"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "equity" : 7498.65,
+      "calmar" : 0.62,
+      "navDrawdownPct" : 33.49,
+      "perTrade" : 0.49,
+      "trades" : 15404,
+      "maxDrawdown" : 12190.46
+    },
+    "validation" : {
+      "perTrade" : -0.52,
+      "trades" : 4594,
+      "equity" : -2161.46,
+      "maxDrawdown" : 11494.25
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_C1_L15_T24",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "C1_L15_T24"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "equity" : -14226.64,
+      "calmar" : -0.93,
+      "navDrawdownPct" : 75.15,
+      "perTrade" : -1.54,
+      "trades" : 9241,
+      "maxDrawdown" : 15236.7
+    },
+    "validation" : {
+      "perTrade" : -0.31,
+      "trades" : 1750,
+      "equity" : -609.52,
+      "maxDrawdown" : 1719.0
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_S1_L12",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "S1_L12"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "equity" : 3589.08,
+      "calmar" : 0.34,
+      "navDrawdownPct" : 38.86,
+      "perTrade" : 0.22,
+      "trades" : 16023,
+      "maxDrawdown" : 10541.23
+    },
+    "validation" : {
+      "perTrade" : 1.08,
+      "trades" : 4922,
+      "equity" : 5401.25,
+      "maxDrawdown" : 6549.32
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_M_24h前3",
+    "group" : "momentum",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "equity" : 66926.08,
+      "calmar" : 16.32,
+      "navDrawdownPct" : 10.46,
+      "perTrade" : 4.37,
+      "trades" : 15301,
+      "maxDrawdown" : 4101.24
+    },
+    "validation" : {
+      "perTrade" : 4.37,
+      "trades" : 5162,
+      "equity" : 22565.54,
+      "maxDrawdown" : 2552.85
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥4.5",
+    "group" : "rel1h",
+    "overrides" : {
+      "min-buy-rel1h" : "4.5"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "equity" : 35952.37,
+      "calmar" : 3.78,
+      "navDrawdownPct" : 23.57,
+      "perTrade" : 2.93,
+      "trades" : 12291,
+      "maxDrawdown" : 9504.84
+    },
+    "validation" : {
+      "perTrade" : 4.42,
+      "trades" : 4004,
+      "equity" : 17808.52,
+      "maxDrawdown" : 2758.85
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥5.855",
+    "group" : "rel1h",
+    "overrides" : {
+      "min-buy-rel1h" : "5.855"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PASS",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : true,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "equity" : 52279.95,
+      "calmar" : 10.38,
+      "navDrawdownPct" : 11.16,
+      "perTrade" : 4.75,
+      "trades" : 11007,
+      "maxDrawdown" : 5036.1
+    },
+    "validation" : {
+      "perTrade" : 6.36,
+      "trades" : 3682,
+      "equity" : 23520.86,
+      "maxDrawdown" : 2300.77
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥7.5",
+    "group" : "rel1h",
+    "overrides" : {
+      "min-buy-rel1h" : "7.5"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "equity" : 48000.1,
+      "calmar" : 11.94,
+      "navDrawdownPct" : 10.76,
+      "perTrade" : 5.38,
+      "trades" : 8930,
+      "maxDrawdown" : 4021.14
+    },
+    "validation" : {
+      "perTrade" : 7.57,
+      "trades" : 3212,
+      "equity" : 24255.62,
+      "maxDrawdown" : 1841.22
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥5.855_每笔1500",
+    "group" : "size",
+    "overrides" : {
+      "min-buy-rel1h" : "5.855",
+      "trade-usdt" : "1500"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PASS",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : true,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true
+    },
+    "full" : {
+      "equity" : 67100.39,
+      "calmar" : 9.52,
+      "navDrawdownPct" : 13.37,
+      "perTrade" : 6.59,
+      "trades" : 10179,
+      "maxDrawdown" : 7049.79
+    },
+    "validation" : {
+      "perTrade" : 7.19,
+      "trades" : 3417,
+      "equity" : 24722.55,
+      "maxDrawdown" : 6942.06
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  }, {
+    "id" : "W_每笔1250",
+    "group" : "size",
+    "overrides" : {
+      "trade-usdt" : "1250"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false
+    },
+    "full" : {
+      "equity" : 15386.55,
+      "calmar" : 1.07,
+      "navDrawdownPct" : 33.93,
+      "perTrade" : 1.09,
+      "trades" : 14140,
+      "maxDrawdown" : 14357.21
+    },
+    "validation" : {
+      "perTrade" : -0.29,
+      "trades" : 4284,
+      "equity" : -1107.23,
+      "maxDrawdown" : 10578.47
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261107-0848-b04baf2-weekly/report.md"
+  } ]
+}
