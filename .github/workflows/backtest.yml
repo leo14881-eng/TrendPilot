@@ -13,6 +13,10 @@ on:
         description: 入口类（BacktestMain，或 StockRulesStudy = 美股规则套到币圈日线）
         required: false
         default: BacktestMain
+      publish:
+        description: 结果是否推到 backtest-results 分支（研究分支可设 false，只留 Actions 附件和日志）
+        required: false
+        default: 'true'
 
 permissions:
   contents: write
@@ -44,6 +48,7 @@ jobs:
       - name: 回测
         run: java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.${{ inputs.main }} backtest-data backtest-out ${{ inputs.args }}
       - name: 结果推到 backtest-results 分支
+        if: inputs.publish != 'false'
         run: |
           RUN=results/$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}
           git config user.name "github-actions"
