@@ -115,7 +115,9 @@ public final class ReconStudy {
             for (Future<?> f : fs) f.get();
         }
         Set<String> used = new TreeSet<>();
-        StringBuilder sum = new StringBuilder("| 运行 | 笔数 | 合计 U | 胜率 | 平均盈利 | 平均亏损 |\n|---|---:|---:|---:|---:|---:|\n");
+        // 验证期 = 最后 16 个月（和每周回测同口径）
+        long split = endDay.minusMonths(16).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
+        StringBuilder sum = new StringBuilder("| 运行 | 笔数 | 合计 U | 最大回撤 U | 验证期 U | 每笔 U ±95% | 胜率 | 平均盈利 | 平均亏损 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
         for (B0Sim s : sims) {
             Files.writeString(outDir.resolve("recon-" + s.name().replaceAll("[^\\p{L}\\p{N}]+", "_") + ".csv"), tradesCsv(s, data));
             Files.writeString(outDir.resolve("equity-" + s.name().replaceAll("[^\\p{L}\\p{N}]+", "_") + ".csv"), equityCsv(s, data));
@@ -123,8 +125,12 @@ public final class ReconStudy {
             List<Double> p = s.trades().stream().map(Trade::pnl).toList();
             double w = p.stream().filter(x -> x > 0).mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
             double l = p.stream().filter(x -> x <= 0).mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
-            sum.append(String.format(Locale.ROOT, "| %s | %d | %,.0f | %.1f%% | %+.1f | %+.1f |%n", s.name(), p.size(),
-                    p.stream().mapToDouble(Double::doubleValue).sum(), 100.0 * p.stream().filter(x -> x > 0).count() / Math.max(1, p.size()), w, l));
+            double m = p.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
+            double var = p.stream().mapToDouble(x -> (x - m) * (x - m)).sum() / Math.max(1, p.size() - 1);
+            double val = p.isEmpty() ? 0 : s.trades().stream().filter(t -> data.time(t.entryQ()) >= split).mapToDouble(Trade::pnl).sum();
+            sum.append(String.format(Locale.ROOT, "| %s | %d | %,.0f | %,.0f | %,.0f | %+.2f ±%.2f | %.1f%% | %+.1f | %+.1f |%n", s.name(), p.size(),
+                    p.stream().mapToDouble(Double::doubleValue).sum(), maxDd(s.equity()), val, m, 1.96 * Math.sqrt(var / Math.max(1, p.size())),
+                    100.0 * p.stream().filter(x -> x > 0).count() / Math.max(1, p.size()), w, l));
         }
         Files.writeString(outDir.resolve("summary.md"), sum.toString());
         System.out.println(sum);
@@ -165,6 +171,16 @@ public final class ReconStudy {
                     s.has(t.exitQ()) ? s.close[t.exitQ()] : Double.NaN, t.hours()));
         }
         return b.toString();
+    }
+
+    /** 每小时权益曲线的最大回撤（U）；没开始的小时是 0，不影响。 */
+    static double maxDd(double[] e) {
+        double peak = 0, dd = 0;
+        for (double x : e) {
+            peak = Math.max(peak, x);
+            dd = Math.max(dd, peak - x);
+        }
+        return dd;
     }
 
     /** 每小时权益（已实现 + 浮动），用于历史同长度窗口的收益分布。 */

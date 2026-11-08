@@ -66,6 +66,8 @@ public final class CandidateStudy {
             if (sim.containsKey("stop-fixed")) b.stop(StopRule.fixed("固定" + sim.get("stop-fixed") + "%", Double.parseDouble(sim.get("stop-fixed")), "HOUR"));
             if (sim.containsKey("trail-atr")) b.trailAtr(Double.parseDouble(sim.get("trail-atr")));
             if (sim.containsKey("max-ret4h-pct")) b.chaseCap(Double.parseDouble(sim.get("max-ret4h-pct")));
+            if (sim.containsKey("wick")) b.wick(Double.parseDouble(sim.get("wick")));
+            if (sim.containsKey("enforce-max-open")) b.enforceMaxOpen(Boolean.parseBoolean(sim.get("enforce-max-open")) || sim.get("enforce-max-open").equals("1"));
             if (sim.containsKey("stale-hours")) b.staleExit(Integer.parseInt(sim.get("stale-hours")), false, 0);
             if (sim.containsKey("runner-regimes")) {
                 b.runnerRegimes(java.util.Arrays.stream(sim.get("runner-regimes").split("\\+")).map(Integer::valueOf)
