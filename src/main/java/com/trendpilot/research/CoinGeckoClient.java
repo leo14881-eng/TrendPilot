@@ -108,6 +108,14 @@ public class CoinGeckoClient {
         return out;
     }
 
+    /** 某个分类按市值排名的第一页（最多 250 个）币 id；板块排名只需要大币，一次请求。 */
+    public List<String> categoryTopCoinIds(String category) {
+        List<String> out = new ArrayList<>();
+        get(() -> http.get().uri("/coins/markets?vs_currency=usd&per_page=250&page=1&category={c}", category)
+                .retrieve().body(JsonNode.class)).forEach(m -> out.add(m.path("id").asText()));
+        return out;
+    }
+
     private static double num(JsonNode n, String field) {
         JsonNode v = n.path(field);
         return v.isNumber() ? v.asDouble() : Double.NaN;

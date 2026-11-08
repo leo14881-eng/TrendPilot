@@ -52,6 +52,13 @@ public class ResearchService {
     private final JdbcClient jdbc;
     private final ResearchProperties props;
     private int rotationCursor;
+    /** 仪表盘"最强板块"用的 CoinGecko 分类（只显示，不参与排除）；空 = 不取。 */
+    private List<String> sectorCategories = List.of();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSectorCategories(@org.springframework.beans.factory.annotation.Value("${trendpilot.altseason.sector-categories:}") String csv) {
+        this.sectorCategories = java.util.Arrays.stream(csv.split(",")).map(String::trim).filter(x -> !x.isEmpty()).toList();
+    }
 
     public ResearchService(CoinGeckoClient coinGecko, DefiLlamaClient defiLlama, JdbcClient jdbc,
                            ResearchProperties props) {
@@ -88,6 +95,13 @@ public class ResearchService {
                         () -> saveCategory(category, coinGecko.categoryCoinIds(category), now));
             }
         }
+        if (!sectorCategories.isEmpty() && stale("SELECT MAX(updated_at) FROM coin_sector", IDENTITY_TTL, now)) {
+            // 只给仪表盘显示用：失败只记 INFO（不算异常），按同样的退避和限流处理
+            for (String sector : sectorCategories) {
+                attempt("SECTOR_" + sector, true, limited, now, done, true,
+                        () -> saveSector(sector, coinGecko.categoryTopCoinIds(sector), now));
+            }
+        }
         if (stale("SELECT MAX(updated_at) FROM protocol_value", PROTOCOL_TTL, now)) {
             attempt("DEFILLAMA", false, limited, now, done, () -> saveProtocols(defiLlama.protocolsByGeckoId(), now));
         }
@@ -98,6 +112,11 @@ public class ResearchService {
     }
 
     private void attempt(String item, boolean coinGeckoItem, boolean[] limited, Instant now, List<String> done,
+                         Runnable work) {
+        attempt(item, coinGeckoItem, limited, now, done, false, work);
+    }
+
+    private void attempt(String item, boolean coinGeckoItem, boolean[] limited, Instant now, List<String> done, boolean quiet,
                          Runnable work) {
         Backoff b = jdbc.sql("SELECT failures, retry_at FROM research_backoff WHERE item = :i").param("i", item)
                 .query((rs, n) -> new Backoff(rs.getInt(1), Instant.parse(rs.getString(2)))).optional().orElse(null);
@@ -113,8 +132,12 @@ public class ResearchService {
             Duration wait = Duration.ofHours(Math.min(24, 1L << Math.min(failures, 5)));
             jdbc.sql("INSERT OR REPLACE INTO research_backoff(item, failures, retry_at) VALUES (:i, :f, :r)")
                     .param("i", item).param("f", failures).param("r", now.plus(wait).toString()).update();
-            log.warn("研究资料 {} 刷新失败（连续第 {} 次，{} 小时后再试，期间记为研究缺口）：{}", item, failures,
-                    wait.toHours(), e.getMessage());
+            if (quiet) {
+                log.info("仪表盘资料 {} 这次没取到（连续第 {} 次，{} 小时后再试，期间显示\"-\"）：{}", item, failures, wait.toHours(), e.getMessage());
+            } else {
+                log.warn("研究资料 {} 刷新失败（连续第 {} 次，{} 小时后再试，期间记为研究缺口）：{}", item, failures,
+                        wait.toHours(), e.getMessage());
+            }
         }
     }
 
@@ -169,6 +192,31 @@ public class ResearchService {
             jdbc.sql("INSERT OR IGNORE INTO coin_category(coin_id, category, updated_at) VALUES (:id, :c, :t)")
                     .param("id", id).param("c", category).param("t", now.toString()).update();
         }
+    }
+
+    /**
+     * 替换某个板块的币列表（只给仪表盘显示用，不影响标的排除）。空列表或比已存的少一半以上时保留旧的。
+     */
+    @Transactional
+    public void saveSector(String sector, List<String> coinIds, Instant now) {
+        int stored = jdbc.sql("SELECT COUNT(*) FROM coin_sector WHERE sector = :c").param("c", sector).query(Integer.class).single();
+        if (coinIds.isEmpty() || (stored >= 10 && coinIds.size() < stored * 0.5)) {
+            throw new ResearchDataException("CoinGecko 板块 " + sector + " 返回 " + coinIds.size() + " 个（原有 " + stored + " 个），保留旧列表");
+        }
+        jdbc.sql("DELETE FROM coin_sector WHERE sector = :c").param("c", sector).update();
+        for (String id : coinIds) {
+            jdbc.sql("INSERT OR IGNORE INTO coin_sector(coin_id, sector, updated_at) VALUES (:id, :c, :t)")
+                    .param("id", id).param("c", sector).param("t", now.toString()).update();
+        }
+    }
+
+    /** 某个交易所的交易对 → 所属板块（可多个）；资料没加载时为空。 */
+    public Map<String, Set<String>> sectorsBySymbol(Venue venue) {
+        Map<String, Set<String>> out = new HashMap<>();
+        jdbc.sql("SELECT i.symbol, s.sector FROM coin_identity i JOIN coin_sector s ON s.coin_id = i.coin_id WHERE i.venue = :v")
+                .param("v", venue.name())
+                .query((rs, n) -> out.computeIfAbsent(rs.getString(1), k -> new java.util.TreeSet<>()).add(rs.getString(2))).list();
+        return out;
     }
 
     /** 按 CoinGecko 分类应排除的交易对（例如稳定币、代币化股票）；资料没加载时为空，由配置里的名单兜底。 */

@@ -97,6 +97,16 @@ class ShadowOnlyArchitectureTest {
             "com.trendpilot.tracking..", "com.trendpilot.risk..", "com.trendpilot.v2n..", "com.trendpilot.replay..",
             "com.trendpilot.universe..", "com.trendpilot.report..", "com.trendpilot.fastwatch..", "com.trendpilot.backtest.."};
 
+    /** 山寨季提醒和仪表盘只读行情、写自己的表和通知：不碰任何账本、资金、下单模拟或退出规则（用户 2026-11-08：只显示信息）。 */
+    @ArchTest
+    static final ArchRule altSeasonOnlyInforms = noClasses().that().resideInAPackage("com.trendpilot.altseason..")
+            .should().dependOnClassesThat().resideInAnyPackage("com.trendpilot.portfolio..", "com.trendpilot.capital..",
+                    "com.trendpilot.monitor..", "com.trendpilot.variant..", "com.trendpilot.v3..", "com.trendpilot.btcdaily..",
+                    "com.trendpilot.btctrend..", "com.trendpilot.observation..", "com.trendpilot.signal..", "com.trendpilot.risk..",
+                    "com.trendpilot.v2n..", "com.trendpilot.fastwatch..", "com.trendpilot.lpshadow..", "com.trendpilot.report..")
+            .orShould().dependOnClassesThat().haveFullyQualifiedName("com.trendpilot.market.ExecutionSimulator")
+            .because("山寨季提醒和仪表盘只显示信息，不触发任何买卖、不改任何账本");
+
     @ArchTest
     static final ArchRule btcTrendIsIndependent = noClasses().that().resideInAPackage("com.trendpilot.btctrend..")
             .should().dependOnClassesThat().resideInAnyPackage(STRATEGY_PACKAGES)

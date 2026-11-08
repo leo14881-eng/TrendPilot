@@ -231,6 +231,11 @@ trendpilot.research:
   # 按 CoinGecko 分类排除：稳定币、代币化股票、代币化黄金
   excluded-categories: [stablecoins, tokenized-stock, tokenized-gold]
 
+# 山寨季仪表盘（只读信息，不交易）：最强板块用的 CoinGecko 板块（每天每个 1 次请求，存 coin_sector，不参与标的排除）
+trendpilot.altseason:
+  sector-categories: layer-1,layer-2,meme-token,artificial-intelligence,decentralized-finance-defi,gaming,real-world-assets-rwa,depin,privacy-coins,exchange-based-tokens
+  stablecoins-url: https://stablecoins.llama.fi   # DefiLlama 免费稳定币接口，每天最多 2 次
+
 # BTC 每日短线（影子，独立账本）：只做多现货、不止损、分 3 档加仓、均价止盈。见 docs/BTC每日短线评估.md
 # 改参数时同时改 version（会自动重新回测一次）
 trendpilot.btc-daily:

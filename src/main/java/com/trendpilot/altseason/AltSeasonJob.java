@@ -51,6 +51,13 @@ public class AltSeasonJob {
     private final JdbcClient jdbc;
     private final Notifier notifier;
     private final boolean enabled;
+    private AltDashboard dashboard;
+
+    /** 山寨季仪表盘（只读信息）：用同一批日线，不另发 Binance 请求。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDashboard(AltDashboard dashboard) {
+        this.dashboard = dashboard;
+    }
 
     public AltSeasonJob(Markets markets, UniverseFilter filter, ResearchService research, AppState state, JdbcClient jdbc,
                         Notifier notifier, @Value("${trendpilot.altseason.enabled:true}") boolean enabled) {
@@ -73,26 +80,43 @@ public class AltSeasonJob {
         }
     }
 
-    /** 算一天的指标并更新状态。@return 写入的状态 */
+    /** 算一天的指标并更新状态，之后生成山寨季仪表盘（仪表盘出错不影响状态）。@return 写入的状态 */
     public String run(Instant now) {
         LocalDate day = now.atZone(ZoneOffset.UTC).toLocalDate().minusDays(1); // 刚收盘的那天
         VenueMarket m = markets.get(Venue.BINANCE);
-        if (m == null) return "DATA_MISSING";
-        Set<String> blocked = new java.util.HashSet<>(research.excludedSymbols(Venue.BINANCE));
-        blocked.addAll(research.tokenizedSymbols(Venue.BINANCE));
-        List<Ticker24h> pool = filter.select(m.directory().all(), m.tickers().tickers24h(), Set.of(), blocked).stream()
-                .filter(t -> !t.symbol().equals(UniverseFilter.BTC))
-                .sorted(Comparator.comparingDouble(Ticker24h::quoteVolume).reversed()).limit(POOL).toList();
-        long cutoff = day.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
-        Map<String, double[]> daily = new LinkedHashMap<>();
-        for (Ticker24h t : pool) {
-            double[] c = closes(m, t.symbol(), cutoff);
-            if (c != null) daily.put(t.symbol(), c);
+        Map<String, List<Kline>> bars = new LinkedHashMap<>();
+        String label = "DATA_MISSING";
+        if (m != null) {
+            Set<String> blocked = new java.util.HashSet<>(research.excludedSymbols(Venue.BINANCE));
+            blocked.addAll(research.tokenizedSymbols(Venue.BINANCE));
+            List<Ticker24h> pool = filter.select(m.directory().all(), m.tickers().tickers24h(), Set.of(), blocked).stream()
+                    .filter(t -> !t.symbol().equals(UniverseFilter.BTC))
+                    .sorted(Comparator.comparingDouble(Ticker24h::quoteVolume).reversed()).limit(POOL).toList();
+            long cutoff = day.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
+            Map<String, double[]> daily = new LinkedHashMap<>();
+            for (Ticker24h t : pool) {
+                List<Kline> k = fetch(m, t.symbol(), cutoff);
+                if (k != null) bars.put(t.symbol(), k);
+                double[] c = closes(k);
+                if (c != null) daily.put(t.symbol(), c);
+            }
+            List<Kline> btcBars = fetch(m, UniverseFilter.BTC, cutoff);
+            if (btcBars != null) bars.put(UniverseFilter.BTC, btcBars);
+            double[] btc = closes(btcBars);
+            List<Kline> ethBars = fetch(m, "ETHUSDT", cutoff);
+            if (ethBars != null) bars.putIfAbsent("ETHUSDT", ethBars);
+            double[] eth = closes(ethBars);
+            AltSeasonRules.Metrics x = AltSeasonRules.compute(daily, btc, eth);
+            label = record(day, x, now);
         }
-        double[] btc = closes(m, UniverseFilter.BTC, cutoff);
-        double[] eth = closes(m, "ETHUSDT", cutoff);
-        AltSeasonRules.Metrics x = AltSeasonRules.compute(daily, btc, eth);
-        return record(day, x, now);
+        if (dashboard != null) {
+            try {
+                dashboard.run(day, bars, latestLine(), now);
+            } catch (RuntimeException e) {
+                log.info("山寨季仪表盘这次没生成（只影响这一节信息）：{}", e.toString());
+            }
+        }
+        return label;
     }
 
     /** 记一天的指标、推进状态，状态变化时发提醒（拆出来便于测试）。 */
@@ -157,20 +181,25 @@ public class AltSeasonJob {
         return rs.wasNull() ? Double.NaN : v;
     }
 
-    private double[] closes(VenueMarket m, String symbol, long cutoff) {
+    /** 已收盘日线（cutoff 之前收盘的）；取不到为 null。 */
+    private List<Kline> fetch(VenueMarket m, String symbol, long cutoff) {
         try {
-            List<Kline> k = m.source().klines(symbol, "1d", null, DAYS + 1).stream().filter(x -> x.closeTime() < cutoff).toList();
-            if (k.size() < 51) return null;
-            List<Double> c = new ArrayList<>();
-            for (Kline x : k) {
-                if (!(x.close() > 0)) return null; // 坏数据：这个币不算
-                c.add(x.close());
-            }
-            return c.stream().mapToDouble(Double::doubleValue).toArray();
+            return m.source().klines(symbol, "1d", null, DAYS + 1).stream().filter(x -> x.closeTime() < cutoff).toList();
         } catch (RuntimeException e) {
             log.debug("山寨季 {} 日线获取失败：{}", symbol, e.getMessage());
             return null;
         }
+    }
+
+    /** 山寨季指标用的收盘序列：不到 51 根或有坏数据时这个币不算（null）。 */
+    static double[] closes(List<Kline> k) {
+        if (k == null || k.size() < 51) return null;
+        List<Double> c = new ArrayList<>();
+        for (Kline x : k) {
+            if (!(x.close() > 0)) return null; // 坏数据：这个币不算
+            c.add(x.close());
+        }
+        return c.stream().mapToDouble(Double::doubleValue).toArray();
     }
 
     private static Double nan(double v) {

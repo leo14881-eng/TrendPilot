@@ -16,6 +16,10 @@ trendpilot:
     enabled: false
   lpshadow:
     enabled: false
+  # 仪表盘：测试不取板块、不连 DefiLlama（各测试自己注入假数据）
+  altseason:
+    sector-categories: ""
+    stablecoins-url: http://127.0.0.1:1
 
 logging:
   file:
