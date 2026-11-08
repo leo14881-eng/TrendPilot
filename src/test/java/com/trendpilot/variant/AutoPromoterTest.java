@@ -36,6 +36,10 @@ class AutoPromoterTest {
         r.add("trendpilot.telegram.bot-token", () -> "");
         r.add("trendpilot.telegram.chat-id", () -> "");
         r.add("trendpilot.optimize.candidates-url", () -> "");
+        // 这些用例只测转正规则本身：评估起点不受 FastWatch 时间影响、两个变体都已完成影子对账（新口径单独测）
+        r.add("trendpilot.optimize.fastwatch-since", () -> "2026-01-01T00:00:00Z");
+        r.add("trendpilot.optimize.reconciled[V5].execution-reconciled", () -> "true");
+        r.add("trendpilot.optimize.reconciled[V6].execution-reconciled", () -> "true");
         r.add("trendpilot.variants.list[0].name", () -> "V5");
         r.add("trendpilot.variants.list[0].trade-usdt", () -> "2000");
         r.add("trendpilot.variants.list[0].overrides.min-buy-rel1h", () -> "5.855");
@@ -246,10 +250,10 @@ class AutoPromoterTest {
     void weeklyCandidatesBringOnlyPassingSetsOnlineWithEvidence() {
         String body = """
                 {"generatedAt":"2026-10-31T10:00:00Z","candidates":[
-                  {"id":"W_H4","status":"PASS","overrides":{"max-volume-accel":"4"},"validation":{"equity":100},
+                  {"id":"W_H4","status":"PASS","overrides":{"max-volume-accel":"4"},"validation":{"equity":100},"executionSensitivity":{"pass":true},
                    "evidence":"https://github.com/x/report.md"},
                   {"id":"W_H2","status":"PROMISING","overrides":{"early-exit-hours":"12","early-exit-max-mfe-pct":"1","early-exit-loss-pct":"4"}},
-                  {"id":"W_BAD","status":"PASS","overrides":{"no-such-key":"1"}}
+                  {"id":"W_BAD","status":"PASS","overrides":{"no-such-key":"1"},"executionSensitivity":{"pass":true}}
                 ]}""";
         jdbc.sql("UPDATE variant_registry SET status = 'STOPPED' WHERE name = 'V6'").update();
         List<String> added = candidates.ingest(body, NOW);
@@ -263,6 +267,133 @@ class AutoPromoterTest {
         // 同一份文件不再处理；读不懂的文件什么都不做
         assertThat(candidates.ingest(body, NOW)).isEmpty();
         assertThat(candidates.ingest("not json", NOW)).isEmpty();
+    }
+
+    @Autowired com.trendpilot.portfolio.ShadowBook v2book;
+    @Autowired com.trendpilot.notify.Notifier notifier;
+
+    /** 同一套转正参数，只换 FastWatch 起点和影子对账结论。 */
+    private AutoPromoter promoterWith(Instant fastwatchSince, java.util.Map<String, OptimizeProperties.Reconciliation> rec) {
+        OptimizeProperties o = new OptimizeProperties(opt.autoPromote(), false, opt.minDays(), opt.earlyStopDays(), opt.earlyStopDdRatio(),
+                opt.minClosed(), opt.promoteDdRatio(), opt.retireDdRatio(), opt.maxActive(), opt.formalChangeDays(), opt.lastFormalChange(), "",
+                fastwatchSince.toString(), rec);
+        return new AutoPromoter(registry, paramSets, v2book, jdbc, notifier, o, "Asia/Ho_Chi_Minh");
+    }
+
+    private static final OptimizeProperties.Reconciliation OK = new OptimizeProperties.Reconciliation(true, null, null);
+
+    /** 连续的权益曲线：从 startEq 接着累加。 */
+    private void curve(String book, Instant from, Instant to, int n, double pnl, double startEq) {
+        double eq = startEq;
+        long step = Duration.between(from, to).toMinutes() / (n + 1);
+        for (int i = 1; i <= n; i++) {
+            Instant at = from.plus(Duration.ofMinutes(step * i));
+            jdbc.sql("""
+                    INSERT INTO shadow_event(event_id, book, venue, symbol, type, pnl_usdt, reason_code, generation, params_version, created_at)
+                    VALUES (:id, :b, 'BINANCE', 'Y' || :i || 'USDT', 'SELL', :p, 'PROFIT_PROTECTION', 'g', 'v', :t)
+                    """).param("id", java.util.UUID.randomUUID().toString()).param("b", book).param("i", i)
+                    .param("p", String.valueOf(pnl)).param("t", at.toString()).update();
+            eq += pnl;
+            jdbc.sql("INSERT INTO equity_curve(book, at, realized, unrealized) VALUES (:b, :t, :r, 0)")
+                    .param("b", book).param("t", at.plusSeconds(1).toString()).param("r", eq).update();
+        }
+    }
+
+    @Test
+    void evaluationCountsOnlyFromFastWatchAndListsTheEarlierPartSeparately() {
+        Instant started = NOW.minus(Duration.ofDays(31));
+        Instant fw = NOW.minus(Duration.ofDays(20));
+        start("V6", started);
+        start("V5", NOW.minus(Duration.ofDays(5))); // 晚于 FastWatch 上线：评估起点就是上线时间
+        curve("V6", started, fw, 10, -40, 0);          // 接入前亏 400 U：不计入转正
+        Instant later = fw.plus(Duration.ofDays(30)).plus(Duration.ofHours(1));
+        curve("V6", fw, later, 25, 10, -400);
+        history("V2", started, later, 25, 2, 500); // V2 中途回撤 500 U：接入前 −400 U 没到提前停开新仓的线
+        AutoPromoter p = promoterWith(fw, java.util.Map.of("V6", OK, "V5", OK));
+
+        AutoPromoter.Eval now = p.evaluate(NOW).stream().filter(x -> x.variant().equals("V6")).findFirst().orElseThrow();
+        assertThat(now.decision()).isEqualTo("WAIT"); // 上线已 31 天，但接入 FastWatch 才 20 天
+        assertThat(now.daysLive()).isBetween(19.9, 20.1);
+        String fwLocal = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(fw.atZone(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+        assertThat(now.reason()).contains("评估起点 " + fwLocal).contains("评估日 2026-12-02")
+                .contains("单列、不计入转正：合计 -400 U，平仓 10 笔");
+        AutoPromoter.Eval v5 = p.evaluate(NOW).stream().filter(x -> x.variant().equals("V5")).findFirst().orElseThrow();
+        assertThat(v5.reason()).contains("上线即接入 FastWatch").doesNotContain("单列");
+
+        // 新起点满 30 天：只看接入后的 25 笔（+250 U），接入前的 −400 U 不拖累转正
+        AutoPromoter.Eval due = p.evaluate(later).stream().filter(x -> x.variant().equals("V6")).findFirst().orElseThrow();
+        assertThat(due.mine().total()).isCloseTo(250, org.assertj.core.data.Offset.offset(1e-6));
+        assertThat(due.mine().closed()).isEqualTo(25);
+        assertThat(due.decision()).isIn("CANDIDATE", "PROMOTED");
+    }
+
+    @Test
+    void safetyStopsStillLookAtEverythingSinceLaunch() {
+        Instant started = NOW.minus(Duration.ofDays(16));
+        Instant fw = NOW.minus(Duration.ofDays(2));
+        start("V6", started);
+        curve("V2", started, NOW, 10, 2, 0);
+        curve("V6", started, fw, 10, -30, 0); // 回撤 300 U > V2 × 1.5，发生在接入 FastWatch 之前
+        AutoPromoter p = promoterWith(fw, java.util.Map.of("V6", OK));
+        assertThat(p.evaluate(NOW).stream().filter(x -> x.variant().equals("V6")).findFirst().orElseThrow().decision()).isEqualTo("STOP");
+    }
+
+    @Test
+    void promotionNeedsAShadowReconciliationAndAnExecutionGapAboveMinusTwo() {
+        Instant from = NOW.minus(Duration.ofDays(31));
+        curve("V2", from, NOW, 25, 2, 0);
+        curve("V6", from, NOW, 25, 10, 0);
+        curve("V5", from, NOW, 25, 1, 0);
+        Instant fw = from.minus(Duration.ofDays(1));
+
+        AutoPromoter none = promoterWith(fw, java.util.Map.of());
+        AutoPromoter.Eval e = none.evaluate(NOW).stream().filter(x -> x.variant().equals("V6")).findFirst().orElseThrow();
+        assertThat(e.decision()).isEqualTo("KEEP");
+        assertThat(e.reason()).contains("影子对账未确认（execution-reconciled = false），先查执行");
+
+        AutoPromoter bad = promoterWith(fw, java.util.Map.of("V6", new OptimizeProperties.Reconciliation(true, -2.4, "x")));
+        e = bad.evaluate(NOW).stream().filter(x -> x.variant().equals("V6")).findFirst().orElseThrow();
+        assertThat(e.decision()).isEqualTo("KEEP");
+        assertThat(e.reason()).contains("执行分项 -2.40 U/每千U 低于 −2，先查执行");
+        assertThat(paramSets.current().isEmpty()).isTrue();
+
+        AutoPromoter good = promoterWith(fw, java.util.Map.of("V6", new OptimizeProperties.Reconciliation(true, -1.5, "x")));
+        assertThat(good.evaluate(NOW).stream().filter(x -> x.variant().equals("V6")).findFirst().orElseThrow().decision()).isEqualTo("PROMOTED");
+    }
+
+    @Test
+    void configuredDefaultsKeepEveryVariantUnreconciledAndStartAtTheFastWatchDeploy() {
+        assertThat(OptimizeProperties.FASTWATCH_SINCE).isEqualTo("2026-11-02T02:32:17Z");
+        OptimizeProperties plain = new OptimizeProperties(true, false, 30, 14, 1.5, 20, 1.1, 1.3, 3, 14, "2026-10-23", "");
+        assertThat(plain.fastwatchSinceInstant()).isEqualTo(Instant.parse("2026-11-02T02:32:17Z"));
+        assertThat(plain.reconciliation("V5").ok()).isFalse();
+        assertThat(opt.reconciliation("V6").ok()).isTrue(); // 本测试的配置
+        assertThat(opt.reconciliation("v6").ok()).isTrue();
+    }
+
+    @Test
+    void newVariantsMustBeOnFastWatch() {
+        jdbc.sql("UPDATE variant_registry SET status = 'STOPPED' WHERE name = 'V6'").update();
+        VariantOverrides runner = VariantOverrides.parseInline("runner-arm-pct=5,runner-giveback-pct=3");
+        assertThat(VariantRegistry.fastWatchCovers(runner)).isFalse();
+        assertThat(registry.register(runner, "CANDIDATES", true, "", null, NOW)).isEmpty();
+        assertThat(registry.notWatched()).isEmpty();
+        // 每个正在开新仓的变体都在 FastWatch 名单里
+        jdbc.sql("UPDATE variant_registry SET status = 'ACTIVE' WHERE name = 'V6'").update();
+        assertThat(fastWatchBooks.positions().keySet()).containsAll(registry.active().stream().map(VariantRegistry.Variant::name).toList());
+    }
+
+    @Autowired com.trendpilot.job.FastWatchBooks fastWatchBooks;
+
+    @Test
+    void weeklyCandidatesWithoutAPassingExecutionSensitivityStayOffline() {
+        String body = """
+                {"generatedAt":"2026-11-07T10:00:00Z","candidates":[
+                  {"id":"W_OLD","status":"PASS","overrides":{"max-volume-accel":"4"}},
+                  {"id":"W_THIN","status":"PASS","overrides":{"max-volume-accel":"5"},"executionSensitivity":{"pass":false}}
+                ]}""";
+        jdbc.sql("UPDATE variant_registry SET status = 'STOPPED' WHERE name = 'V6'").update();
+        assertThat(candidates.ingest(body, NOW)).isEmpty();
     }
 
     private String decision(String v) {

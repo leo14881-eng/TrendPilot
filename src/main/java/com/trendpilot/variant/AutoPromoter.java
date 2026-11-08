@@ -34,6 +34,16 @@ import com.trendpilot.portfolio.ShadowBook;
  * <p>
  * <b>安全边界</b>（写死在代码里）：只改 V2 这个影子账本的参数集；永远不改 BTC 每日短线（不止损、不卖亏）、BTC 均线趋势、V1、V3。
  * 以后有真钱账本时，必须用户明确打开 {@code realMoneyAutoPromote}（默认关）才会自动改真钱规则。
+ * <p>
+ * <b>评估口径</b>（2026-11-08 回测与实盘对账后收紧，不改交易规则）：
+ * <ul>
+ * <li>转正 / 30 天评估 / 满 30 天淘汰只看变体接入 FastWatch 之后：评估起点 = max(上线时间, {@link OptimizeProperties#fastwatchSince()})，
+ *     30 天从评估起点重新算。之前的成绩在日报里单列，不计入转正判断。安全类停开新仓（净值回撤 &gt; 25%、满 14 天回撤 &gt; V2 × 1.5）
+ *     仍按上线以来的全部数据判断，和原来一样。</li>
+ * <li>影子对账门槛：转正前必须有研究流程确认的同时段对账（{@link OptimizeProperties#reconciled()}，默认没确认），
+ *     执行分项 &lt; −2 U/每千U 时不转正，日报写"先查执行"。</li>
+ * <li>没接入 FastWatch 的变体（启用"让赢家跑"的）不能转正。</li>
+ * </ul>
  */
 @Component
 public class AutoPromoter {
@@ -92,11 +102,17 @@ public class AutoPromoter {
     public static final double MAX_NAV_DD = 0.25;
 
     Perf perf(Ledger book, Instant start, Instant now) {
+        return perf(book, start, now, true);
+    }
+
+    /** includeNow = false：只看 [start, now] 里记下的权益曲线（单列评估起点之前的那一段用），不加当前持仓的实时值。 */
+    Perf perf(Ledger book, Instant start, Instant now, boolean includeNow) {
         double base = jdbc.sql("SELECT realized + unrealized FROM equity_curve WHERE book = :b AND at <= :t ORDER BY at DESC, id DESC LIMIT 1")
                 .param("b", book.book()).param("t", start.toString()).query(Double.class).optional().orElse(0.0);
         List<Double> pts = new ArrayList<>(jdbc.sql("SELECT realized + unrealized FROM equity_curve WHERE book = :b AND at > :t AND at <= :n ORDER BY at, id")
                 .param("b", book.book()).param("t", start.toString()).param("n", now.toString()).query(Double.class).list());
-        pts.add(book.realizedPnl() + book.unrealizedPnl());
+        if (includeNow) pts.add(book.realizedPnl() + book.unrealizedPnl());
+        else if (pts.isEmpty()) pts.add(base);
         double peak = base, dd = 0, cap = v2.capital(), navPeak = cap, navDd = 0;
         for (double v : pts) {
             peak = Math.max(peak, v);
@@ -111,6 +127,16 @@ public class AutoPromoter {
                 """).param("b", book.book()).param("t", start.toString()).param("n", now.toString()).query(Double.class).list();
         double avg = sells.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
         return new Perf(pts.getLast() - base, dd, sells.size(), avg, navDd);
+    }
+
+    /** 评估起点：变体上线和接入 FastWatch 两者较晚的一个。 */
+    Instant evalStart(VariantRegistry.Variant v) {
+        Instant fw = opt.fastwatchSinceInstant();
+        return v.startedAt().isAfter(fw) ? v.startedAt() : fw;
+    }
+
+    private String local(Instant t) {
+        return java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(t.atZone(zone));
     }
 
     /** 一个变体的评估结论。 */
@@ -185,25 +211,40 @@ public class AutoPromoter {
     }
 
     Eval judge(VariantRegistry.Variant v, Instant now) {
-        double days = Duration.between(v.startedAt(), now).toMinutes() / 1440.0;
-        Perf mine = perf(v.book(), v.startedAt(), now);
-        Perf base = perf(v2, v.startedAt(), now);
-        double v2dd = Math.max(base.maxDd(), 1);
-        if (mine.navDd() > MAX_NAV_DD) {
-            return new Eval(v.name(), days, mine, base, "STOP", String.format(Locale.ROOT,
-                    "影子期间净值回撤 %.1f%% 超过 25%% 上限", mine.navDd() * 100));
+        // 安全类停开新仓：按上线以来全部数据（和原来一样）
+        double liveDays = Duration.between(v.startedAt(), now).toMinutes() / 1440.0;
+        Perf all = perf(v.book(), v.startedAt(), now);
+        Perf allBase = perf(v2, v.startedAt(), now);
+        if (all.navDd() > MAX_NAV_DD) {
+            return new Eval(v.name(), liveDays, all, allBase, "STOP", String.format(Locale.ROOT,
+                    "影子期间净值回撤 %.1f%% 超过 25%% 上限", all.navDd() * 100));
         }
-        if (days >= opt.earlyStopDays() && days < opt.minDays() && mine.maxDd() > v2dd * opt.earlyStopDdRatio()) {
-            return new Eval(v.name(), days, mine, base, "STOP", String.format(Locale.ROOT,
-                    "上线 %.0f 天，同期回撤 %.0f U 已超过 V2 的 %.1f 倍（V2 %.0f U）", days, mine.maxDd(), opt.earlyStopDdRatio(), base.maxDd()));
+        // 转正 / 30 天评估：只从接入 FastWatch 起算
+        Instant start = evalStart(v);
+        Instant due = start.plus(Duration.ofDays(opt.minDays()));
+        double days = Math.max(0, Duration.between(start, now).toMinutes() / 1440.0);
+        if (liveDays >= opt.earlyStopDays() && days < opt.minDays() && all.maxDd() > Math.max(allBase.maxDd(), 1) * opt.earlyStopDdRatio()) {
+            return new Eval(v.name(), liveDays, all, allBase, "STOP", String.format(Locale.ROOT,
+                    "上线 %.0f 天，同期回撤 %.0f U 已超过 V2 的 %.1f 倍（V2 %.0f U）", liveDays, all.maxDd(), opt.earlyStopDdRatio(), allBase.maxDd()));
+        }
+        Perf mine = now.isAfter(start) ? perf(v.book(), start, now) : all;
+        Perf base = now.isAfter(start) ? perf(v2, start, now) : allBase;
+        double v2dd = Math.max(base.maxDd(), 1);
+        String window = String.format(Locale.ROOT, "评估起点 %s（越南，%s），评估日 %s", local(start),
+                start.equals(v.startedAt()) ? "上线即接入 FastWatch" : "接入 FastWatch", due.atZone(zone).toLocalDate());
+        if (v.startedAt().isBefore(start)) {
+            Perf pre = perf(v.book(), v.startedAt(), start, false);
+            window += String.format(Locale.ROOT, "；接入前 %s ～ %s 单列、不计入转正：合计 %+.0f U，平仓 %d 笔", local(v.startedAt()), local(start),
+                    pre.total(), pre.closed());
         }
         if (days < opt.minDays()) {
-            return new Eval(v.name(), days, mine, base, "WAIT", String.format(Locale.ROOT, "上线 %.1f 天，满 %d 天再评估", days, opt.minDays()));
+            return new Eval(v.name(), days, mine, base, "WAIT", String.format(Locale.ROOT, "接入 FastWatch 后 %.1f 天，满 %d 天再评估；%s",
+                    days, opt.minDays(), window));
         }
         if (mine.total() < base.total() || mine.maxDd() > v2dd * opt.retireDdRatio()) {
             return new Eval(v.name(), days, mine, base, "STOP", String.format(Locale.ROOT,
-                    "满 %d 天同期合计 %+.0f U（V2 %+.0f U），回撤 %.0f U（V2 %.0f U）", opt.minDays(), mine.total(), base.total(),
-                    mine.maxDd(), base.maxDd()));
+                    "满 %d 天同期合计 %+.0f U（V2 %+.0f U），回撤 %.0f U（V2 %.0f U）；%s", opt.minDays(), mine.total(), base.total(),
+                    mine.maxDd(), base.maxDd(), window));
         }
         List<String> miss = new ArrayList<>();
         if (!(mine.total() > base.total())) miss.add("合计没有高于 V2");
@@ -212,8 +253,16 @@ public class AutoPromoter {
         if (mine.closed() < opt.minClosed()) miss.add("平仓 " + mine.closed() + " 笔，不到 " + opt.minClosed() + " 笔");
         if (!v.backtestPassed()) miss.add("回测发布前检查没有通过");
         if (mine.navDd() > MAX_NAV_DD) miss.add("净值回撤超过 25%");
-        String stats = String.format(Locale.ROOT, "满 %.0f 天同期合计 %+.0f / %+.0f U，回撤 %.0f / %.0f U，每笔 %+.2f / %+.2f U，平仓 %d 笔（变体 / V2）",
-                days, mine.total(), base.total(), mine.maxDd(), base.maxDd(), mine.perTrade(), base.perTrade(), mine.closed());
+        if (!VariantRegistry.fastWatchCovers(v.overrides())) miss.add("没有接入 FastWatch（回测口径不适用）");
+        OptimizeProperties.Reconciliation rec = opt.reconciliation(v.name());
+        Double gap = rec.executionGapPerK();
+        if (gap != null && gap < OptimizeProperties.MIN_EXECUTION_GAP_PER_K) {
+            miss.add(String.format(Locale.ROOT, "影子对账执行分项 %+.2f U/每千U 低于 −2，先查执行", gap));
+        } else if (!rec.ok()) {
+            miss.add("影子对账未确认（execution-reconciled = false），先查执行");
+        }
+        String stats = String.format(Locale.ROOT, "满 %.0f 天同期合计 %+.0f / %+.0f U，回撤 %.0f / %.0f U，每笔 %+.2f / %+.2f U，平仓 %d 笔（变体 / V2）；%s",
+                days, mine.total(), base.total(), mine.maxDd(), base.maxDd(), mine.perTrade(), base.perTrade(), mine.closed(), window);
         if (miss.isEmpty()) return new Eval(v.name(), days, mine, base, "CANDIDATE", stats);
         return new Eval(v.name(), days, mine, base, "KEEP", stats + "；还不能转正：" + String.join("、", miss));
     }

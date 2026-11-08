@@ -66,6 +66,8 @@ public final class CandidateStudy {
             if (sim.containsKey("stop-fixed")) b.stop(StopRule.fixed("固定" + sim.get("stop-fixed") + "%", Double.parseDouble(sim.get("stop-fixed")), "HOUR"));
             if (sim.containsKey("trail-atr")) b.trailAtr(Double.parseDouble(sim.get("trail-atr")));
             if (sim.containsKey("max-ret4h-pct")) b.chaseCap(Double.parseDouble(sim.get("max-ret4h-pct")));
+            if (sim.containsKey("wick")) b.wick(Double.parseDouble(sim.get("wick")));
+            if (sim.containsKey("enforce-max-open")) b.enforceMaxOpen(Boolean.parseBoolean(sim.get("enforce-max-open")) || sim.get("enforce-max-open").equals("1"));
             if (sim.containsKey("stale-hours")) b.staleExit(Integer.parseInt(sim.get("stale-hours")), false, 0);
             if (sim.containsKey("runner-regimes")) {
                 b.runnerRegimes(java.util.Arrays.stream(sim.get("runner-regimes").split("\\+")).map(Integer::valueOf)
@@ -382,11 +384,14 @@ public final class CandidateStudy {
         todo.add(EntryStudy.live("现行", data, regimes, tape, params, fromQ, size));
         todo.add(EntryStudy.live("随机1", data, regimes, tape, params, fromQ, size).randomEntry(1001));
         todo.add(EntryStudy.live("随机2", data, regimes, tape, params, fromQ, size).randomEntry(1002));
+        // 执行敏感度（2026-11-08 对账）：基准和每个候选都再按"上影线只算 75%"跑一次
+        todo.add(EntryStudy.live(wickName("现行"), data, regimes, tape, params, fromQ, size).wick(ReleaseCheck.WICK_SENSITIVITY));
         int seed = 5000;
         for (Candidate c : cands) {
             StrategyParams pp = c.config().isEmpty() ? params : BacktestMain.loadParams(c.config());
             todo.add(c.apply(EntryStudy.live(c.id(), data, regimes, tape, pp, fromQ, size)));
             todo.add(c.apply(EntryStudy.live(c.id() + " 随机", data, regimes, tape, pp, fromQ, size)).randomEntry(seed++));
+            todo.add(sensitivity(c, EntryStudy.live(wickName(c.id()), data, regimes, tape, pp, fromQ, size)));
         }
         Map<String, Sim> byName = new LinkedHashMap<>();
         try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {
@@ -403,11 +408,14 @@ public final class CandidateStudy {
                 byName.put(s.name(), s);
             }
         }
-        List<Sim> sims = new ArrayList<>(byName.values());
+        List<Sim> sims = new ArrayList<>(byName.values().stream().filter(x -> !isWick(x.name())).toList());
         Sim base = byName.get("现行");
         ReleaseCheck.Period bF = ReleaseCheck.Period.of(base, regimes, fromQ, size, params.capital().hardCap());
         ReleaseCheck.Period bV = ReleaseCheck.Period.of(base, regimes, splitQ, size);
         double[] bReg = Metrics.of(base, regimes, fromQ, size).regimeEquity();
+        ReleaseCheck.Period bW = ReleaseCheck.Period.of(byName.get(wickName("现行")), regimes, fromQ, size, params.capital().hardCap());
+        StringBuilder wickRows = new StringBuilder(String.format(Locale.ROOT, "| 现行 | 基准 | %,.0f / %,.0f / %s | %,.0f / %,.0f / %s | — | — |%n",
+                bF.equity(), bF.maxDd(), pm(ReleaseCheck.mean(bF)), bW.equity(), bW.maxDd(), pm(ReleaseCheck.mean(bW))));
 
         String evidence = System.getenv().getOrDefault("EVIDENCE_URL", "");
         List<Map<String, Object>> out = new ArrayList<>();
@@ -433,7 +441,14 @@ public final class CandidateStudy {
             ReleaseCheck.Period cbV = cb == base ? bV : ReleaseCheck.Period.of(cb, regimes, splitQ, size);
             double[] cbReg = cb == base ? bReg : Metrics.of(cb, regimes, fromQ, size).regimeEquity();
             double[] cReg = Metrics.of(s, regimes, fromQ, size).regimeEquity();
-            ReleaseCheck.Result r = ReleaseCheck.evaluate(f, v, cbF, cbV, cReg, cbReg, rnd);
+            Sim cbw = byName.getOrDefault(wickName(cb.name()), byName.get(wickName("现行")));
+            ReleaseCheck.Period fW = ReleaseCheck.Period.of(byName.get(wickName(c.id())), regimes, fromQ, size, params.capital().hardCap());
+            ReleaseCheck.Period cbW = ReleaseCheck.Period.of(cbw, regimes, fromQ, size, params.capital().hardCap());
+            ReleaseCheck.Sensitivity sens = new ReleaseCheck.Sensitivity(fW, cbW);
+            ReleaseCheck.Result r = ReleaseCheck.evaluate(f, v, cbF, cbV, cReg, cbReg, rnd, sens);
+            wickRows.append(String.format(Locale.ROOT, "| %s | %s | %,.0f / %,.0f / %s | %,.0f / %,.0f / %s | %s | %s |%n", c.id(), label(r.verdict()),
+                    f.equity(), f.maxDd(), pm(ReleaseCheck.mean(f)), fW.equity(), fW.maxDd(), pm(r.wickOwn()), pm(r.wickDiff()),
+                    ReleaseCheck.sensitivityHolds(sens) ? "满足" : "**不满足**"));
             if (cb != base) vsBase.append(baseRow(c.id(), cb.name(), f, v, cbF, cbV, cReg, cbReg));
             List<String> failed = r.checks().entrySet().stream().filter(e -> !e.getValue()).map(Map.Entry::getKey).toList();
             List<String> why = new ArrayList<>(failed);
@@ -454,6 +469,7 @@ public final class CandidateStudy {
             j.put("full", Map.of("equity", round(f.equity()), "maxDrawdown", round(f.maxDd()), "trades", f.trades(), "perTrade", round(f.meanPnl()),
                     "navDrawdownPct", round(f.navDd() * 100), "calmar", round(f.calmar())));
             j.put("validation", Map.of("equity", round(v.equity()), "maxDrawdown", round(v.maxDd()), "trades", v.trades(), "perTrade", round(v.meanPnl())));
+            j.put("executionSensitivity", sensitivityJson(f, sens, r));
             j.put("evidence", evidence.isBlank() ? "" : evidence + "/report.md");
             out.add(j);
         }
@@ -469,6 +485,10 @@ public final class CandidateStudy {
             md.append("\n").append(altMarket(data, fromQ));
             md.append("\n").append(captureTable(sims.stream().filter(x -> !x.name().contains("随机")).toList(), params));
         }
+        md.append("\n### 执行敏感度（利润保护的 15m 上影线算 100% / 75%）\n\n")
+                .append("同一候选、同数据同时段，基准也同样按 75% 重跑。75% 下全期合计 ≤ 0、或每笔期望 95% 区间含 0、或对基准每笔差值 95% 区间含 0 → 最高 PROMISING。\n\n")
+                .append("| 候选 | 结论 | 100%：全期 权益 / 回撤 / 每笔 ±95% | 75%：全期 权益 / 回撤 / 每笔 ±95% | 75%：对基准每笔差 ±95% | 敏感度 |\n")
+                .append("|---|---|---:|---:|---:|---|\n").append(wickRows);
         md.append("\n结论：PASS = 全部检查通过（先作为影子变体跑满 30 天，再按自动转正条件决定）；PROMISING = 有希望但没全部通过（作为影子变体观察）；")
                 .append("WORSE = 明显更差（只存档）。检查项见 ReleaseCheck。\n\n");
         md.append(AsymStudy.splitTable(sims, regimes, fromQ, splitQ, size));
@@ -496,6 +516,39 @@ public final class CandidateStudy {
             Files.writeString(outDir.resolve("trades-" + s.name().replaceAll("[^\\p{L}\\p{N}]+", "_") + ".csv"), BacktestMain.tradesCsv(s, data));
         }
         System.out.println(md);
+    }
+
+    /** 执行敏感度用的模拟：候选原样，再把上影线比例压到 75%（候选自己已经更低的保持不变）。 */
+    static B0Sim sensitivity(Candidate c, B0Sim b) {
+        c.apply(b);
+        double own = c.sim().containsKey("wick") ? Double.parseDouble(c.sim().get("wick")) : 1.0;
+        return b.wick(Math.min(own, ReleaseCheck.WICK_SENSITIVITY));
+    }
+
+    static String wickName(String id) {
+        return id + " 上影75";
+    }
+
+    static boolean isWick(String name) {
+        return name.endsWith(" 上影75");
+    }
+
+    /** candidates.json 里的执行敏感度：100% 和 75% 两组全期数字、是否满足。 */
+    static Map<String, Object> sensitivityJson(ReleaseCheck.Period full, ReleaseCheck.Sensitivity sens, ReleaseCheck.Result r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("wickShare", ReleaseCheck.WICK_SENSITIVITY);
+        m.put("pass", ReleaseCheck.sensitivityHolds(sens));
+        double[] own = ReleaseCheck.mean(full);
+        m.put("wick100", Map.of("equity", round(full.equity()), "maxDrawdown", round(full.maxDd()), "trades", full.trades(),
+                "perTrade", round(own[0]), "perTradeCi95", round(own[1])));
+        m.put("wick75", Map.of("equity", round(sens.candFull().equity()), "maxDrawdown", round(sens.candFull().maxDd()),
+                "trades", sens.candFull().trades(), "perTrade", round(r.wickOwn()[0]), "perTradeCi95", round(r.wickOwn()[1]),
+                "perTradeDiffVsBase", round(r.wickDiff()[0]), "perTradeDiffCi95", round(r.wickDiff()[1])));
+        return m;
+    }
+
+    private static String pm(double[] x) {
+        return Double.isNaN(x[0]) ? "—" : String.format(Locale.ROOT, "%+.2f ±%.2f", x[0], x[1]);
     }
 
     private static String baseRow(String id, String baseName, ReleaseCheck.Period f, ReleaseCheck.Period v,

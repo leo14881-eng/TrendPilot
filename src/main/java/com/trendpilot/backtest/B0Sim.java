@@ -175,6 +175,33 @@ public final class B0Sim extends Sim {
         return !Double.isNaN(r) && r < maxRet4hPct;
     }
 
+    /**
+     * 回测与实盘对账（2026-11-08）：15m K 线上影线有多少算作"看得到、卖得到"的价格。1 = 整根上影线（原来的做法：利润保护的最高净利
+     * 按 K 线最高价算，卖出按最高价回落 1% 的底线成交）；0.5 = 只算一半。线上（5 分钟检查 + FastWatch）记录的最高净利只有
+     * K 线最高价口径的 77%～85%（大赚单），取 0.5 时两者对齐。只影响利润保护的启动、最高净利和底线，不影响止损和收盘价判断。
+     */
+    private double wickShare = 1.0;
+
+    B0Sim wick(double share) {
+        if (!(share >= 0 && share <= 1)) throw new IllegalArgumentException("wick 要在 0～1");
+        this.wickShare = share;
+        return this;
+    }
+
+    /** 本根 15m 在利润保护里用的"最高价"：开收较高者 + 上影线 × wickShare。 */
+    static double reachableHigh(double open, double high, double close, double share) {
+        double body = Math.max(open, close);
+        return high <= body ? high : body + share * (high - body);
+    }
+
+    /** 回测与实盘对账（2026-11-08）：涨幅榜买入也执行变体的 max-open（线上 VariantTracker 一直执行，原回测没有）。 */
+    private boolean enforceMaxOpen;
+
+    B0Sim enforceMaxOpen(boolean on) {
+        this.enforceMaxOpen = on;
+        return this;
+    }
+
     B0Sim randomEntry(long seed) {
         this.random = new java.util.Random(seed);
         return this;
@@ -261,7 +288,7 @@ public final class B0Sim extends Sim {
             boolean fresh = sig != null && hour > lastObsHour.getOrDefault(pos.symbol(), Long.MIN_VALUE);
             Path path = paths.get(pos.symbol());
             path.bar(s.high[q], s.low[q]);
-            double[] pts = {s.open[q], s.low[q], s.high[q], s.close[q]};
+            double[] pts = {s.open[q], s.low[q], reachableHigh(s.open[q], s.high[q], s.close[q], wickShare), s.close[q]};
             if (timeExitHours > 0 && !pos.protectArmed()
                     && java.time.Duration.between(pos.openedAt(), now(q)).toMinutes() >= timeExitHours * 60L) {
                 double imp = Costs.impactBps(vol) / 10_000;
@@ -559,7 +586,9 @@ public final class B0Sim extends Sim {
     private List<ReviewResult> buyRanked(List<String> ranked, int q, Instant now) {
         List<ReviewResult> out = new ArrayList<>();
         StrategyParams.Review rv = params.review();
+        Integer maxOpen = enforceMaxOpen && overrides != null ? overrides.maxOpen() : null;
         for (String sym : ranked) {
+            if (maxOpen != null && positions.size() + out.size() >= maxOpen) break;
             if (positions.containsKey(sym)) continue;
             Integer exitQ = lastExitQ.get(sym);
             if (exitQ != null && q - exitQ < 4) continue; // 卖出后 1 小时内不买回

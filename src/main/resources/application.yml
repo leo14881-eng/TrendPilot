@@ -36,8 +36,10 @@ trendpilot:
     # 配置化影子变体（docs/规则说明.md "自动优化"）：每个 = V2 基准 + 参数改动，独立记账、不占 V2 资金、不发开仓 Telegram。
     # base 只能是 V2；最多 3 个同时开新仓；名字改了参数会让同期对比重新计时。V5 继续用原来的 v5_position，数据不动。
     list:
+      # 2026-11-09 发布前检查加入"执行敏感度"（上影线 75%）：V5 买法 75% 下全期 +1,738 U、每笔 +0.22 ±3.25 U（区间含 0），
+      #      由 PASS 降为 PROMISING，backtest-passed 改为 false（不会自动转正；交易规则不变）。见 docs/策略对比记录/2026-11-08-回测与实盘对账.md
       - { name: V5, base: V2, trade-usdt: "${trendpilot.variants.strong-trade-usdt}", overrides: { min-buy-rel1h: "${trendpilot.variants.strong-min-rel1h}" },
-          backtest-passed: true, evidence: "docs/策略对比记录/2026-10-23-V2买入端.md" }
+          backtest-passed: false, evidence: "docs/策略对比记录/2026-10-23-V2买入端.md" }
       # 2026-10-26 回测里风险调整收益最好、净值回撤 ≤ 25% 的两组（docs/策略对比记录/2026-10-26-H1H2H4.md）：作为影子对照跑满 30 天；
       # 回测检查差"暴跌行情"一项没全部通过，所以 backtest-passed: false，不会自动转正（用户可以改成 true）
       # V6 = 涨幅榜动量：每小时取成交额前 150 里 24h 涨幅前 3 名，盘口深度和滑点过审核门槛就买；退出同 V2。
@@ -74,6 +76,16 @@ trendpilot:
     formal-change-days: 14          # 正式规则最多每 2 周换一次
     last-formal-change: "2026-10-23"  # V2 上次正式改动（恢复基准）
     candidates-url: https://raw.githubusercontent.com/leo14881-eng/TrendPilot/backtest-results/candidates/candidates.json
+    # 评估口径（2026-11-09 收紧，不改交易规则）：转正 / 30 天评估只从变体接入 FastWatch 起算（2026-11-02 版本 43b7196 部署后启动），
+    # 之前的数据日报单列、不计入转正
+    fastwatch-since: "2026-11-02T02:32:17Z"
+    # 影子对账（转正前用同时段重跑的回测和实盘对比，研究入口 ReconStudy）：研究流程确认后才把 execution-reconciled 改成 true；
+    # execution-gap-per-k = 执行分项（实盘 − 同时段回测，U/每千U 每笔），< −2 时不转正、先查执行。没写的变体 = 没确认
+    reconciled:
+      "[V5]": { execution-reconciled: false }
+      "[V6]": { execution-reconciled: false }
+      "[V6B]": { execution-reconciled: false }
+      "[V6BS6]": { execution-reconciled: false }
   zone: Asia/Ho_Chi_Minh
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}

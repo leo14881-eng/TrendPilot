@@ -82,6 +82,14 @@ public class VariantRegistry {
         this.tx = new org.springframework.transaction.support.TransactionTemplate(tm);
     }
 
+    /**
+     * 这个变体的持仓在不在 FastWatch 名单里（{@code FastWatchBooks}）。启用"让赢家跑"的变体利润保护底线算法不同，不进 FastWatch。
+     * 2026-11-08 对账：回测按"实时卖在底线"成交，没有 FastWatch 的变体回测数字不适用，所以新变体必须一上线就接入。
+     */
+    public static boolean fastWatchCovers(VariantOverrides o) {
+        return !o.hasRunner();
+    }
+
     public static String tableFor(String name) {
         return StrongVariantBook.BOOK.equals(name) ? "v5_position" : name.toLowerCase(Locale.ROOT) + "_position";
     }
@@ -128,6 +136,10 @@ public class VariantRegistry {
                 boolean passed = Boolean.TRUE.equals(d.backtestPassed());
                 if (row.isEmpty() && d.isRetired()) continue; // 已停用的不再登记
                 if (row.isEmpty()) {
+                    if (!fastWatchCovers(o)) {
+                        log.warn("变体 {} 没有上线：新变体必须同时接入 FastWatch，启用让赢家跑的变体不在 FastWatch 名单里", d.name());
+                        continue;
+                    }
                     if (activeCount() >= opt.maxActive()) {
                         log.warn("变体 {} 没有上线：已有 {} 个活跃变体（最多 {} 个）", d.name(), activeCount(), opt.maxActive());
                         continue;
@@ -157,6 +169,15 @@ public class VariantRegistry {
             }
         }
         synced = true;
+        for (String name : notWatched()) {
+            log.warn("变体 {} 正在开新仓但不在 FastWatch 名单里：利润保护只靠 5 分钟检查，回测口径不适用，不会转正", name);
+        }
+    }
+
+    /** 启动检查：正在开新仓、但不在 FastWatch 名单里的变体（应当为空）。 */
+    public List<String> notWatched() {
+        return jdbc.sql("SELECT * FROM variant_registry WHERE status = 'ACTIVE' ORDER BY name").query((rs, i) -> map(rs)).list().stream()
+                .filter(java.util.Objects::nonNull).filter(v -> !fastWatchCovers(v.overrides())).map(Variant::name).toList();
     }
 
     private Optional<Instant> firstBuy(String book) {
@@ -236,6 +257,10 @@ public class VariantRegistry {
         sync();
         String json = o.inline();
         if (o.isEmpty()) return Optional.empty();
+        if (!fastWatchCovers(o)) {
+            log.info("回测候选没有上线：新变体必须同时接入 FastWatch（启用让赢家跑的不在名单里）：{}", o.describe());
+            return Optional.empty();
+        }
         if (jdbc.sql("SELECT COUNT(*) FROM variant_registry WHERE overrides_json = :o").param("o", json).query(Integer.class).single() > 0) {
             return Optional.empty();
         }

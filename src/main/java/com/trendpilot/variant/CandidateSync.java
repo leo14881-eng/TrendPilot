@@ -100,6 +100,8 @@ public class CandidateSync {
             boolean liveCapable = c.path("liveCapable").asBoolean(true) && c.path("config").isEmpty();
             if ("PASS".equals(c.path("status").asText()) && liveCapable) pass.add(c);
         }
+        // 执行敏感度（上影线 75%）没跑或不满足的不上线：工作流已经把它们降为 PROMISING，这里再挡一次（旧格式文件没有这一项，也不上）
+        pass.removeIf(c -> !c.path("executionSensitivity").path("pass").asBoolean(false));
         // 风险调整收益优先：全期卡玛高的先上，其次验证期收益；净值回撤超过 25% 的不上（工作流的检查已经排除，这里再挡一次）
         pass.removeIf(c -> c.path("full").path("navDrawdownPct").asDouble(0) > 25);
         pass.sort(Comparator.comparingDouble((JsonNode c) -> -c.path("full").path("calmar").asDouble(0))

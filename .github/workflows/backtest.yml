@@ -13,6 +13,10 @@ on:
         description: 入口类（BacktestMain，或 StockRulesStudy = 美股规则套到币圈日线）
         required: false
         default: BacktestMain
+      publish:
+        description: 结果是否推到 backtest-results 分支（研究分支可设 false，只留 Actions 附件和日志）
+        required: false
+        default: 'true'
 
 permissions:
   contents: write
@@ -44,6 +48,7 @@ jobs:
       - name: 回测
         run: java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.${{ inputs.main }} backtest-data backtest-out ${{ inputs.args }}
       - name: 结果推到 backtest-results 分支
+        if: inputs.publish != 'false'
         run: |
           RUN=results/$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}
           git config user.name "github-actions"
@@ -58,6 +63,15 @@ jobs:
           mkdir -p "$RUN" && cp "$GITHUB_WORKSPACE"/backtest-out/* "$RUN"/
           git add -A && git commit -qm "回测结果 $RUN" && git push -q origin backtest-results
           echo "结果目录：$RUN"
+      - name: 不发布时把结果打包打印到日志（研究窗口所在网络下载不了附件）
+        if: inputs.publish == 'false'
+        run: |
+          tar czf /tmp/out.tgz -C backtest-out .
+          ls -la /tmp/out.tgz
+          echo "BEGIN-OUT"
+          base64 -w 0 /tmp/out.tgz | fold -w 50000
+          echo
+          echo "END-OUT"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

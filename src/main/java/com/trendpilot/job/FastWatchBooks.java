@@ -40,7 +40,7 @@ public class FastWatchBooks {
         }
         try {
             for (var v : variants.registry().managed()) {
-                if (v.overrides().hasRunner()) continue;
+                if (!com.trendpilot.variant.VariantRegistry.fastWatchCovers(v.overrides())) continue;
                 out.put(v.name(), v.book().positions());
             }
         } catch (RuntimeException e) {
