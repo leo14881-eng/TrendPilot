@@ -1,0 +1,36 @@
+# Research only: funding-rate carry study (research/carry/carry_study.py).
+# Runs on pushes to research/funding-carry-* branches; never deploys, never touches main.
+name: Research carry
+
+on:
+  push:
+    branches: ['research/funding-carry-*']
+    paths: ['research/carry/**', '.github/workflows/research-carry.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  carry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install numpy==2.1.3
+      - name: Data cache
+        uses: actions/cache@v4
+        with:
+          path: carry-data
+          key: carry-data-v1-${{ github.run_id }}
+          restore-keys: carry-data-v1-
+      - name: Run study
+        run: python3 -I research/carry/carry_study.py carry-data carry-out
+      - name: Print report
+        if: always()
+        run: |
+          echo "BEGIN-REPORT"; cat carry-out/report.json || true; echo "END-REPORT"
+          tar czf /tmp/out.tgz -C carry-out . && echo "BEGIN-OUT" && base64 -w 0 /tmp/out.tgz | fold -w 50000 && echo && echo "END-OUT"
