@@ -32,5 +32,5 @@ jobs:
       - name: Print report
         if: always()
         run: |
-          echo "BEGIN-REPORT"; cat carry-out/report.json || true; echo "END-REPORT"
-          tar czf /tmp/out.tgz -C carry-out . && echo "BEGIN-OUT" && base64 -w 0 /tmp/out.tgz | fold -w 50000 && echo && echo "END-OUT"
+          grep -E "perps with|symbols ever|failures treated" carry-out/log.txt || true
+          echo "BEGIN-REPORT"; python3 -c "import json;print(json.dumps(json.load(open('carry-out/report.json')),separators=(',',':')))" || true; echo "END-REPORT"
