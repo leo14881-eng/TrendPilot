@@ -74,6 +74,9 @@ def months(start, end_excl):
 MONTHS = months(DATA_START, "2026-11")
 
 
+FAILED = []
+
+
 def http_get(url, tries=5):
     for i in range(tries):
         try:
@@ -85,7 +88,9 @@ def http_get(url, tries=5):
             time.sleep(2 * (i + 1))
         except Exception:
             time.sleep(2 * (i + 1))
-    raise RuntimeError("download failed " + url)
+    FAILED.append(url)
+    print("download failed, treated as missing: " + url, flush=True)
+    return None
 
 
 def list_prefixes(prefix):
@@ -149,7 +154,7 @@ def spot_name(perp):
 
 def load(cache, log):
     perps = [s for s in list_prefixes("data/futures/um/monthly/fundingRate/")
-             if s.endswith("USDT") and "_" not in s and s[:-4] not in STABLES]
+             if re.fullmatch(r"[A-Z0-9]+USDT", s) and s[:-4] not in STABLES]
     spots = set(list_prefixes("data/spot/monthly/klines/"))
     perps = [p for p in perps if spot_name(p) in spots]
     log(f"perps with spot pair: {len(perps)}")
@@ -511,6 +516,7 @@ def main():
         log(f"== {g['name']}\n" + json.dumps(r, indent=1, default=float))
         np.save(os.path.join(out, f"eq_{g['name']}.npy"), eq[a:])
     json.dump(report, open(os.path.join(out, "report.json"), "w"), indent=1, default=float)
+    log(f"download failures treated as missing: {len(FAILED)}")
     log("DONE")
 
 
