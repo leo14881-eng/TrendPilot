@@ -1,0 +1,734 @@
+{
+  "schema" : 1,
+  "generatedAt" : "2026-11-14T09:15:15.296605317Z",
+  "grid" : "weekly",
+  "strategyVersion" : "v3.4b-2026-10-23-baseline",
+  "dataFrom" : "2022-10-01",
+  "dataTo" : "2026-11-13",
+  "validationFrom" : "2025-07-14",
+  "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly",
+  "baseline" : {
+    "full" : {
+      "trades" : 15775,
+      "equity" : 18381.65,
+      "maxDrawdown" : 14538.46
+    },
+    "validation" : {
+      "trades" : 4735,
+      "equity" : -8068.6,
+      "maxDrawdown" : 14309.81
+    }
+  },
+  "candidates" : [ {
+    "id" : "W_H1_BTC24h>1.5_半仓",
+    "group" : "H1",
+    "overrides" : {
+      "btc24h-above-pct" : "1.5",
+      "hot-entry" : "HALF"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 17617,
+      "maxDrawdown" : 14910.64,
+      "equity" : 7365.87,
+      "calmar" : 0.49,
+      "navDrawdownPct" : 39.9,
+      "perTrade" : 0.42
+    },
+    "validation" : {
+      "perTrade" : -1.29,
+      "trades" : 4913,
+      "equity" : -6225.4,
+      "maxDrawdown" : 11864.34
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 0.73,
+        "perTrade" : 0.42,
+        "trades" : 17617,
+        "maxDrawdown" : 14910.64,
+        "equity" : 7365.87
+      },
+      "wick75" : {
+        "equity" : -16018.18,
+        "trades" : 12614,
+        "perTradeDiffCi95" : 1.54,
+        "perTradeCi95" : 0.86,
+        "perTradeDiffVsBase" : 0.63,
+        "perTrade" : -1.27,
+        "maxDrawdown" : 19686.41
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_H1_币24h5-10_半仓",
+    "group" : "H1",
+    "overrides" : {
+      "coin24h-band-pct" : "5-10",
+      "hot-entry" : "HALF"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 16562,
+      "maxDrawdown" : 18921.48,
+      "equity" : 2563.86,
+      "calmar" : 0.14,
+      "navDrawdownPct" : 46.86,
+      "perTrade" : 0.15
+    },
+    "validation" : {
+      "perTrade" : -2.4,
+      "trades" : 4742,
+      "equity" : -11155.01,
+      "maxDrawdown" : 13257.63
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 0.85,
+        "perTrade" : 0.15,
+        "trades" : 16562,
+        "maxDrawdown" : 18921.48,
+        "equity" : 2563.86
+      },
+      "wick75" : {
+        "equity" : -12847.94,
+        "trades" : 11339,
+        "perTradeDiffCi95" : 1.63,
+        "perTradeCi95" : 1.01,
+        "perTradeDiffVsBase" : 0.76,
+        "perTrade" : -1.13,
+        "maxDrawdown" : 15726.42
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_H2_24h_浮盈<1%_亏>4%",
+    "group" : "H2",
+    "overrides" : {
+      "early-exit-hours" : "24",
+      "early-exit-loss-pct" : "4",
+      "early-exit-max-mfe-pct" : "1"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : false,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 13625,
+      "maxDrawdown" : 18772.82,
+      "equity" : -11698.09,
+      "calmar" : -0.62,
+      "navDrawdownPct" : 74.6,
+      "perTrade" : -0.86
+    },
+    "validation" : {
+      "perTrade" : -2.01,
+      "trades" : 3253,
+      "equity" : -6267.12,
+      "maxDrawdown" : 9676.81
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 0.92,
+        "perTrade" : -0.86,
+        "trades" : 13625,
+        "maxDrawdown" : 18772.82,
+        "equity" : -11698.09
+      },
+      "wick75" : {
+        "equity" : -16257.6,
+        "trades" : 5984,
+        "perTradeDiffCi95" : 1.92,
+        "perTradeCi95" : 1.44,
+        "perTradeDiffVsBase" : -0.82,
+        "perTrade" : -2.72,
+        "maxDrawdown" : 16772.59
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_H2_12h_浮盈<1%_亏>4%",
+    "group" : "H2",
+    "overrides" : {
+      "early-exit-hours" : "12",
+      "early-exit-loss-pct" : "4",
+      "early-exit-max-mfe-pct" : "1"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 15330,
+      "maxDrawdown" : 14229.85,
+      "equity" : -9679.91,
+      "calmar" : -0.68,
+      "navDrawdownPct" : 62.8,
+      "perTrade" : -0.63
+    },
+    "validation" : {
+      "perTrade" : -0.82,
+      "trades" : 4063,
+      "equity" : -3352.57,
+      "maxDrawdown" : 9085.91
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 0.84,
+        "perTrade" : -0.63,
+        "trades" : 15330,
+        "maxDrawdown" : 14229.85,
+        "equity" : -9679.91
+      },
+      "wick75" : {
+        "equity" : -16673.9,
+        "trades" : 6983,
+        "perTradeDiffCi95" : 1.77,
+        "perTradeCi95" : 1.22,
+        "perTradeDiffVsBase" : -0.49,
+        "perTrade" : -2.39,
+        "maxDrawdown" : 18719.41
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_H4_放量≤4倍",
+    "group" : "H4",
+    "overrides" : {
+      "max-volume-accel" : "4"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 15447,
+      "maxDrawdown" : 12190.46,
+      "equity" : 6977.03,
+      "calmar" : 0.57,
+      "navDrawdownPct" : 33.49,
+      "perTrade" : 0.45
+    },
+    "validation" : {
+      "perTrade" : -0.98,
+      "trades" : 4544,
+      "equity" : -4370.0,
+      "maxDrawdown" : 11494.25
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 0.95,
+        "perTrade" : 0.45,
+        "trades" : 15447,
+        "maxDrawdown" : 12190.46,
+        "equity" : 6977.03
+      },
+      "wick75" : {
+        "equity" : -16260.76,
+        "trades" : 11063,
+        "perTradeDiffCi95" : 1.71,
+        "perTradeCi95" : 1.13,
+        "perTradeDiffVsBase" : 0.43,
+        "perTrade" : -1.47,
+        "maxDrawdown" : 22545.12
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_C1_L15_T24",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "C1_L15_T24"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 9248,
+      "maxDrawdown" : 15236.7,
+      "equity" : -14624.44,
+      "calmar" : -0.96,
+      "navDrawdownPct" : 75.15,
+      "perTrade" : -1.58
+    },
+    "validation" : {
+      "perTrade" : -0.61,
+      "trades" : 1728,
+      "equity" : -1020.49,
+      "maxDrawdown" : 1913.32
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 1.05,
+        "perTrade" : -1.58,
+        "trades" : 9248,
+        "maxDrawdown" : 15236.7,
+        "equity" : -14624.44
+      },
+      "wick75" : {
+        "equity" : -17303.11,
+        "trades" : 5351,
+        "perTradeDiffCi95" : 1.91,
+        "perTradeCi95" : 1.42,
+        "perTradeDiffVsBase" : -1.34,
+        "perTrade" : -3.23,
+        "maxDrawdown" : 17570.96
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_S1_L12",
+    "group" : "exit-rule",
+    "overrides" : {
+      "exit-rule" : "S1_L12"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 16060,
+      "maxDrawdown" : 10541.23,
+      "equity" : 3414.61,
+      "calmar" : 0.32,
+      "navDrawdownPct" : 38.86,
+      "perTrade" : 0.21
+    },
+    "validation" : {
+      "perTrade" : 0.66,
+      "trades" : 4850,
+      "equity" : 3213.5,
+      "maxDrawdown" : 6549.32
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 0.91,
+        "perTrade" : 0.21,
+        "trades" : 16060,
+        "maxDrawdown" : 10541.23,
+        "equity" : 3414.61
+      },
+      "wick75" : {
+        "equity" : -17146.5,
+        "trades" : 6558,
+        "perTradeDiffCi95" : 1.89,
+        "perTradeCi95" : 1.39,
+        "perTradeDiffVsBase" : -0.72,
+        "perTrade" : -2.61,
+        "maxDrawdown" : 17301.65
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_M_24h前3",
+    "group" : "momentum",
+    "overrides" : {
+      "max-open" : "17",
+      "momentum-hours" : "24",
+      "momentum-top" : "3"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 15354,
+      "maxDrawdown" : 4101.24,
+      "equity" : 66649.09,
+      "calmar" : 16.25,
+      "navDrawdownPct" : 10.46,
+      "perTrade" : 4.34
+    },
+    "validation" : {
+      "perTrade" : 4.2,
+      "trades" : 5146,
+      "equity" : 21693.04,
+      "maxDrawdown" : 2552.85
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 1.05,
+        "perTrade" : 4.34,
+        "trades" : 15354,
+        "maxDrawdown" : 4101.24,
+        "equity" : 66649.09
+      },
+      "wick75" : {
+        "equity" : 10205.52,
+        "trades" : 13720,
+        "perTradeDiffCi95" : 1.74,
+        "perTradeCi95" : 1.17,
+        "perTradeDiffVsBase" : 2.64,
+        "perTrade" : 0.74,
+        "maxDrawdown" : 7216.54
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥4.5",
+    "group" : "rel1h",
+    "overrides" : {
+      "min-buy-rel1h" : "4.5"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 12340,
+      "maxDrawdown" : 9504.84,
+      "equity" : 36342.16,
+      "calmar" : 3.82,
+      "navDrawdownPct" : 23.57,
+      "perTrade" : 2.95
+    },
+    "validation" : {
+      "perTrade" : 4.39,
+      "trades" : 3971,
+      "equity" : 17398.69,
+      "maxDrawdown" : 2758.85
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 1.22,
+        "perTrade" : 2.95,
+        "trades" : 12340,
+        "maxDrawdown" : 9504.84,
+        "equity" : 36342.16
+      },
+      "wick75" : {
+        "equity" : -9170.15,
+        "trades" : 9412,
+        "perTradeDiffCi95" : 1.9,
+        "perTradeCi95" : 1.41,
+        "perTradeDiffVsBase" : 0.92,
+        "perTrade" : -0.97,
+        "maxDrawdown" : 20587.67
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥5.855",
+    "group" : "rel1h",
+    "overrides" : {
+      "min-buy-rel1h" : "5.855"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : true,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 11049,
+      "maxDrawdown" : 5036.1,
+      "equity" : 53090.7,
+      "calmar" : 10.54,
+      "navDrawdownPct" : 11.16,
+      "perTrade" : 4.81
+    },
+    "validation" : {
+      "perTrade" : 6.42,
+      "trades" : 3643,
+      "equity" : 23402.31,
+      "maxDrawdown" : 2300.77
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 1.35,
+        "perTrade" : 4.81,
+        "trades" : 11049,
+        "maxDrawdown" : 5036.1,
+        "equity" : 53090.7
+      },
+      "wick75" : {
+        "equity" : 887.08,
+        "trades" : 9819,
+        "perTradeDiffCi95" : 1.97,
+        "perTradeCi95" : 1.5,
+        "perTradeDiffVsBase" : 1.99,
+        "perTrade" : 0.09,
+        "maxDrawdown" : 14322.27
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥7.5",
+    "group" : "rel1h",
+    "overrides" : {
+      "min-buy-rel1h" : "7.5"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 8961,
+      "maxDrawdown" : 4021.14,
+      "equity" : 48646.25,
+      "calmar" : 12.1,
+      "navDrawdownPct" : 10.76,
+      "perTrade" : 5.43
+    },
+    "validation" : {
+      "perTrade" : 7.71,
+      "trades" : 3187,
+      "equity" : 24559.14,
+      "maxDrawdown" : 1841.22
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 1.63,
+        "perTrade" : 5.43,
+        "trades" : 8961,
+        "maxDrawdown" : 4021.14,
+        "equity" : 48646.25
+      },
+      "wick75" : {
+        "equity" : 6485.4,
+        "trades" : 8279,
+        "perTradeDiffCi95" : 2.16,
+        "perTradeCi95" : 1.75,
+        "perTradeDiffVsBase" : 2.68,
+        "perTrade" : 0.78,
+        "maxDrawdown" : 6372.06
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_rel1h≥5.855_每笔1500",
+    "group" : "size",
+    "overrides" : {
+      "min-buy-rel1h" : "5.855",
+      "trade-usdt" : "1500"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "PROMISING",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : true,
+      "每笔期望显著更高（全期）" : true,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : true,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : true,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 10221,
+      "maxDrawdown" : 7049.79,
+      "equity" : 68312.52,
+      "calmar" : 9.69,
+      "navDrawdownPct" : 13.37,
+      "perTrade" : 6.68
+    },
+    "validation" : {
+      "perTrade" : 7.23,
+      "trades" : 3385,
+      "equity" : 24476.31,
+      "maxDrawdown" : 6942.06
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 2.13,
+        "perTrade" : 6.68,
+        "trades" : 10221,
+        "maxDrawdown" : 7049.79,
+        "equity" : 68312.52
+      },
+      "wick75" : {
+        "equity" : -792.51,
+        "trades" : 8803,
+        "perTradeDiffCi95" : 2.69,
+        "perTradeCi95" : 2.36,
+        "perTradeDiffVsBase" : 1.81,
+        "perTrade" : -0.09,
+        "maxDrawdown" : 16114.27
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  }, {
+    "id" : "W_每笔1250",
+    "group" : "size",
+    "overrides" : {
+      "trade-usdt" : "1250"
+    },
+    "config" : { },
+    "sim" : { },
+    "liveCapable" : true,
+    "status" : "WORSE",
+    "checks" : {
+      "验证期和全期合计都不低于基准" : false,
+      "每笔期望显著更高（全期）" : false,
+      "最大回撤不超过基准 ×1.1" : true,
+      "六种行情没有明显变差" : false,
+      "显著好于同规则随机对照" : true,
+      "净值最大回撤 ≤ 25%（绝对上限）" : false,
+      "执行敏感度：上影线 75% 仍为正且显著" : false
+    },
+    "full" : {
+      "trades" : 14174,
+      "maxDrawdown" : 14357.21,
+      "equity" : 14518.85,
+      "calmar" : 1.01,
+      "navDrawdownPct" : 33.93,
+      "perTrade" : 1.02
+    },
+    "validation" : {
+      "perTrade" : -0.87,
+      "trades" : 4211,
+      "equity" : -3319.55,
+      "maxDrawdown" : 10578.47
+    },
+    "executionSensitivity" : {
+      "wickShare" : 0.75,
+      "pass" : false,
+      "wick100" : {
+        "perTradeCi95" : 1.24,
+        "perTrade" : 1.02,
+        "trades" : 14174,
+        "maxDrawdown" : 14357.21,
+        "equity" : 14518.85
+      },
+      "wick75" : {
+        "equity" : -17391.52,
+        "trades" : 5478,
+        "perTradeDiffCi95" : 2.47,
+        "perTradeCi95" : 2.12,
+        "perTradeDiffVsBase" : -1.28,
+        "perTrade" : -3.17,
+        "maxDrawdown" : 18065.76
+      }
+    },
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261114-0858-ce44be4-weekly/report.md"
+  } ]
+}
