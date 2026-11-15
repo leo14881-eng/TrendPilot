@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationEnvironmentPreparedEvent;
+import org.springframework.boot.context.event.ApplicationPreparedEvent;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.context.ApplicationListener;
 
@@ -18,6 +19,8 @@ public class TrendPilotApplication {
     public static void main(String[] args) {
         SpringApplication app = new SpringApplication(TrendPilotApplication.class);
         app.addListeners(ensureDataDir());
+        // 日志初始化之后、Flyway 迁移之前：启动时的已知提示改记 INFO（见 KnownStartupNotice）
+        app.addListeners((ApplicationListener<ApplicationPreparedEvent>) e -> KnownStartupNotice.install());
         app.run(args);
     }
 

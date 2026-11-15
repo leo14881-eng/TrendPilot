@@ -23,12 +23,49 @@ day_start=$(date -u -d "$(TZ=Asia/Ho_Chi_Minh date +%F) 00:00 +07:00" +%Y-%m-%dT
 utc_start_ms=$(( $(date -u -d "$(date -u +%F) 00:00" +%s) * 1000 ))
 since_1h=$(date -d '-1 hour' '+%Y-%m-%dT%H')
 
-book() {
+# 净值最大回撤%：和线上"净值回撤 > 25% 停开新仓"同一口径（AutoPromoter.perf / VariantTracker.checkDrawdown）：
+# 资金 = 硬顶 20,000 U（application.yml capital.hard-cap），净值 = 资金 + 权益（已实现 + 浮动，equity_curve 每 5 分钟一点，再加当前值）
+# − 起点权益；峰值从资金起算；取起点以来 (峰值 − 净值) / 峰值 的最大值。起点 = 变体登记的上线时间，V2 / V2D15 / V3 = 账本第一条记录。
+# __BOOK__ / __TABLE__ / __START__ / __CAP__ 由 nav_dd 替换（ScriptsTest 用同一段 SQL 和 Java 口径对照）。
+NAV_CAP=20000
+# nav-dd-sql-begin
+NAV_DD_SQL="WITH b AS (SELECT IFNULL((SELECT realized + unrealized FROM equity_curve WHERE book = '__BOOK__' AND at <= '__START__' ORDER BY at DESC, id DESC LIMIT 1), 0) AS base),
+pts AS (SELECT at, id, realized + unrealized AS v FROM equity_curve WHERE book = '__BOOK__' AND at > '__START__'
+    UNION ALL SELECT '9999', 0, (SELECT IFNULL(SUM(CAST(pnl_usdt AS REAL)), 0) FROM shadow_event WHERE book = '__BOOK__' AND type = 'SELL' AND pnl_usdt IS NOT NULL)
+        + (SELECT IFNULL(SUM(CAST(mark_net AS REAL)), 0) FROM __TABLE__)),
+nav AS (SELECT at, id, __CAP__ + v - (SELECT base FROM b) AS nav FROM pts),
+run AS (SELECT nav, MAX(__CAP__, MAX(nav) OVER (ORDER BY at, id ROWS UNBOUNDED PRECEDING)) AS pk FROM nav)
+SELECT printf('%.1f', 100.0 * MAX(0, MAX((pk - nav) / pk))) FROM run;"
+# nav-dd-sql-end
+nav_dd() {  # nav_dd <账本> <持仓表> [起点 UTC]
+    local s=${NAV_DD_SQL//__BOOK__/$1}
+    s=${s//__TABLE__/$2}
+    s=${s//__START__/${3:-}}
+    s=${s//__CAP__/$NAV_CAP}
+    num "$(q "$s")"
+}
+
+# book_vals <账本> <持仓表>：持仓 今天开仓 今天平仓 累计已实现 未实现 合计（空格分隔）
+book_vals() {
     local name=$1 table=$2
     local realized unreal
     realized=$(num "$(q "SELECT ROUND(IFNULL(SUM(CAST(pnl_usdt AS REAL)),0),2) FROM shadow_event WHERE book='$name' AND type='SELL' AND pnl_usdt IS NOT NULL;")")
     unreal=$(num "$(q "SELECT ROUND(IFNULL(SUM(CAST(mark_net AS REAL)),0),2) FROM $table;")")
-    echo "| $name | $(num "$(q "SELECT COUNT(*) FROM $table;")") | $(num "$(q "SELECT COUNT(*) FROM shadow_event WHERE book='$name' AND type='BUY' AND created_at >= '$day_start';")") | $(num "$(q "SELECT COUNT(*) FROM shadow_event WHERE book='$name' AND type='SELL' AND created_at >= '$day_start';")") | $realized | $unreal | $(awk -v a="$realized" -v b="$unreal" 'BEGIN{if (a=="?"||b=="?") print "?"; else printf "%.2f", a+b}') |"
+    echo "$(num "$(q "SELECT COUNT(*) FROM $table;")") $(num "$(q "SELECT COUNT(*) FROM shadow_event WHERE book='$name' AND type='BUY' AND created_at >= '$day_start';")") $(num "$(q "SELECT COUNT(*) FROM shadow_event WHERE book='$name' AND type='SELL' AND created_at >= '$day_start';")") $realized $unreal $(awk -v a="$realized" -v b="$unreal" 'BEGIN{if (a=="?"||b=="?") print "?"; else printf "%.2f", a+b}')"
+}
+
+# book <账本> <持仓表> [起点 UTC]：账本表一行
+book() {
+    local n o c r u t
+    read -r n o c r u t <<< "$(book_vals "$1" "$2")"
+    echo "| $1 | $n | $o | $c | $r | $u | $t | $(nav_dd "$1" "$2" "${3:-}") |"
+}
+
+# V1 是不可执行的观察样本（规则说明第 11 节：没有数量上限，每笔名义 1,000U），不放进账本表，单独一行
+v1_line() {
+    local n o c r u t
+    read -r n o c r u t <<< "$(book_vals V1 v1_position)"
+    echo "- V1 观察样本（不可执行，不计入策略比较）：持仓 $n，今天（越南时间）进 $o / 出 $c，合计 $t U"
 }
 
 plan=$(q "SELECT day, ROUND(open,2), skip_new, multiplier FROM btc_daily_plan ORDER BY day DESC LIMIT 1;")
@@ -45,18 +82,20 @@ summary() {
     echo "- 内存：$(free -m | awk 'NR==2{print $3"M / "$2"M"}')，硬盘：$(df -h / | awk 'NR==2{print $3" / "$2" ("$5")"}')"
     echo "- 最近 1 小时 WARN/ERROR 条数：$(num "$errors")"
     echo
-    echo "| 账本 | 持仓 | 今天（越南时间）开仓 | 今天平仓 | 累计已实现 U | 未实现 U | 合计 U |"
-    echo "|---|---:|---:|---:|---:|---:|---:|"
+    echo "| 账本 | 持仓 | 今天（越南时间）开仓 | 今天平仓 | 累计已实现 U | 未实现 U | 合计 U | 净值最大回撤% |"
+    echo "|---|---:|---:|---:|---:|---:|---:|---:|"
     book V2 position
     book V2D15 v2d_position
-    # 配置化影子变体（V5、V6…）从登记表自动列出；旧数据库没有登记表时只列 V5
-    variants=$(sqlite3 -readonly -separator ' ' "$DB" "SELECT name, position_table FROM variant_registry WHERE status != 'ARCHIVED' ORDER BY LENGTH(name), name;" 2>/dev/null | grep -E '^V[0-9A-Z]+ [a-z0-9_]+$')
+    # 配置化影子变体（V5、V6…）从登记表自动列出（起点 = 登记的上线时间）；旧数据库没有登记表时只列 V5
+    variants=$(sqlite3 -readonly -separator ' ' "$DB" "SELECT name, position_table, started_at FROM variant_registry WHERE status != 'ARCHIVED' ORDER BY LENGTH(name), name;" 2>/dev/null | grep -E '^V[0-9A-Z]+ [a-z0-9_]+ [0-9TZ:.-]+$')
     [ -n "$variants" ] || variants="V5 v5_position"
-    while read -r vname vtable; do
-        [ -n "$vname" ] && book "$vname" "$vtable"
+    while read -r vname vtable vstart; do
+        [ -n "$vname" ] && book "$vname" "$vtable" "$vstart"
     done <<< "$variants"
-    book V1 v1_position
     book V3 v3_position
+    echo
+    echo "- 净值最大回撤%：按 20,000U 资金、含浮亏，从各账本自己的起点（变体 = 上线时间）算，和线上 25% 停开新仓同一口径；25% 停开新仓只对影子变体（V5、V6…）生效"
+    v1_line
     echo
     echo "- 影子变体风控（各自的亏损冻结 / 减半 / 恢复期）：$(q "SELECT GROUP_CONCAT(r.name || ' ' || IFNULL((SELECT value FROM app_state WHERE key = 'risk:' || r.name || ':status'), 'NORMAL'), ', ') FROM variant_registry r WHERE r.status != 'ARCHIVED';" | tr -cd 'A-Z0-9_ ,' | head -c 300)"
     echo "- 影子变体状态（ACTIVE 开新仓 / STOPPED 停开新仓、持仓卖完归档 / ARCHIVED 已归档；名字 状态 上线时间）：$(q "SELECT GROUP_CONCAT(name || ' ' || status || ' ' || substr(started_at, 1, 16), ', ') FROM variant_registry;" | tr -cd 'A-Z0-9_ ,:T-' | head -c 400)"

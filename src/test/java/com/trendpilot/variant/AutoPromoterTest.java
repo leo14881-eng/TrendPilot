@@ -400,6 +400,38 @@ class AutoPromoterTest {
         return promoter.evaluate(NOW).stream().filter(x -> x.variant().equals(v)).findFirst().orElseThrow().decision();
     }
 
+    /**
+     * status-push.sh 的"净值最大回撤%"和线上 25% 停开新仓同一口径：同一份权益曲线（含上线前的点、中途浮亏），
+     * 脚本里的 SQL 算出的结果和 AutoPromoter.perf 的 navDd 一致（保留一位小数）。
+     */
+    @Test
+    void statusSummaryNavDrawdownMatchesTheLiveBrake() throws Exception {
+        Instant started = NOW.minus(Duration.ofDays(31));
+        jdbc.sql("INSERT INTO equity_curve(book, at, realized, unrealized) VALUES ('V6', :t, 1500, -300)")
+                .param("t", started.minus(Duration.ofHours(1)).toString()).update(); // 上线前的权益 = 起点
+        history("V6", started, 25, 120, 4200); // 中途浮亏 4,200 U
+        String sh = java.nio.file.Files.readString(Path.of("scripts/linux/status-push.sh"), java.nio.charset.StandardCharsets.UTF_8)
+                .replace("\r", "");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("# nav-dd-sql-begin\nNAV_DD_SQL=\"(.*?)\"\n# nav-dd-sql-end",
+                java.util.regex.Pattern.DOTALL).matcher(sh);
+        assertThat(m.find()).isTrue();
+        assertThat(sh).contains("NAV_CAP=20000");
+        VariantRegistry.Variant v6 = registry.get("V6").orElseThrow();
+        assertThat(v6.book().capital()).isEqualTo(20000);
+        String sql = m.group(1).replace("__BOOK__", "V6").replace("__TABLE__", "v6_position")
+                .replace("__START__", v6.startedAt().toString()).replace("__CAP__", "20000");
+        double script = Double.parseDouble(jdbc.sql(sql).query(String.class).single());
+        AutoPromoter.Perf p = promoter.perf(v6.book(), v6.startedAt(), NOW);
+        assertThat(p.navDd()).isGreaterThan(0.1);
+        assertThat(script).isCloseTo(Math.round(p.navDd() * 1000) / 10.0, org.assertj.core.data.Offset.offset(0.051));
+        // 没有登记起点的账本（V2 / V2D15 / V3）从第一条记录算，起点权益为 0
+        String all = m.group(1).replace("__BOOK__", "V6").replace("__TABLE__", "v6_position")
+                .replace("__START__", "").replace("__CAP__", "20000");
+        AutoPromoter.Perf q = promoter.perf(v6.book(), Instant.parse("2000-01-01T00:00:00Z"), NOW);
+        assertThat(Double.parseDouble(jdbc.sql(all).query(String.class).single()))
+                .isCloseTo(Math.round(q.navDd() * 1000) / 10.0, org.assertj.core.data.Offset.offset(0.051));
+    }
+
     private String lastReason(String v) {
         return jdbc.sql("SELECT reason FROM variant_eval WHERE variant = :v ORDER BY id DESC LIMIT 1").param("v", v)
                 .query(String.class).single();

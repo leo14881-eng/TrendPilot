@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 只读数据导出（周复盘用）：用 sqlite3 -readonly 把业务表导成 CSV，打包到 /opt/trendpilot/export/trendpilot-export.tar.gz。
 # 只导业务数据：不碰 config/，不导日志原文（只有 log-counts.sh 的 WARN / ERROR 计数），不导 notification_outbox（Telegram 消息原文），app_state 只导 regime 和 risk:* 风控状态。
+# 山寨季指标、仪表盘、板块和稳定币供应是小表，全导。
 # 体积控制在约 10 MB 以内（服务器到电脑的下载较慢）：交易、持仓、账本取最近 16 天；信号、决策取最近 9 天；
 # K 线不导 15m 原始数据，改导两份汇总：所有币每个 UTC 日的开高低收（涨幅榜复盘用），
 # 以及 BTC、V2 / V2D15 / V5 / V3 交易过的币、每天涨幅前 30 的币的 1h K 线（由 15m 合成）。
@@ -83,6 +84,11 @@ fi
 tbl variant_decision "WHERE created_at >= '$RECENT'"
 tbl risk_state_log "WHERE at >= '$SINCE'"
 tbl launch_event "WHERE at >= '$SINCE'"
+# 山寨季（16.6 / 16.7，只读信息）：每日指标、每日仪表盘全文、CoinGecko 板块、稳定币总供应；都是小表，全导，
+# 复盘时核对仪表盘每天有没有生成、内容和指标对不对
+for t in alt_season_daily alt_dashboard_daily coin_sector stablecoin_supply; do
+    tbl "$t"
+done
 # LP 影子盘：小表全导；分钟快照只导最近 2 天原始数据 + 每个池子每个 UTC 日的汇总（控制体积）
 for t in lp_pool lp_position lp_state lp_daily lp_day_close; do
     tbl "$t"

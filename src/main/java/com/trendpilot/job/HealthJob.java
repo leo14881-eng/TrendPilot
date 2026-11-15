@@ -345,6 +345,13 @@ public class HealthJob {
 
     /** 每日汇总正文上限（Telegram 单条 4096，扣掉项目名前缀后留余量）。 */
     static final int BRIEF_MAX = 3000;
+    /** V1 不可执行（规则说明第 11 节：没有数量上限，每笔名义 1,000U），汇总里单独标注，不和策略账本比较。 */
+    static final String V1_SAMPLE_LABEL = "V1 观察样本（不可执行，不计入策略比较）";
+
+    /** 把统计行开头的"V1："换成 V1 观察样本的标注。 */
+    static String v1Sample(String statsLine) {
+        return statsLine.startsWith("V1：") ? V1_SAMPLE_LABEL + statsLine.substring(2) : V1_SAMPLE_LABEL + "：" + statsLine;
+    }
     /** 正文里最多列出的 V2 持仓 / 被套行数，其余见附件。 */
     static final int BRIEF_MAX_ROWS = 20;
 
@@ -411,7 +418,7 @@ public class HealthJob {
         vLines.forEach(l -> b.add(l[0]));
         List<String> opt = optimizeLines();
         opt.forEach(b::add);
-        b.add(v1Stats.shortLine() + "（观察账本，按参考价记账）");
+        b.add(v1Sample(v1Stats.shortLine()) + "（按参考价记账）");
         b.add("");
         b.add(tracking);
         b.add(selfCheck);
@@ -429,10 +436,10 @@ public class HealthJob {
         f.add("");
         f.add("## 累计对比");
         f.add("- " + v2Stats.line());
-        f.add("- " + v1Stats.line());
         f.add("- " + dStats.line() + "（深度门槛放宽到 15000 时多买的币，对照用）");
         f.add("- " + sStats.line() + "（只买 1h 相对 BTC 明显走强的币，与 V2 同期对比，对照用）");
         vLines.forEach(l -> f.add("- " + l[1]));
+        f.add("- " + v1Sample(v1Stats.line()));
         f.add("");
         f.add("## 自动优化");
         opt.forEach(l -> f.add("- " + l));

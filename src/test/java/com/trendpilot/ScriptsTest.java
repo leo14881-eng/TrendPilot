@@ -102,10 +102,31 @@ class ScriptsTest {
         for (String t : new String[]{"lp_pool", "lp_pool_tvl", "lp_position", "lp_event", "lp_state", "lp_daily", "lp_day_close"}) {
             assertThat(sh).contains(t);
         }
+        // 山寨季仪表盘（16.7）和指标（16.6）：复盘要能核对每天有没有生成、内容对不对
+        assertThat(sh).contains("for t in alt_season_daily alt_dashboard_daily coin_sector stablecoin_supply; do");
         // log counts: only hour, level, logger name and a count leave the server, never message text
         String lc = Files.readString(Path.of("scripts/linux/log-counts.sh"), StandardCharsets.UTF_8);
         assertThat(lc).doesNotContain("\r").contains("WARN|ERROR").contains("print hour \",\" lvl \",\" logger \",\" n");
         assertThat(lc.lines().filter(l -> !l.trim().startsWith("#"))).noneMatch(l -> l.contains("config/") || l.contains("$CONFIG"));
+    }
+
+    @Test
+    void statusSummaryShowsNavDrawdownAndKeepsV1OutOfTheBookTable() throws Exception {
+        String sh = Files.readString(Path.of("scripts/linux/status-push.sh"), StandardCharsets.UTF_8);
+        assertThat(sh).doesNotContain("\r");
+        String table = sh.substring(sh.indexOf("echo \"| 账本 |"), sh.indexOf("v1_line\n    echo"));
+        assertThat(table).contains("| 合计 U | 净值最大回撤% |").contains("|---|---:|---:|---:|---:|---:|---:|---:|")
+                .contains("book V2 position").contains("book V2D15 v2d_position").contains("book V3 v3_position")
+                .contains("book \"$vname\" \"$vtable\" \"$vstart\"")
+                .doesNotContain("book V1 ");
+        // V1 单独一行，写明不可执行、不计入策略比较
+        assertThat(sh).contains("V1 观察样本（不可执行，不计入策略比较）：持仓 $n，今天（越南时间）进 $o / 出 $c，合计 $t U");
+        // 每行 8 列（表头 8 列）
+        String row = sh.substring(sh.indexOf("echo \"| $1 |"), sh.indexOf('\n', sh.indexOf("echo \"| $1 |")));
+        assertThat(row.chars().filter(ch -> ch == '|').count()).isEqualTo(9);
+        // 只读
+        String sql = sh.substring(sh.indexOf("# nav-dd-sql-begin"), sh.indexOf("# nav-dd-sql-end"));
+        assertThat(sql).doesNotContainPattern("(?i)\\b(INSERT|UPDATE|DELETE|DROP|ALTER)\\b");
     }
 
     @Test

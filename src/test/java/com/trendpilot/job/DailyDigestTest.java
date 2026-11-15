@@ -49,7 +49,10 @@ class DailyDigestTest {
         HealthJob.Digest d = health.digest(t.plusSeconds(3600));
 
         assertThat(d.brief().length()).isLessThanOrEqualTo(HealthJob.BRIEF_MAX);
-        assertThat(d.brief()).contains("DIGV2USDT", "V2 被套持仓", "V1：买入", "见附件");
+        assertThat(d.brief()).contains("DIGV2USDT", "V2 被套持仓", "见附件",
+                "V1 观察样本（不可执行，不计入策略比较）：买入");
+        assertThat(d.brief()).doesNotContain("V1：买入");
+        assertThat(d.full()).contains("- V1 观察样本（不可执行，不计入策略比较）：买入").doesNotContain("- V1：买入");
         assertThat(d.brief()).doesNotContain("DIGV1X");
         assertThat(d.full()).contains("DIGV2USDT", "DIGV1X0USDT", "DIGV1X499USDT", "## V1 全部持仓", "### V1");
     }
