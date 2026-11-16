@@ -9,6 +9,8 @@ LIST = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
 BASE = "https://data.binance.vision/"
 NS = "{http://s3.amazonaws.com/doc/2006-03-01/}"
 FROM = sys.argv[2] if len(sys.argv) > 2 else "2019-01"
+FUT = len(sys.argv) > 3 and sys.argv[3] == "futures"  # USDT-M perpetual daily bars + funding instead of spot
+ROOT = "data/futures/um" if FUT else "data/spot"
 
 
 def get(url, tries=5):
@@ -58,14 +60,35 @@ def rows_of(key):
 
 
 def symbol(sym):
-    keys = [k for k in listing(f"data/spot/monthly/klines/{sym}/1d/", False) if k.endswith(".zip") and k[-11:-4] >= FROM]
+    keys = [k for k in listing(f"{ROOT}/monthly/klines/{sym}/1d/", False) if k.endswith(".zip") and k[-11:-4] >= FROM]
     last = max((k[-11:-4] for k in keys), default="0000-00")
-    daily = [k for k in listing(f"data/spot/daily/klines/{sym}/1d/", False) if k.endswith(".zip") and k[-14:-7] > last]
+    daily = [k for k in listing(f"{ROOT}/daily/klines/{sym}/1d/", False) if k.endswith(".zip") and k[-14:-7] > last]
     seen = {}
     for k in keys + daily:
         for r in rows_of(k):
             seen[r[0]] = r
     return sym, [seen[d] for d in sorted(seen)]
+
+
+def funding(sym):
+    """Daily sum of funding rates (a short receives it when positive) and number of settlements."""
+    day = {}
+    for k in listing(f"{ROOT}/monthly/fundingRate/{sym}/", False):
+        if not k.endswith(".zip") or k[-11:-4] < FROM:
+            continue
+        body = get(BASE + k)
+        if body is None:
+            continue
+        with zipfile.ZipFile(io.BytesIO(body)) as z:
+            for line in z.read(z.namelist()[0]).decode().splitlines():
+                p = line.split(",")
+                if not p[0].isdigit():
+                    continue
+                d = int(p[0]) // 86400000
+                a = day.setdefault(d, [0.0, 0])
+                a[0] += float(p[-1])
+                a[1] += 1
+    return sym, sorted(day.items())
 
 
 def g(x):
@@ -74,11 +97,12 @@ def g(x):
 
 def main():
     out = sys.argv[1]
-    syms = [p.split("/")[-2] for p in listing("data/spot/monthly/klines/")]
+    syms = [p.split("/")[-2] for p in listing(ROOT + "/monthly/klines/")]
     syms = [s for s in syms if s.endswith("USDT")]
     print("symbols", len(syms), flush=True)
     n = 0
-    with gzip.open(out + "/binance-1d.csv.gz", "wt", newline="") as f, ThreadPoolExecutor(16) as ex:
+    name = "/binance-um-1d.csv.gz" if FUT else "/binance-1d.csv.gz"
+    with gzip.open(out + name, "wt", newline="") as f, ThreadPoolExecutor(16) as ex:
         w = csv.writer(f)
         w.writerow(["sym", "day", "o", "h", "l", "c", "qv", "n", "tbqv"])
         for sym, rows in ex.map(symbol, syms):
@@ -86,6 +110,14 @@ def main():
                 w.writerow([sym, r[0], g(r[1]), g(r[2]), g(r[3]), g(r[4]), g(r[5]), r[6], g(r[7])])
             n += len(rows)
     print("rows", n, flush=True)
+    if FUT:
+        with gzip.open(out + "/binance-um-funding.csv.gz", "wt", newline="") as f, ThreadPoolExecutor(16) as ex:
+            w = csv.writer(f)
+            w.writerow(["sym", "day", "rate", "n"])
+            for sym, rows in ex.map(funding, syms):
+                for d, (r, k) in rows:
+                    w.writerow([sym, d, "%.6g" % r, k])
+        return
     chains = ["all", "Ethereum", "Tron", "BSC", "Solana", "Arbitrum", "Avalanche", "Polygon", "Optimism", "Base", "Sui",
               "Aptos", "Near", "TON"]
     st = {}

@@ -60,8 +60,10 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git worktree add -q --detach /tmp/rd
-          cd /tmp/rd && git checkout -q --orphan research-data/binance-1d && git rm -rqf . && cp /tmp/dump/* .
-          git add -A && git commit -qm "Research data: Binance spot daily bars and stablecoin supply" && git push -qf origin research-data/binance-1d
+          BR=research-data/binance-1d
+          case "${{ inputs.args }}" in *futures*) BR=research-data/binance-um ;; esac
+          cd /tmp/rd && git checkout -q --orphan "$BR" && git rm -rqf . && cp /tmp/dump/* .
+          git add -A && git commit -qm "Research data: public Binance daily bars" && git push -qf origin "$BR"
       - name: 结果推到 backtest-results 分支
         if: inputs.publish != 'false' && inputs.main != 'DailyDump'
         run: |
