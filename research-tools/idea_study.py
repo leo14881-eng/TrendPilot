@@ -23,7 +23,7 @@ IS_END = pd.Timestamp('2022-12-31')
 START = pd.Timestamp('2020-01-01')
 STABLE = {'USDC', 'BUSD', 'TUSD', 'USDP', 'DAI', 'FDUSD', 'PAX', 'SUSD', 'UST', 'USTC', 'EUR', 'GBP', 'AUD', 'EURI', 'AEUR',
           'PAXG', 'WBTC', 'BETH', 'WBETH', 'USDS', 'USDSB', 'USD1', 'XUSD', 'BFUSD', 'USDE', 'EURC', 'BKRW', 'IDRT', 'BIDR',
-          'NGN', 'RUB', 'TRY', 'ZAR', 'UAH', 'BRL', 'BVND', 'VAI', 'SUSDT', 'USDSUSDT', 'RLUSD', 'U', 'WBNB', 'BNSOL', 'WSTETH'}
+          'NGN', 'RUB', 'TRY', 'ZAR', 'UAH', 'BRL', 'BVND', 'VAI', 'SUSDT', 'USDSUSDT', 'RLUSD', 'U', 'WBNB', 'BNSOL', 'WSTETH', 'RWUSD', 'KGST', 'XAUT', 'BULL', 'BEAR'}
 out_lines = []
 
 
@@ -49,9 +49,13 @@ class Data:
         syms = list(C.columns)
         allb = {s[:-4] for s in syms}
 
+        tok_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'main', 'resources', 'universe', 'tokenized-symbols.txt')
+        tok = {x.strip().upper() for x in open(tok_file, encoding='utf-8') if x.strip() and not x.startswith('#')}
+        tok |= {t + 'USDT' for t in tok} | {t[:-4] for t in tok if t.endswith('USDT')}
+
         def bad(s):
             b = s[:-4]
-            if b in STABLE:
+            if b in STABLE or b in tok or s in tok:
                 return True
             for suf in ('UP', 'DOWN', 'BULL', 'BEAR'):
                 if b.endswith(suf) and b[:-len(suf)] in allb and len(b) > len(suf):
