@@ -28,11 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
+        if: inputs.main != 'DailyDump'
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
       - name: K 线缓存
+        if: inputs.main != 'DailyDump'
         uses: actions/cache@v4
         with:
           path: backtest-data
@@ -42,13 +44,26 @@ jobs:
             backtest-data-v1-${{ inputs.main }}-
             backtest-data-v1-
       - name: 编译
+        if: inputs.main != 'DailyDump'
         run: |
           sh ./mvnw -B -q -DskipTests package
           sh ./mvnw -B -q dependency:build-classpath -Dmdep.outputFile=cp.txt
       - name: 回测
+        if: inputs.main != 'DailyDump'
         run: java -Xmx13g -cp "target/classes:$(cat cp.txt)" com.trendpilot.backtest.${{ inputs.main }} backtest-data backtest-out ${{ inputs.args }}
+      # 研究用（main=DailyDump）：只下载公开日线，存到 research-data/binance-1d 分支，不跑回测、不影响线上
+      - name: 研究数据：Binance 日线 + 稳定币供应
+        if: inputs.main == 'DailyDump'
+        run: |
+          mkdir -p /tmp/dump && python3 research-tools/dump_daily.py /tmp/dump ${{ inputs.args }}
+          ls -la /tmp/dump
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git worktree add -q --detach /tmp/rd
+          cd /tmp/rd && git checkout -q --orphan research-data/binance-1d && git rm -rqf . && cp /tmp/dump/* .
+          git add -A && git commit -qm "Research data: Binance spot daily bars and stablecoin supply" && git push -qf origin research-data/binance-1d
       - name: 结果推到 backtest-results 分支
-        if: inputs.publish != 'false'
+        if: inputs.publish != 'false' && inputs.main != 'DailyDump'
         run: |
           RUN=results/$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}
           git config user.name "github-actions"
@@ -64,7 +79,7 @@ jobs:
           git add -A && git commit -qm "回测结果 $RUN" && git push -q origin backtest-results
           echo "结果目录：$RUN"
       - name: 不发布时把结果打包打印到日志（研究窗口所在网络下载不了附件）
-        if: inputs.publish == 'false'
+        if: inputs.publish == 'false' && inputs.main != 'DailyDump'
         run: |
           tar czf /tmp/out.tgz -C backtest-out .
           ls -la /tmp/out.tgz
@@ -73,7 +88,7 @@ jobs:
           echo
           echo "END-OUT"
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && inputs.main != 'DailyDump'
         with:
           name: backtest-out
           path: backtest-out/
