@@ -138,6 +138,16 @@ class ScriptsTest {
     }
 
     @Test
+    void statusShowsTelegramDeliveryCountsWithoutMessageTextOrSecrets() throws Exception {
+        String sh = Files.readString(Path.of("scripts/linux/status-push.sh"), StandardCharsets.UTF_8);
+        assertThat(sh).doesNotContain("\r").contains("Telegram 通知（最近 24 小时，状态 条数）");
+        String tg = sh.lines().filter(l -> l.startsWith("tg_")).reduce("", (a, b) -> a + b + "\n");
+        // 只读状态计数和失败原因：不读消息正文；原因只保留 HTTP 状态码和描述里的字母、空格、冒号（去掉数字，不会带出 chat id）
+        assertThat(tg).contains("GROUP BY status").contains("SELECT last_error").contains("s/[^A-Za-z :]//g")
+                .doesNotContain("SELECT text").doesNotContain("event_key");
+    }
+
+    @Test
     void dataPushSendsOnlyTheReadOnlyExportToThePrivateDataRepo() throws Exception {
         String sh = Files.readString(Path.of("scripts/linux/data-push.sh"), StandardCharsets.UTF_8);
         assertThat(sh).doesNotContain("\r")

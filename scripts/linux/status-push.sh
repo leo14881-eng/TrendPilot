@@ -70,6 +70,12 @@ v1_line() {
 
 plan=$(q "SELECT day, ROUND(open,2), skip_new, multiplier FROM btc_daily_plan ORDER BY day DESC LIMIT 1;")
 level0=$(q "SELECT levels FROM btc_daily_plan ORDER BY day DESC LIMIT 1;" | sed -E 's/^0:([0-9.]+):.*/\1/; t; s/.*/-/')
+# Telegram 通知送达情况（最近 24 小时，Outbox 计数）；失败原因只取 HTTP 状态码和 Telegram 描述里的字母部分，不含 token、chat id 或消息正文
+since_24h=$(date -u -d '-24 hours' +%Y-%m-%dT%H:%M:%S)
+tg_counts=$(q "SELECT status || ' ' || COUNT(*) FROM notification_outbox WHERE channel LIKE 'TELEGRAM%' AND created_at >= '$since_24h' GROUP BY status ORDER BY status;" | grep -E '^[A-Z_]+ [0-9]+$' | paste -sd, - | sed 's/,/，/g')
+tg_last=$(q "SELECT last_error FROM notification_outbox WHERE channel LIKE 'TELEGRAM%' AND status = 'FAILED' AND created_at >= '$since_24h' ORDER BY id DESC LIMIT 1;")
+tg_code=$(echo "$tg_last" | grep -oE '\b[45][0-9]{2}\b' | head -1)
+tg_desc=$(echo "$tg_last" | grep -oE '"description":"[^"]*"' | head -1 | sed -E 's/"description":"//; s/"$//; s/[^A-Za-z :]//g' | cut -c1-80)
 errors=$(awk -v s="$since_1h" '$1 >= s && /( WARN | ERROR )/' "$APP_DIR/logs/trendpilot.log" 2>/dev/null | wc -l)
 
 summary() {
@@ -81,6 +87,7 @@ summary() {
     echo "- 健康：ok=$(hv ok)，最近成功 Monitor $(hv lastMonitorOk)，最近 Discovery $(hv lastDiscovery)，运行 $(hv uptimeMinutes) 分钟"
     echo "- 内存：$(free -m | awk 'NR==2{print $3"M / "$2"M"}')，硬盘：$(df -h / | awk 'NR==2{print $3" / "$2" ("$5")"}')"
     echo "- 最近 1 小时 WARN/ERROR 条数：$(num "$errors")"
+    echo "- Telegram 通知（最近 24 小时，状态 条数）：${tg_counts:--}；最近一次失败：${tg_code:--} ${tg_desc:--}"
     echo
     echo "| 账本 | 持仓 | 今天（越南时间）开仓 | 今天平仓 | 累计已实现 U | 未实现 U | 合计 U | 净值最大回撤% |"
     echo "|---|---:|---:|---:|---:|---:|---:|---:|"
