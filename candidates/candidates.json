@@ -1,22 +1,22 @@
 {
   "schema" : 1,
-  "generatedAt" : "2026-11-21T10:08:30.015445719Z",
+  "generatedAt" : "2026-11-28T10:48:03.624524978Z",
   "grid" : "weekly",
   "strategyVersion" : "v3.4b-2026-10-23-baseline",
   "dataFrom" : "2022-10-01",
-  "dataTo" : "2026-11-20",
-  "validationFrom" : "2025-07-21",
-  "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly",
+  "dataTo" : "2026-11-27",
+  "validationFrom" : "2025-07-28",
+  "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly",
   "baseline" : {
-    "full" : {
-      "trades" : 15817,
-      "equity" : 18009.73,
-      "maxDrawdown" : 14538.46
-    },
     "validation" : {
-      "trades" : 4688,
-      "equity" : -8938.5,
-      "maxDrawdown" : 14309.81
+      "maxDrawdown" : 13415.31,
+      "equity" : -8215.56,
+      "trades" : 4639
+    },
+    "full" : {
+      "maxDrawdown" : 14538.46,
+      "equity" : 18278.67,
+      "trades" : 15863
     }
   },
   "candidates" : [ {
@@ -40,40 +40,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 17666,
       "maxDrawdown" : 14910.64,
-      "equity" : 7059.33,
-      "calmar" : 0.47,
+      "trades" : 17721,
+      "perTrade" : 0.4,
       "navDrawdownPct" : 39.9,
-      "perTrade" : 0.4
+      "calmar" : 0.47,
+      "equity" : 7027.66
     },
     "validation" : {
-      "perTrade" : -1.44,
-      "trades" : 4838,
-      "equity" : -6859.74,
-      "maxDrawdown" : 11864.34
+      "perTrade" : -1.34,
+      "maxDrawdown" : 11864.34,
+      "equity" : -7167.14,
+      "trades" : 4803
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
-        "perTradeCi95" : 0.73,
         "perTrade" : 0.4,
-        "trades" : 17666,
+        "perTradeCi95" : 0.73,
+        "equity" : 7027.66,
         "maxDrawdown" : 14910.64,
-        "equity" : 7059.33
+        "trades" : 17721
       },
       "wick75" : {
-        "equity" : -16156.13,
-        "trades" : 12615,
-        "perTradeDiffCi95" : 1.54,
-        "perTradeCi95" : 0.86,
-        "perTradeDiffVsBase" : 0.62,
+        "equity" : -16186.25,
+        "maxDrawdown" : 19918.49,
         "perTrade" : -1.28,
-        "maxDrawdown" : 19784.24
+        "perTradeDiffVsBase" : 0.62,
+        "perTradeCi95" : 0.86,
+        "perTradeDiffCi95" : 1.54,
+        "trades" : 12639
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_H1_币24h5-10_半仓",
     "group" : "H1",
@@ -95,40 +95,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 16609,
       "maxDrawdown" : 18921.48,
-      "equity" : 2238.6,
-      "calmar" : 0.12,
+      "trades" : 16661,
+      "perTrade" : 0.15,
       "navDrawdownPct" : 46.86,
-      "perTrade" : 0.13
+      "calmar" : 0.13,
+      "equity" : 2436.28
     },
     "validation" : {
-      "perTrade" : -2.67,
-      "trades" : 4634,
-      "equity" : -12135.99,
-      "maxDrawdown" : 13257.63
+      "perTrade" : -2.48,
+      "maxDrawdown" : 12849.35,
+      "equity" : -11717.35,
+      "trades" : 4595
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
+        "perTrade" : 0.15,
         "perTradeCi95" : 0.85,
-        "perTrade" : 0.13,
-        "trades" : 16609,
+        "equity" : 2436.28,
         "maxDrawdown" : 18921.48,
-        "equity" : 2238.6
+        "trades" : 16661
       },
       "wick75" : {
-        "equity" : -12890.07,
-        "trades" : 11355,
-        "perTradeDiffCi95" : 1.63,
+        "equity" : -12794.17,
+        "maxDrawdown" : 15726.42,
+        "perTrade" : -1.12,
+        "perTradeDiffVsBase" : 0.78,
         "perTradeCi95" : 1.01,
-        "perTradeDiffVsBase" : 0.76,
-        "perTrade" : -1.14,
-        "maxDrawdown" : 15726.42
+        "perTradeDiffCi95" : 1.63,
+        "trades" : 11389
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_H2_24h_浮盈<1%_亏>4%",
     "group" : "H2",
@@ -151,40 +151,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 13654,
       "maxDrawdown" : 18772.82,
-      "equity" : -11306.44,
-      "calmar" : -0.6,
+      "trades" : 13703,
+      "perTrade" : -0.82,
       "navDrawdownPct" : 74.6,
-      "perTrade" : -0.83
+      "calmar" : -0.6,
+      "equity" : -11232.89
     },
     "validation" : {
-      "perTrade" : -2.29,
-      "trades" : 3174,
-      "equity" : -6926.88,
-      "maxDrawdown" : 9676.81
+      "perTrade" : -2.11,
+      "maxDrawdown" : 9676.81,
+      "equity" : -6772.59,
+      "trades" : 3162
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
-        "perTradeCi95" : 0.92,
-        "perTrade" : -0.83,
-        "trades" : 13654,
+        "perTrade" : -0.82,
+        "perTradeCi95" : 0.91,
+        "equity" : -11232.89,
         "maxDrawdown" : 18772.82,
-        "equity" : -11306.44
+        "trades" : 13703
       },
       "wick75" : {
-        "equity" : -16257.6,
-        "trades" : 5984,
-        "perTradeDiffCi95" : 1.92,
-        "perTradeCi95" : 1.44,
-        "perTradeDiffVsBase" : -0.82,
+        "equity" : -16318.32,
+        "maxDrawdown" : 16772.59,
         "perTrade" : -2.72,
-        "maxDrawdown" : 16772.59
+        "perTradeDiffVsBase" : -0.82,
+        "perTradeCi95" : 1.43,
+        "perTradeDiffCi95" : 1.92,
+        "trades" : 5999
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_H2_12h_浮盈<1%_亏>4%",
     "group" : "H2",
@@ -207,40 +207,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 15360,
       "maxDrawdown" : 14229.85,
-      "equity" : -9733.17,
-      "calmar" : -0.68,
+      "trades" : 15402,
+      "perTrade" : -0.64,
       "navDrawdownPct" : 62.8,
-      "perTrade" : -0.63
+      "calmar" : -0.7,
+      "equity" : -9894.37
     },
     "validation" : {
-      "perTrade" : -1.06,
-      "trades" : 3999,
-      "equity" : -3951.21,
-      "maxDrawdown" : 9085.91
+      "perTrade" : -0.96,
+      "maxDrawdown" : 9085.91,
+      "equity" : -3765.28,
+      "trades" : 3984
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
+        "perTrade" : -0.64,
         "perTradeCi95" : 0.84,
-        "perTrade" : -0.63,
-        "trades" : 15360,
+        "equity" : -9894.37,
         "maxDrawdown" : 14229.85,
-        "equity" : -9733.17
+        "trades" : 15402
       },
       "wick75" : {
-        "equity" : -16673.9,
-        "trades" : 6983,
-        "perTradeDiffCi95" : 1.77,
-        "perTradeCi95" : 1.22,
-        "perTradeDiffVsBase" : -0.49,
+        "equity" : -16704.97,
+        "maxDrawdown" : 18719.41,
         "perTrade" : -2.39,
-        "maxDrawdown" : 18719.41
+        "perTradeDiffVsBase" : -0.48,
+        "perTradeCi95" : 1.22,
+        "perTradeDiffCi95" : 1.76,
+        "trades" : 6998
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_H4_放量≤4倍",
     "group" : "H4",
@@ -261,40 +261,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 15488,
       "maxDrawdown" : 12190.46,
-      "equity" : 6429.85,
-      "calmar" : 0.53,
+      "trades" : 15536,
+      "perTrade" : 0.43,
       "navDrawdownPct" : 33.49,
-      "perTrade" : 0.42
+      "calmar" : 0.54,
+      "equity" : 6636.17
     },
     "validation" : {
-      "perTrade" : -1.25,
-      "trades" : 4466,
-      "equity" : -5327.46,
-      "maxDrawdown" : 11494.25
+      "perTrade" : -1.12,
+      "maxDrawdown" : 11494.25,
+      "equity" : -5519.25,
+      "trades" : 4433
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
-        "perTradeCi95" : 0.95,
-        "perTrade" : 0.42,
-        "trades" : 15488,
+        "perTrade" : 0.43,
+        "perTradeCi95" : 0.94,
+        "equity" : 6636.17,
         "maxDrawdown" : 12190.46,
-        "equity" : 6429.85
+        "trades" : 15536
       },
       "wick75" : {
-        "equity" : -16260.76,
-        "trades" : 11063,
-        "perTradeDiffCi95" : 1.71,
+        "equity" : -16123.33,
+        "maxDrawdown" : 22599.28,
+        "perTrade" : -1.46,
+        "perTradeDiffVsBase" : 0.45,
         "perTradeCi95" : 1.13,
-        "perTradeDiffVsBase" : 0.43,
-        "perTrade" : -1.47,
-        "maxDrawdown" : 22545.12
+        "perTradeDiffCi95" : 1.71,
+        "trades" : 11073
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_C1_L15_T24",
     "group" : "exit-rule",
@@ -315,40 +315,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 9257,
       "maxDrawdown" : 15236.7,
-      "equity" : -14718.56,
-      "calmar" : -0.97,
+      "trades" : 9290,
+      "perTrade" : -1.55,
       "navDrawdownPct" : 75.15,
-      "perTrade" : -1.59
+      "calmar" : -0.94,
+      "equity" : -14375.48
     },
     "validation" : {
-      "perTrade" : -0.7,
-      "trades" : 1695,
-      "equity" : -1048.28,
-      "maxDrawdown" : 2048.61
+      "perTrade" : -0.38,
+      "maxDrawdown" : 2048.61,
+      "equity" : -647.18,
+      "trades" : 1703
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
+        "perTrade" : -1.55,
         "perTradeCi95" : 1.05,
-        "perTrade" : -1.59,
-        "trades" : 9257,
+        "equity" : -14375.48,
         "maxDrawdown" : 15236.7,
-        "equity" : -14718.56
+        "trades" : 9290
       },
       "wick75" : {
-        "equity" : -17303.11,
-        "trades" : 5351,
-        "perTradeDiffCi95" : 1.91,
-        "perTradeCi95" : 1.42,
+        "equity" : -17380.21,
+        "maxDrawdown" : 17570.96,
+        "perTrade" : -3.24,
         "perTradeDiffVsBase" : -1.34,
-        "perTrade" : -3.23,
-        "maxDrawdown" : 17570.96
+        "perTradeCi95" : 1.42,
+        "perTradeDiffCi95" : 1.91,
+        "trades" : 5356
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_S1_L12",
     "group" : "exit-rule",
@@ -369,40 +369,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 16113,
       "maxDrawdown" : 10541.23,
-      "equity" : 3236.65,
-      "calmar" : 0.31,
+      "trades" : 16166,
+      "perTrade" : 0.12,
       "navDrawdownPct" : 38.86,
-      "perTrade" : 0.2
+      "calmar" : 0.18,
+      "equity" : 1873.66
     },
     "validation" : {
-      "perTrade" : 0.38,
-      "trades" : 4814,
-      "equity" : 2149.23,
-      "maxDrawdown" : 6549.32
+      "perTrade" : 0.23,
+      "maxDrawdown" : 7672.41,
+      "equity" : 897.64,
+      "trades" : 4780
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
+        "perTrade" : 0.12,
         "perTradeCi95" : 0.91,
-        "perTrade" : 0.2,
-        "trades" : 16113,
+        "equity" : 1873.66,
         "maxDrawdown" : 10541.23,
-        "equity" : 3236.65
+        "trades" : 16166
       },
       "wick75" : {
-        "equity" : -17146.5,
-        "trades" : 6558,
-        "perTradeDiffCi95" : 1.89,
-        "perTradeCi95" : 1.39,
+        "equity" : -17239.28,
+        "maxDrawdown" : 17369.3,
+        "perTrade" : -2.63,
         "perTradeDiffVsBase" : -0.72,
-        "perTrade" : -2.61,
-        "maxDrawdown" : 17301.65
+        "perTradeCi95" : 1.39,
+        "perTradeDiffCi95" : 1.89,
+        "trades" : 6561
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_M_24h前3",
     "group" : "momentum",
@@ -425,40 +425,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 15427,
       "maxDrawdown" : 4101.24,
-      "equity" : 67389.69,
-      "calmar" : 16.43,
+      "trades" : 15497,
+      "perTrade" : 4.38,
       "navDrawdownPct" : 10.46,
-      "perTrade" : 4.37
+      "calmar" : 16.54,
+      "equity" : 67814.45
     },
     "validation" : {
-      "perTrade" : 4.15,
-      "trades" : 5140,
-      "equity" : 21459.53,
-      "maxDrawdown" : 2552.85
+      "perTrade" : 4.0,
+      "maxDrawdown" : 2552.85,
+      "equity" : 20230.09,
+      "trades" : 5087
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
-        "perTradeCi95" : 1.05,
-        "perTrade" : 4.37,
-        "trades" : 15427,
+        "perTrade" : 4.38,
+        "perTradeCi95" : 1.04,
+        "equity" : 67814.45,
         "maxDrawdown" : 4101.24,
-        "equity" : 67389.69
+        "trades" : 15497
       },
       "wick75" : {
-        "equity" : 9882.03,
-        "trades" : 13786,
-        "perTradeDiffCi95" : 1.73,
+        "equity" : 9886.47,
+        "maxDrawdown" : 7216.54,
+        "perTrade" : 0.71,
+        "perTradeDiffVsBase" : 2.62,
         "perTradeCi95" : 1.17,
-        "perTradeDiffVsBase" : 2.61,
-        "perTrade" : 0.72,
-        "maxDrawdown" : 7216.54
+        "perTradeDiffCi95" : 1.73,
+        "trades" : 13844
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_rel1h≥4.5",
     "group" : "rel1h",
@@ -479,40 +479,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 12384,
       "maxDrawdown" : 9504.84,
-      "equity" : 36739.01,
-      "calmar" : 3.87,
+      "trades" : 12436,
+      "perTrade" : 2.99,
       "navDrawdownPct" : 23.57,
-      "perTrade" : 2.97
+      "calmar" : 3.91,
+      "equity" : 37177.85
     },
     "validation" : {
-      "perTrade" : 4.37,
-      "trades" : 3948,
-      "equity" : 17358.78,
-      "maxDrawdown" : 2758.85
+      "perTrade" : 4.45,
+      "maxDrawdown" : 2758.85,
+      "equity" : 17261.46,
+      "trades" : 3919
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
+        "perTrade" : 2.99,
         "perTradeCi95" : 1.22,
-        "perTrade" : 2.97,
-        "trades" : 12384,
+        "equity" : 37177.85,
         "maxDrawdown" : 9504.84,
-        "equity" : 36739.01
+        "trades" : 12436
       },
       "wick75" : {
-        "equity" : -9225.03,
-        "trades" : 9442,
-        "perTradeDiffCi95" : 1.9,
+        "equity" : -9498.07,
+        "maxDrawdown" : 20587.67,
+        "perTrade" : -1.0,
+        "perTradeDiffVsBase" : 0.9,
         "perTradeCi95" : 1.41,
-        "perTradeDiffVsBase" : 0.92,
-        "perTrade" : -0.98,
-        "maxDrawdown" : 20587.67
+        "perTradeDiffCi95" : 1.9,
+        "trades" : 9469
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_rel1h≥5.855",
     "group" : "rel1h",
@@ -533,40 +533,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 11095,
       "maxDrawdown" : 5036.1,
-      "equity" : 53824.1,
-      "calmar" : 10.69,
+      "trades" : 11122,
+      "perTrade" : 4.81,
       "navDrawdownPct" : 11.16,
-      "perTrade" : 4.85
+      "calmar" : 10.63,
+      "equity" : 53512.7
     },
     "validation" : {
-      "perTrade" : 6.48,
-      "trades" : 3628,
-      "equity" : 23533.81,
-      "maxDrawdown" : 2300.77
+      "perTrade" : 6.36,
+      "maxDrawdown" : 2300.77,
+      "equity" : 22718.16,
+      "trades" : 3596
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
+        "perTrade" : 4.81,
         "perTradeCi95" : 1.35,
-        "perTrade" : 4.85,
-        "trades" : 11095,
+        "equity" : 53512.7,
         "maxDrawdown" : 5036.1,
-        "equity" : 53824.1
+        "trades" : 11122
       },
       "wick75" : {
-        "equity" : 1110.84,
-        "trades" : 9859,
-        "perTradeDiffCi95" : 1.97,
+        "equity" : 541.48,
+        "maxDrawdown" : 14322.27,
+        "perTrade" : 0.05,
+        "perTradeDiffVsBase" : 1.96,
         "perTradeCi95" : 1.5,
-        "perTradeDiffVsBase" : 2.01,
-        "perTrade" : 0.11,
-        "maxDrawdown" : 14322.27
+        "perTradeDiffCi95" : 1.97,
+        "trades" : 9884
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_rel1h≥7.5",
     "group" : "rel1h",
@@ -587,40 +587,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 8992,
       "maxDrawdown" : 4021.14,
-      "equity" : 48345.8,
-      "calmar" : 12.02,
+      "trades" : 9016,
+      "perTrade" : 5.37,
       "navDrawdownPct" : 10.76,
-      "perTrade" : 5.38
+      "calmar" : 12.05,
+      "equity" : 48444.63
     },
     "validation" : {
-      "perTrade" : 7.27,
-      "trades" : 3158,
-      "equity" : 23241.6,
-      "maxDrawdown" : 1841.22
+      "perTrade" : 7.3,
+      "maxDrawdown" : 1841.22,
+      "equity" : 22620.19,
+      "trades" : 3116
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
+        "perTrade" : 5.37,
         "perTradeCi95" : 1.63,
-        "perTrade" : 5.38,
-        "trades" : 8992,
+        "equity" : 48444.63,
         "maxDrawdown" : 4021.14,
-        "equity" : 48345.8
+        "trades" : 9016
       },
       "wick75" : {
-        "equity" : 6195.21,
-        "trades" : 8310,
-        "perTradeDiffCi95" : 2.16,
-        "perTradeCi95" : 1.74,
-        "perTradeDiffVsBase" : 2.64,
+        "equity" : 6217.12,
+        "maxDrawdown" : 6372.06,
         "perTrade" : 0.75,
-        "maxDrawdown" : 6372.06
+        "perTradeDiffVsBase" : 2.65,
+        "perTradeCi95" : 1.74,
+        "perTradeDiffCi95" : 2.16,
+        "trades" : 8330
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_rel1h≥5.855_每笔1500",
     "group" : "size",
@@ -642,40 +642,40 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 10266,
       "maxDrawdown" : 7049.79,
-      "equity" : 68661.5,
-      "calmar" : 9.74,
+      "trades" : 10295,
+      "perTrade" : 6.65,
       "navDrawdownPct" : 13.37,
-      "perTrade" : 6.69
+      "calmar" : 9.71,
+      "equity" : 68459.58
     },
     "validation" : {
-      "perTrade" : 7.0,
-      "trades" : 3373,
-      "equity" : 23501.64,
-      "maxDrawdown" : 6942.06
+      "perTrade" : 7.02,
+      "maxDrawdown" : 6942.06,
+      "equity" : 23156.56,
+      "trades" : 3346
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
+        "perTrade" : 6.65,
         "perTradeCi95" : 2.13,
-        "perTrade" : 6.69,
-        "trades" : 10266,
+        "equity" : 68459.58,
         "maxDrawdown" : 7049.79,
-        "equity" : 68661.5
+        "trades" : 10295
       },
       "wick75" : {
-        "equity" : -1601.83,
-        "trades" : 8840,
-        "perTradeDiffCi95" : 2.68,
+        "equity" : -2373.19,
+        "maxDrawdown" : 16114.27,
+        "perTrade" : -0.27,
+        "perTradeDiffVsBase" : 1.64,
         "perTradeCi95" : 2.36,
-        "perTradeDiffVsBase" : 1.72,
-        "perTrade" : -0.18,
-        "maxDrawdown" : 16114.27
+        "perTradeDiffCi95" : 2.69,
+        "trades" : 8863
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   }, {
     "id" : "W_每笔1250",
     "group" : "size",
@@ -696,39 +696,39 @@
       "执行敏感度：上影线 75% 仍为正且显著" : false
     },
     "full" : {
-      "trades" : 14224,
       "maxDrawdown" : 14357.21,
-      "equity" : 14858.88,
-      "calmar" : 1.03,
+      "trades" : 14276,
+      "perTrade" : 1.05,
       "navDrawdownPct" : 33.93,
-      "perTrade" : 1.04
+      "calmar" : 1.05,
+      "equity" : 15056.39
     },
     "validation" : {
-      "perTrade" : -0.75,
-      "trades" : 4204,
-      "equity" : -2938.34,
-      "maxDrawdown" : 10464.72
+      "perTrade" : -0.54,
+      "maxDrawdown" : 10464.72,
+      "equity" : -3148.27,
+      "trades" : 4153
     },
     "executionSensitivity" : {
       "wickShare" : 0.75,
       "pass" : false,
       "wick100" : {
+        "perTrade" : 1.05,
         "perTradeCi95" : 1.24,
-        "perTrade" : 1.04,
-        "trades" : 14224,
+        "equity" : 15056.39,
         "maxDrawdown" : 14357.21,
-        "equity" : 14858.88
+        "trades" : 14276
       },
       "wick75" : {
-        "equity" : -17391.52,
-        "trades" : 5478,
-        "perTradeDiffCi95" : 2.47,
+        "equity" : -17544.33,
+        "maxDrawdown" : 18065.76,
+        "perTrade" : -3.2,
+        "perTradeDiffVsBase" : -1.3,
         "perTradeCi95" : 2.12,
-        "perTradeDiffVsBase" : -1.28,
-        "perTrade" : -3.17,
-        "maxDrawdown" : 18065.76
+        "perTradeDiffCi95" : 2.47,
+        "trades" : 5481
       }
     },
-    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261121-0951-a98b66c-weekly/report.md"
+    "evidence" : "https://github.com/leo14881-eng/TrendPilot/blob/backtest-results/results/20261128-1028-1299a25-weekly/report.md"
   } ]
 }
